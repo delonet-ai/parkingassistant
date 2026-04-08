@@ -44,7 +44,6 @@ services:
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:
-      - ./:/app
       - ./staging/maps:/app/storage/maps
       - ./staging/imports:/app/storage/imports
       - ./staging/logs:/app/storage/logs
@@ -69,7 +68,6 @@ services:
     ports:
       - "${ADMIN_WEB_PORT:-3100}:3100"
     volumes:
-      - ./:/app
       - ./staging/logs:/app/storage/logs
     command: ["/bin/sh", "-lc", "echo 'Admin Web placeholder: replace with real start command'; sleep infinity"]
 
@@ -95,7 +93,6 @@ services:
     ports:
       - "${BOT_ADAPTER_PORT:-3200}:3200"
     volumes:
-      - ./:/app
       - ./staging/logs:/app/storage/logs
     command: ["/bin/sh", "-lc", "echo 'Bot Adapter placeholder: replace with real start command'; sleep infinity"]
 
@@ -117,7 +114,6 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-parkingassistant}:${POSTGRES_PASSWORD:-parkingassistant}@postgres:5432/${POSTGRES_DB:-parkingassistant}
       JOBS_SCHEDULER_ENABLED: ${JOBS_SCHEDULER_ENABLED:-true}
     volumes:
-      - ./:/app
       - ./staging/logs:/app/storage/logs
       - ./staging/backups:/app/storage/backups
     command: ["/bin/sh", "-lc", "echo 'Jobs placeholder: replace with real scheduler command'; sleep infinity"]

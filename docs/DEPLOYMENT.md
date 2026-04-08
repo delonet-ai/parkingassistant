@@ -219,3 +219,21 @@ Internet
 - env template: [.env.example](/Users/deliter/Documents/GitClone/parkingassistant/.env.example)
 
 Это пока placeholder-уровень для запуска сервисов и фиксации архитектуры. Следующим шагом сюда должны лечь реальные команды сборки и старта после выбора package manager и framework stack.
+
+## Important Portainer Note
+
+Для server-side stack через Portainer не нужно монтировать исходники приложения в `/app`.
+
+Почему:
+
+- код уже должен находиться внутри собранного image
+- bind mount вида `./:/app` в Portainer может затереть содержимое image
+- это особенно ломает `package.json`, `node_modules` и runtime entrypoints
+
+Для server deployment оставляем только data mounts:
+
+- `./staging/postgres`
+- `./staging/maps`
+- `./staging/imports`
+- `./staging/logs`
+- `./staging/backups`
