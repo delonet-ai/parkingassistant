@@ -430,12 +430,17 @@ infra/
 ### `infra/docker`
 
 - локальный `docker-compose` для API, PostgreSQL и вспомогательных сервисов
+- multi-stage Dockerfile для `api`, `bot-adapter`, `jobs`
+- отдельный Dockerfile для `admin-web`
 
 ### `infra/deploy`
 
 - переменные окружения
 - шаблоны деплоя
 - настройки scheduler
+- reverse proxy config
+- secret management
+- persistent storage для карт и импортов
 
 ## Порядок реализации
 

@@ -76,6 +76,14 @@
 - `PostgreSQL`
 - `scheduler/background jobs`
 
+Рекомендуемый baseline для реализации и деплоя:
+
+- единый runtime stack на `Node.js 22`
+- `PostgreSQL 16`
+- отдельные deployable units: `admin-web`, `api`, `bot-adapter`, `jobs`
+- базовый app image на `node:22-bookworm-slim`
+- reverse proxy перед web и API
+
 Принципиальные ограничения:
 
 - backend stateless
@@ -386,3 +394,9 @@ Excel-файл рассматривается как исходный источ
 ## Документы проекта
 
 - Базовая декомпозиция задач по модулям: [TASKS.md](/Users/deliter/Documents/GitClone/parkingassistant/TASKS.md)
+- Архитектурный обзор: [docs/ARCHITECTURE.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/ARCHITECTURE.md)
+- Черновик ERD: [docs/ERD.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/ERD.md)
+- Схема деплоя: [docs/DEPLOYMENT.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/DEPLOYMENT.md)
+- ADR по runtime и деплою: [docs/adr/001-runtime-and-deployment.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/adr/001-runtime-and-deployment.md)
+- Docker baseline: [docker-compose.yml](/Users/deliter/Documents/GitClone/parkingassistant/docker-compose.yml)
+- Setup для Mac и OMV: [SETUP.md](/Users/deliter/Documents/GitClone/parkingassistant/SETUP.md)
