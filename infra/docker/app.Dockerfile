@@ -18,6 +18,7 @@ FROM base AS runtime
 
 COPY --from=deps /app/node_modules /app/node_modules
 COPY package.json /app/package.json
+COPY apps /app/apps
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["sh", "-lc", "echo 'Replace runtime command in docker-compose or Dockerfile' && sleep infinity"]
