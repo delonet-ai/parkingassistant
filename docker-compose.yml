@@ -13,7 +13,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - ./staging/postgres:/var/lib/postgresql/data
+      - /opt/git/parkingassistant/staging/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -44,9 +44,9 @@ services:
     ports:
       - "${API_PORT:-3000}:3000"
     volumes:
-      - ./staging/maps:/app/storage/maps
-      - ./staging/imports:/app/storage/imports
-      - ./staging/logs:/app/storage/logs
+      - /opt/git/parkingassistant/staging/maps:/app/storage/maps
+      - /opt/git/parkingassistant/staging/imports:/app/storage/imports
+      - /opt/git/parkingassistant/staging/logs:/app/storage/logs
     command: ["npm", "run", "api:start"]
 
   admin-web:
@@ -68,7 +68,7 @@ services:
     ports:
       - "${ADMIN_WEB_PORT:-3100}:3100"
     volumes:
-      - ./staging/logs:/app/storage/logs
+      - /opt/git/parkingassistant/staging/logs:/app/storage/logs
     command: ["/bin/sh", "-lc", "echo 'Admin Web placeholder: replace with real start command'; sleep infinity"]
 
   bot-adapter:
@@ -93,7 +93,7 @@ services:
     ports:
       - "${BOT_ADAPTER_PORT:-3200}:3200"
     volumes:
-      - ./staging/logs:/app/storage/logs
+      - /opt/git/parkingassistant/staging/logs:/app/storage/logs
     command: ["/bin/sh", "-lc", "echo 'Bot Adapter placeholder: replace with real start command'; sleep infinity"]
 
   jobs:
@@ -114,6 +114,6 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-parkingassistant}:${POSTGRES_PASSWORD:-parkingassistant}@postgres:5432/${POSTGRES_DB:-parkingassistant}
       JOBS_SCHEDULER_ENABLED: ${JOBS_SCHEDULER_ENABLED:-true}
     volumes:
-      - ./staging/logs:/app/storage/logs
-      - ./staging/backups:/app/storage/backups
+      - /opt/git/parkingassistant/staging/logs:/app/storage/logs
+      - /opt/git/parkingassistant/staging/backups:/app/storage/backups
     command: ["/bin/sh", "-lc", "echo 'Jobs placeholder: replace with real scheduler command'; sleep infinity"]

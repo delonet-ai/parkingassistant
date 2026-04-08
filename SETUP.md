@@ -71,6 +71,12 @@ docker compose --env-file staging/env/app.env down
 /opt/parkingassistant
 ```
 
+Для текущего server baseline у нас принят фактический путь:
+
+```text
+/opt/git/parkingassistant
+```
+
 ### 2. Создать те же папки
 
 Внутри `/opt/parkingassistant`:
@@ -118,12 +124,18 @@ docker compose --env-file staging/env/app.env up -d
 - структура папок
 - compose файл
 - Dockerfile
-- относительные пути `./staging/...`
+- структура `staging/...`
 
 Отличается только:
 
 - содержимое `staging/env/app.env`
 - реальные домены, токены, секреты и порты
+
+Важно:
+
+- на `MacBook` допустимы относительные пути
+- для `OMV + Portainer Git stack` bind mounts должны быть абсолютными, иначе Portainer привяжет их к временному `/data/compose/<id>` workspace
+- в текущем compose server-side mounts зафиксированы через `/opt/git/parkingassistant/staging/...`
 
 ## Current Limitation
 

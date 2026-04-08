@@ -232,8 +232,10 @@ Internet
 
 Для server deployment оставляем только data mounts:
 
-- `./staging/postgres`
-- `./staging/maps`
-- `./staging/imports`
-- `./staging/logs`
-- `./staging/backups`
+- `/opt/git/parkingassistant/staging/postgres`
+- `/opt/git/parkingassistant/staging/maps`
+- `/opt/git/parkingassistant/staging/imports`
+- `/opt/git/parkingassistant/staging/logs`
+- `/opt/git/parkingassistant/staging/backups`
+
+Для `Portainer Git stack` это критично, потому что относительные bind mounts иначе будут привязаны к временному workspace наподобие `/data/compose/<id>`, а не к постоянной папке проекта.
