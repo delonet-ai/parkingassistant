@@ -48,7 +48,7 @@ services:
       - ./staging/maps:/app/storage/maps
       - ./staging/imports:/app/storage/imports
       - ./staging/logs:/app/storage/logs
-    command: ["/bin/sh", "-lc", "echo 'API placeholder: replace with real start command'; sleep infinity"]
+    command: ["npm", "run", "api:start"]
 
   admin-web:
     build:

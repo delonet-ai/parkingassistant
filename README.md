@@ -84,6 +84,19 @@
 - базовый app image на `node:22-bookworm-slim`
 - reverse proxy перед web и API
 
+Текущий runtime status:
+
+- `api` уже планируется как минимальный Node.js сервис с health endpoints
+- `admin-web`, `bot-adapter` и `jobs` пока остаются placeholder-контейнерами до следующего слоя реализации
+
+Текущий API baseline:
+
+- `GET /`
+- `GET /health`
+- `GET /health/db`
+- `GET /auth/bootstrap-status`
+- `GET /admin/users`
+
 Принципиальные ограничения:
 
 - backend stateless
@@ -400,3 +413,4 @@ Excel-файл рассматривается как исходный источ
 - ADR по runtime и деплою: [docs/adr/001-runtime-and-deployment.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/adr/001-runtime-and-deployment.md)
 - Docker baseline: [docker-compose.yml](/Users/deliter/Documents/GitClone/parkingassistant/docker-compose.yml)
 - Setup для Mac и OMV: [SETUP.md](/Users/deliter/Documents/GitClone/parkingassistant/SETUP.md)
+- DB scripts: [scripts/db/README.md](/Users/deliter/Documents/GitClone/parkingassistant/scripts/db/README.md)

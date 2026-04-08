@@ -45,9 +45,11 @@ CREATE TABLE auth_users (
   last_login_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  deleted_at timestamptz,
-  CONSTRAINT auth_users_login_lower_uniq UNIQUE (lower(login))
+  deleted_at timestamptz
 );
+
+CREATE UNIQUE INDEX auth_users_login_lower_uniq
+  ON auth_users (lower(login));
 
 CREATE TABLE auth_roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

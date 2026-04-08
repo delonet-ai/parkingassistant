@@ -137,5 +137,5 @@ docker compose --env-file staging/env/app.env up -d
 2. Подготовить `staging/env/app.env` для обеих сред.
 3. Поднять `postgres` и проверить доступность контейнера.
 4. Прогнать [packages/db/schema/001_initial_schema.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/schema/001_initial_schema.sql) на живой БД.
-5. После этого добавить `seed` базового `system_admin`.
-
+5. Прогнать `sh scripts/db/seed.sh`.
+6. После этого проверить, что в БД создан bootstrap `system_admin`.

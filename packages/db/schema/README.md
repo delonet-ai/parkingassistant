@@ -18,9 +18,12 @@
 - планов выезда, line occupancy
 - contact access logs и audit log
 
+Bootstrap seed:
+
+- [../seeds/001_bootstrap_system_admin.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/seeds/001_bootstrap_system_admin.sql)
+
 ## Migration Strategy
 
 - каждая следующая миграция получает новый префикс `002_`, `003_` и так далее
 - destructive changes не правят `001`, а добавляются новыми миграциями
 - бизнес-ограничения сначала фиксируются на уровне БД, потом дублируются в application validation
-
