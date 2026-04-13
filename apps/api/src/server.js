@@ -14,9 +14,30 @@ const pool = databaseUrl
     })
   : null;
 
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload));
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+
+  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
+  if (!rawBody) {
+    return {};
+  }
+
+  return JSON.parse(rawBody);
+}
+
+function isIsoDate(value) {
+  return typeof value === 'string' && isoDatePattern.test(value);
 }
 
 async function queryOne(text, params = []) {
@@ -259,6 +280,281 @@ async function handleAdminPlacesList() {
   }
 }
 
+async function handleAdminPlaceReleasesList(searchParams) {
+  const dateFrom = searchParams.get('dateFrom');
+  const dateTo = searchParams.get('dateTo');
+
+  if ((dateFrom && !isIsoDate(dateFrom)) || (dateTo && !isIsoDate(dateTo))) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'dateFrom and dateTo must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const releases = await queryMany(
+    `
+      select
+        pr.id,
+        lower(pr.release_during)::date as date_from,
+        (upper(pr.release_during)::date - 1) as date_to,
+        pr.status,
+        pr.created_via,
+        pr.created_at,
+        pr.notes,
+        u.id as user_id,
+        u.display_name as user_display_name,
+        u.department as user_department,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.place_type as parking_place_type
+      from place_releases pr
+      join users u on u.id = pr.user_id
+      join parking_places pp on pp.id = pr.parking_place_id
+      where pr.status = 'active'
+        and ($1::date is null or pr.release_during && daterange($1::date, ($2::date + 1), '[)'))
+      order by lower(pr.release_during), pp.code
+    `,
+    [dateFrom || null, dateTo || dateFrom || null]
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      releases: releases.map((release) => ({
+        id: release.id,
+        dateFrom: release.date_from,
+        dateTo: release.date_to,
+        status: release.status,
+        createdVia: release.created_via,
+        createdAt: release.created_at,
+        notes: release.notes,
+        user: {
+          id: release.user_id,
+          displayName: release.user_display_name,
+          department: release.user_department
+        },
+        parkingPlace: {
+          id: release.parking_place_id,
+          code: release.parking_place_code,
+          title: release.parking_place_title,
+          placeType: release.parking_place_type
+        }
+      }))
+    }
+  };
+}
+
+async function handleAdminPlaceReleaseCreate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const parkingPlaceId = body.parkingPlaceId;
+  const dateFrom = body.dateFrom;
+  const dateTo = body.dateTo || dateFrom;
+  const notes = typeof body.notes === 'string' ? body.notes.trim() || null : null;
+
+  if (!parkingPlaceId || !isIsoDate(dateFrom) || !isIsoDate(dateTo)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'parkingPlaceId, dateFrom and dateTo are required; dates must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  if (dateTo < dateFrom) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'dateTo must be greater than or equal to dateFrom'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const ownerResult = await client.query(
+      `
+        select
+          pa.user_id,
+          u.display_name as user_display_name,
+          pp.code as parking_place_code
+        from permanent_assignments pa
+        join users u on u.id = pa.user_id
+        join parking_places pp on pp.id = pa.parking_place_id
+        where pa.parking_place_id = $1
+          and pa.valid_during @> $2::date
+          and pa.valid_during @> $3::date
+        order by lower(pa.valid_during) desc
+        limit 1
+      `,
+      [parkingPlaceId, dateFrom, dateTo]
+    );
+
+    const owner = ownerResult.rows[0];
+    if (!owner) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Parking place has no permanent owner for the selected date range'
+        }
+      };
+    }
+
+    const overlapResult = await client.query(
+      `
+        select id
+        from place_releases
+        where parking_place_id = $1
+          and status = 'active'
+          and release_during && daterange($2::date, ($3::date + 1), '[)')
+        limit 1
+      `,
+      [parkingPlaceId, dateFrom, dateTo]
+    );
+
+    if (overlapResult.rows[0]) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Parking place already has an active release overlapping this date range'
+        }
+      };
+    }
+
+    const releaseResult = await client.query(
+      `
+        insert into place_releases (
+          user_id,
+          parking_place_id,
+          release_during,
+          created_via,
+          notes
+        )
+        values (
+          $1,
+          $2,
+          daterange($3::date, ($4::date + 1), '[)'),
+          'admin_web',
+          $5
+        )
+        returning
+          id,
+          lower(release_during)::date as date_from,
+          (upper(release_during)::date - 1) as date_to,
+          status,
+          created_via,
+          created_at
+      `,
+      [owner.user_id, parkingPlaceId, dateFrom, dateTo, notes]
+    );
+
+    const release = releaseResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'place_release',
+          $1,
+          'place_release_created',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        release.id,
+        JSON.stringify({
+          userId: owner.user_id,
+          userDisplayName: owner.user_display_name,
+          parkingPlaceId,
+          parkingPlaceCode: owner.parking_place_code,
+          dateFrom,
+          dateTo,
+          createdVia: 'admin_web'
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        release: {
+          id: release.id,
+          dateFrom: release.date_from,
+          dateTo: release.date_to,
+          status: release.status,
+          createdVia: release.created_via,
+          createdAt: release.created_at,
+          user: {
+            id: owner.user_id,
+            displayName: owner.user_display_name
+          },
+          parkingPlace: {
+            id: parkingPlaceId,
+            code: owner.parking_place_code
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
@@ -297,12 +593,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/place-releases') {
+    try {
+      const result = await handleAdminPlaceReleasesList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
+    const result = await handleAdminPlaceReleaseCreate(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     sendJson(res, 200, {
       status: 'ok',
       service: 'api',
       message: 'Parking Assistant API is running',
-      endpoints: ['/health', '/health/db', '/auth/bootstrap-status', '/admin/users', '/admin/places']
+      endpoints: [
+        '/health',
+        '/health/db',
+        '/auth/bootstrap-status',
+        '/admin/users',
+        '/admin/places',
+        '/admin/place-releases'
+      ]
     });
     return;
   }
