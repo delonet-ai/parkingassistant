@@ -258,18 +258,26 @@ function renderReleasesTable(releases) {
   }
 
   const rows = releases
-    .map(
-      (release) => `
+    .map((release) => {
+      const releaseDate = formatDate(release.dateFrom);
+      return `
         <tr>
-          <td>${escapeHtml(formatDate(release.dateFrom))}</td>
+          <td>${escapeHtml(releaseDate)}</td>
           <td>${escapeHtml(formatDate(release.dateTo))}</td>
           <td>${escapeHtml(release.parkingPlace.code)}</td>
           <td>${escapeHtml(release.user.displayName)}</td>
           <td>${release.user.department ? escapeHtml(release.user.department) : '—'}</td>
           <td>${release.notes ? escapeHtml(release.notes) : '—'}</td>
+          <td>
+            <form method="post" action="/admin/place-releases/cancel">
+              <input type="hidden" name="releaseId" value="${escapeHtml(release.id)}" />
+              <input type="hidden" name="date" value="${escapeHtml(releaseDate)}" />
+              <button class="button-secondary" type="submit">Отменить</button>
+            </form>
+          </td>
         </tr>
-      `
-    )
+      `;
+    })
     .join('');
 
   return `
@@ -282,6 +290,7 @@ function renderReleasesTable(releases) {
           <th>Владелец</th>
           <th>Дирекция</th>
           <th>Комментарий</th>
+          <th>Действие</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -1041,6 +1050,8 @@ const server = http.createServer(async (req, res) => {
       const notice =
         url.searchParams.get('released') === '1'
           ? { type: 'ok', text: 'Отдача места создана.' }
+          : url.searchParams.get('releaseCanceled') === '1'
+            ? { type: 'ok', text: 'Отдача места отменена.' }
           : url.searchParams.get('reserved') === '1'
             ? { type: 'ok', text: 'Ручное назначение создано.' }
           : url.searchParams.get('requested') === '1'
@@ -1100,6 +1111,26 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/place-releases/cancel') {
+    const form = await readFormBody(req);
+    const payload = {
+      releaseId: form.get('releaseId')
+    };
+    const date = form.get('date') || todayIsoDate();
+    const result = await postJson('/admin/place-releases/cancel', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&releaseCanceled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }

@@ -1887,6 +1887,197 @@ async function handleAdminPlaceReleaseCreate(req) {
   }
 }
 
+async function handleAdminPlaceReleaseCancel(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const releaseId = body.releaseId;
+
+  if (!releaseId) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'releaseId is required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const releaseResult = await client.query(
+      `
+        select
+          pr.id,
+          pr.parking_place_id,
+          pr.user_id,
+          pr.release_during,
+          pr.status,
+          lower(pr.release_during)::date as date_from,
+          (upper(pr.release_during)::date - 1) as date_to,
+          u.display_name as user_display_name,
+          pp.code as parking_place_code
+        from place_releases pr
+        join users u on u.id = pr.user_id
+        join parking_places pp on pp.id = pr.parking_place_id
+        where pr.id = $1
+        for update
+      `,
+      [releaseId]
+    );
+
+    const release = releaseResult.rows[0];
+
+    if (!release) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Place release not found'
+        }
+      };
+    }
+
+    if (release.status === 'canceled') {
+      await client.query('rollback');
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          release: {
+            id: release.id,
+            status: release.status,
+            dateFrom: release.date_from,
+            dateTo: release.date_to
+          }
+        }
+      };
+    }
+
+    const reservationResult = await client.query(
+      `
+        select id
+        from reservations
+        where parking_place_id = $1
+          and status = 'active'
+          and reservation_date <@ $2::daterange
+        limit 1
+      `,
+      [release.parking_place_id, release.release_during]
+    );
+
+    if (reservationResult.rows[0]) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Cannot cancel release while it has active reservations'
+        }
+      };
+    }
+
+    const updateResult = await client.query(
+      `
+        update place_releases
+        set
+          status = 'canceled',
+          canceled_at = now(),
+          updated_at = now()
+        where id = $1
+        returning
+          id,
+          lower(release_during)::date as date_from,
+          (upper(release_during)::date - 1) as date_to,
+          status,
+          canceled_at
+      `,
+      [releaseId]
+    );
+    const canceledRelease = updateResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'place_release',
+          $1,
+          'place_release_canceled',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        releaseId,
+        JSON.stringify({
+          userId: release.user_id,
+          userDisplayName: release.user_display_name,
+          parkingPlaceId: release.parking_place_id,
+          parkingPlaceCode: release.parking_place_code,
+          dateFrom: release.date_from,
+          dateTo: release.date_to
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        release: {
+          id: canceledRelease.id,
+          dateFrom: canceledRelease.date_from,
+          dateTo: canceledRelease.date_to,
+          status: canceledRelease.status,
+          canceledAt: canceledRelease.canceled_at
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
@@ -1985,6 +2176,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/admin/place-releases/cancel') {
+    const result = await handleAdminPlaceReleaseCancel(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests') {
     const result = await handleAdminEmployeeParkingRequestCreate(req);
     sendJson(res, result.statusCode, result.payload);
@@ -2023,6 +2220,7 @@ const server = http.createServer(async (req, res) => {
         '/admin/places',
         '/admin/dashboard',
         '/admin/place-releases',
+        '/admin/place-releases/cancel',
         '/admin/employee-parking-requests',
         '/admin/queue/process',
         '/admin/reservations/manual'
