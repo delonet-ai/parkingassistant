@@ -519,6 +519,13 @@ function renderDayDashboard(model) {
               <td>${reservation.user?.department ? escapeHtml(reservation.user.department) : '—'}</td>
               <td>${escapeHtml(reservation.source)}</td>
               <td>${reservation.reason ? escapeHtml(reservation.reason) : '—'}</td>
+              <td>
+                <form method="post" action="/admin/reservations/cancel">
+                  <input type="hidden" name="reservationId" value="${escapeHtml(reservation.id)}" />
+                  <input type="hidden" name="date" value="${escapeHtml(formatDate(reservation.reservationDate))}" />
+                  <button class="button-secondary" type="submit">Отменить</button>
+                </form>
+              </td>
             </tr>
           `
         )
@@ -585,6 +592,7 @@ function renderDayDashboard(model) {
                 <th>Дирекция</th>
                 <th>Источник</th>
                 <th>Причина</th>
+                <th>Действие</th>
               </tr>
             </thead>
             <tbody>${reservationRows}</tbody>
@@ -1054,6 +1062,8 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'ok', text: 'Отдача места отменена.' }
           : url.searchParams.get('reserved') === '1'
             ? { type: 'ok', text: 'Ручное назначение создано.' }
+          : url.searchParams.get('reservationCanceled') === '1'
+            ? { type: 'ok', text: 'Назначение отменено.' }
           : url.searchParams.get('requested') === '1'
             ? { type: 'ok', text: 'Заявка сотрудника добавлена в очередь.' }
           : url.searchParams.get('requestCanceled') === '1'
@@ -1153,6 +1163,26 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/reservations/cancel') {
+    const form = await readFormBody(req);
+    const payload = {
+      reservationId: form.get('reservationId')
+    };
+    const date = form.get('date') || todayIsoDate();
+    const result = await postJson('/admin/reservations/cancel', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&reservationCanceled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }

@@ -1887,6 +1887,232 @@ async function handleAdminPlaceReleaseCreate(req) {
   }
 }
 
+async function handleAdminReservationCancel(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const reservationId = body.reservationId;
+
+  if (!reservationId) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'reservationId is required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const reservationResult = await client.query(
+      `
+        select
+          r.id,
+          r.reservation_date,
+          r.parking_place_id,
+          r.user_id,
+          r.employee_parking_request_id,
+          r.guest_parking_request_id,
+          r.source,
+          r.status,
+          u.display_name as user_display_name,
+          pp.code as parking_place_code
+        from reservations r
+        join parking_places pp on pp.id = r.parking_place_id
+        left join users u on u.id = r.user_id
+        where r.id = $1
+        for update
+      `,
+      [reservationId]
+    );
+
+    const reservation = reservationResult.rows[0];
+
+    if (!reservation) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Reservation not found'
+        }
+      };
+    }
+
+    if (reservation.status === 'canceled') {
+      await client.query('rollback');
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          reservation: {
+            id: reservation.id,
+            reservationDate: reservation.reservation_date,
+            status: reservation.status
+          }
+        }
+      };
+    }
+
+    if (reservation.status !== 'active') {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Only active reservations can be canceled'
+        }
+      };
+    }
+
+    const canceledReservationResult = await client.query(
+      `
+        update reservations
+        set
+          status = 'canceled',
+          canceled_at = now(),
+          updated_at = now()
+        where id = $1
+        returning id, reservation_date, status, canceled_at
+      `,
+      [reservationId]
+    );
+    const canceledReservation = canceledReservationResult.rows[0];
+
+    if (reservation.employee_parking_request_id) {
+      await client.query(
+        `
+          update employee_parking_requests
+          set
+            status = 'queued',
+            assigned_reservation_id = null,
+            updated_at = now()
+          where id = $1
+            and status = 'assigned'
+        `,
+        [reservation.employee_parking_request_id]
+      );
+
+      await client.query(
+        `
+          update queue_entries
+          set
+            status = 'waiting',
+            assigned_reservation_id = null,
+            processed_at = null,
+            updated_at = now()
+          where employee_parking_request_id = $1
+            and status = 'assigned'
+        `,
+        [reservation.employee_parking_request_id]
+      );
+    }
+
+    await client.query(
+      `
+        insert into reservation_events (
+          reservation_id,
+          event_type,
+          payload,
+          source
+        )
+        values ($1, 'reservation_canceled', $2::jsonb, $3)
+      `,
+      [
+        reservationId,
+        JSON.stringify({
+          reservationDate: reservation.reservation_date,
+          parkingPlaceId: reservation.parking_place_id,
+          parkingPlaceCode: reservation.parking_place_code,
+          userId: reservation.user_id,
+          employeeParkingRequestId: reservation.employee_parking_request_id,
+          guestParkingRequestId: reservation.guest_parking_request_id
+        }),
+        reservation.source
+      ]
+    );
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'reservation',
+          $1,
+          'reservation_canceled',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        reservationId,
+        JSON.stringify({
+          reservationDate: reservation.reservation_date,
+          parkingPlaceId: reservation.parking_place_id,
+          parkingPlaceCode: reservation.parking_place_code,
+          userId: reservation.user_id,
+          userDisplayName: reservation.user_display_name,
+          source: reservation.source
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        reservation: {
+          id: canceledReservation.id,
+          reservationDate: canceledReservation.reservation_date,
+          status: canceledReservation.status,
+          canceledAt: canceledReservation.canceled_at
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminPlaceReleaseCancel(req) {
   let body;
 
@@ -2206,6 +2432,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/admin/reservations/cancel') {
+    const result = await handleAdminReservationCancel(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     sendJson(res, 200, {
       status: 'ok',
@@ -2223,7 +2455,8 @@ const server = http.createServer(async (req, res) => {
         '/admin/place-releases/cancel',
         '/admin/employee-parking-requests',
         '/admin/queue/process',
-        '/admin/reservations/manual'
+        '/admin/reservations/manual',
+        '/admin/reservations/cancel'
       ]
     });
     return;
