@@ -1140,6 +1140,308 @@ async function handleAdminEmployeeParkingRequestCancel(req) {
   }
 }
 
+async function handleAdminQueueProcess(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const queueDate = body.date;
+
+  if (!isIsoDate(queueDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date is required and must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`process_queue:${queueDate}`]);
+
+    const queueResult = await client.query(
+      `
+        select
+          qe.id as queue_entry_id,
+          qe.queue_position,
+          epr.id as request_id,
+          epr.user_id,
+          u.display_name as user_display_name
+        from queue_entries qe
+        join employee_parking_requests epr on epr.id = qe.employee_parking_request_id
+        join users u on u.id = epr.user_id
+        where qe.queue_date = $1::date
+          and qe.status = 'waiting'
+          and epr.status = 'queued'
+        order by qe.queue_position
+        for update of qe, epr
+      `,
+      [queueDate]
+    );
+
+    const availablePlacesResult = await client.query(
+      `
+        select
+          pr.id as release_id,
+          pp.id as parking_place_id,
+          pp.code as parking_place_code,
+          pp.place_type,
+          pr.user_id as owner_user_id
+        from place_releases pr
+        join parking_places pp on pp.id = pr.parking_place_id
+        left join reservations r
+          on r.parking_place_id = pp.id
+          and r.reservation_date = $1::date
+          and r.status = 'active'
+        where pr.status = 'active'
+          and pr.release_during @> $1::date
+          and r.id is null
+        order by
+          case pp.place_type
+            when 'double' then 1
+            when 'triple' then 2
+            else 3
+          end,
+          pp.code
+        for update of pr, pp
+      `,
+      [queueDate]
+    );
+
+    const queueEntries = queueResult.rows;
+    const availablePlaces = availablePlacesResult.rows;
+    const assignments = [];
+    const skipped = [];
+    let placeIndex = 0;
+
+    for (const entry of queueEntries) {
+      while (placeIndex < availablePlaces.length && availablePlaces[placeIndex].owner_user_id === entry.user_id) {
+        placeIndex += 1;
+      }
+
+      const place = availablePlaces[placeIndex];
+
+      if (!place) {
+        skipped.push({
+          requestId: entry.request_id,
+          queueEntryId: entry.queue_entry_id,
+          queuePosition: entry.queue_position,
+          userId: entry.user_id,
+          userDisplayName: entry.user_display_name,
+          reason: 'no_available_released_place'
+        });
+        continue;
+      }
+
+      const reservationResult = await client.query(
+        `
+          insert into reservations (
+            reservation_date,
+            parking_place_id,
+            user_id,
+            employee_parking_request_id,
+            source,
+            reason
+          )
+          values ($1::date, $2, $3, $4, 'queue', $5)
+          returning id, reservation_date, source, status, created_at
+        `,
+        [
+          queueDate,
+          place.parking_place_id,
+          entry.user_id,
+          entry.request_id,
+          `Queue assignment #${entry.queue_position}`
+        ]
+      );
+      const reservation = reservationResult.rows[0];
+
+      await client.query(
+        `
+          update employee_parking_requests
+          set
+            status = 'assigned',
+            assigned_reservation_id = $1,
+            updated_at = now()
+          where id = $2
+        `,
+        [reservation.id, entry.request_id]
+      );
+
+      await client.query(
+        `
+          update queue_entries
+          set
+            status = 'assigned',
+            assigned_reservation_id = $1,
+            processed_at = now(),
+            updated_at = now()
+          where id = $2
+        `,
+        [reservation.id, entry.queue_entry_id]
+      );
+
+      await client.query(
+        `
+          insert into reservation_events (
+            reservation_id,
+            event_type,
+            payload,
+            source
+          )
+          values ($1, 'reservation_created', $2::jsonb, 'queue')
+        `,
+        [
+          reservation.id,
+          JSON.stringify({
+            releaseId: place.release_id,
+            queueEntryId: entry.queue_entry_id,
+            queuePosition: entry.queue_position,
+            requestId: entry.request_id,
+            userId: entry.user_id,
+            parkingPlaceId: place.parking_place_id,
+            queueDate
+          })
+        ]
+      );
+
+      await client.query(
+        `
+          insert into parking_movements (
+            reservation_id,
+            movement_date,
+            to_parking_place_id,
+            movement_type,
+            reason
+          )
+          values ($1, $2::date, $3, 'queue_assignment', $4)
+        `,
+        [
+          reservation.id,
+          queueDate,
+          place.parking_place_id,
+          `Assigned from queue position #${entry.queue_position}`
+        ]
+      );
+
+      assignments.push({
+        requestId: entry.request_id,
+        queueEntryId: entry.queue_entry_id,
+        queuePosition: entry.queue_position,
+        reservationId: reservation.id,
+        user: {
+          id: entry.user_id,
+          displayName: entry.user_display_name
+        },
+        parkingPlace: {
+          id: place.parking_place_id,
+          code: place.parking_place_code
+        }
+      });
+
+      placeIndex += 1;
+    }
+
+    if (skipped.length) {
+      await client.query(
+        `
+          update queue_entries
+          set
+            status = 'skipped',
+            processed_at = now(),
+            updated_at = now()
+          where id = any($1::uuid[])
+            and status = 'waiting'
+        `,
+        [skipped.map((item) => item.queueEntryId)]
+      );
+    }
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'queue_entry',
+          'queue_processed',
+          'admin-web',
+          $1::jsonb
+        )
+      `,
+      [
+        JSON.stringify({
+          queueDate,
+          waitingCount: queueEntries.length,
+          availableReleasedPlacesCount: availablePlaces.length,
+          assignedCount: assignments.length,
+          skippedCount: skipped.length,
+          assignments,
+          skipped
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        date: queueDate,
+        assignedCount: assignments.length,
+        skippedCount: skipped.length,
+        assignments,
+        skipped
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Queue processing hit an existing active reservation for this date'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminManualReservationCreate(req) {
   let body;
 
@@ -1695,6 +1997,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/admin/queue/process') {
+    const result = await handleAdminQueueProcess(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
     const result = await handleAdminManualReservationCreate(req);
     sendJson(res, result.statusCode, result.payload);
@@ -1716,6 +2024,7 @@ const server = http.createServer(async (req, res) => {
         '/admin/dashboard',
         '/admin/place-releases',
         '/admin/employee-parking-requests',
+        '/admin/queue/process',
         '/admin/reservations/manual'
       ]
     });

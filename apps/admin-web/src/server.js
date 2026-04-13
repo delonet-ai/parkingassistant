@@ -463,6 +463,20 @@ function renderEmployeeRequestsTable(model) {
   `;
 }
 
+function renderQueueProcessForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const requests = model.employeeRequests?.data?.requests || [];
+  const waitingCount = requests.filter((request) => request.queueEntry?.status === 'waiting').length;
+
+  return `
+    <form class="inline-action-form" method="post" action="/admin/queue/process">
+      <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+      <button type="submit" ${waitingCount ? '' : 'disabled'}>Обработать очередь</button>
+      <span>${escapeHtml(waitingCount)} ожидает обработки</span>
+    </form>
+  `;
+}
+
 function renderDayDashboard(model) {
   const dashboard = model.dashboard?.data || {};
   const releasedPlaces = dashboard.releasedPlaces || [];
@@ -529,6 +543,7 @@ function renderDayDashboard(model) {
     ${renderEmployeeCreateForm(model)}
 
     <h3>Заявки сотрудников</h3>
+    ${renderQueueProcessForm(model)}
     ${renderEmployeeRequestForm(model)}
     ${renderEmployeeRequestsTable(model)}
 
@@ -781,6 +796,27 @@ function renderPage(model) {
         background: #fff;
       }
 
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.48;
+      }
+
+      .inline-action-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        margin: 0 0 16px;
+      }
+
+      .inline-action-form button {
+        width: auto;
+      }
+
+      .inline-action-form span {
+        color: var(--muted);
+      }
+
       option:disabled {
         color: var(--muted);
       }
@@ -1013,6 +1049,11 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'ok', text: 'Заявка сотрудника отменена.' }
           : url.searchParams.get('employeeCreated') === '1'
             ? { type: 'ok', text: 'Сотрудник создан. Теперь его можно поставить в очередь.' }
+          : url.searchParams.get('queueProcessed')
+            ? {
+                type: 'ok',
+                text: `Очередь обработана: назначено ${url.searchParams.get('assigned') || 0}, пропущено ${url.searchParams.get('skipped') || 0}.`
+              }
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
@@ -1146,6 +1187,27 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/queue/process') {
+    const form = await readFormBody(req);
+    const date = form.get('date') || todayIsoDate();
+    const result = await postJson('/admin/queue/process', { date });
+
+    if (result.ok) {
+      const assigned = result.data?.assignedCount || 0;
+      const skipped = result.data?.skippedCount || 0;
+      res.writeHead(303, {
+        location: `/?date=${encodeURIComponent(date)}&queueProcessed=1&assigned=${encodeURIComponent(assigned)}&skipped=${encodeURIComponent(skipped)}`
+      });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
