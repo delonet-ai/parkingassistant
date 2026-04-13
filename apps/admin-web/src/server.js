@@ -43,7 +43,7 @@ function renderPlacesTable(places) {
       const tags = [
         place.placeType,
         place.floorLabel || 'без этажа',
-        place.lineGroup ? `линия ${place.lineGroup.code}` : 'single',
+        place.lineGroup ? `линия ${place.lineGroup.code}` : 'без линии',
         place.isActive ? 'active' : 'inactive'
       ]
         .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)

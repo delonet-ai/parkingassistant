@@ -104,6 +104,12 @@
 - отображение bootstrap admin
 - отображение списка парковочных мест из `GET /admin/places`
 
+Текущий import baseline:
+
+- `npm run db:import:parking-catalog`
+- импортирует Excel-каталог мест в `parking_places`
+- исходные статус, дирекция и ФИО пока сохраняются в `metadata`
+
 Принципиальные ограничения:
 
 - backend stateless
