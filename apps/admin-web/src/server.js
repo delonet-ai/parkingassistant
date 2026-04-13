@@ -308,7 +308,8 @@ function renderManualReservationForm(model) {
   const employeeOptions = employees
     .map((employee) => {
       const department = employee.department ? ` · ${employee.department}` : '';
-      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}`)}</option>`;
+      const permanent = employee.permanentPlace ? ` · место ${employee.permanentPlace.code}` : ' · без места';
+      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}${permanent}`)}</option>`;
     })
     .join('');
 
@@ -338,15 +339,53 @@ function renderManualReservationForm(model) {
   `;
 }
 
+function renderEmployeeCreateForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+
+  return `
+    <form class="action-form" method="post" action="/admin/employees">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>ФИО</span>
+        <input type="text" name="displayName" placeholder="Иванов Иван" required />
+      </label>
+      <label>
+        <span>Дирекция</span>
+        <input type="text" name="department" placeholder="Например: ИТ" />
+      </label>
+      <label>
+        <span>Email</span>
+        <input type="email" name="email" placeholder="name@example.com" />
+      </label>
+      <label>
+        <span>Телефон</span>
+        <input type="text" name="phone" placeholder="+7..." />
+      </label>
+      <label class="wide">
+        <span>Yandex Messenger ID</span>
+        <input type="text" name="yandexMessengerUserId" placeholder="Заполним позже при интеграции" />
+      </label>
+      <button type="submit">Создать сотрудника</button>
+    </form>
+  `;
+}
+
 function renderEmployeeRequestForm(model) {
   const employees = model.employees?.data?.employees || [];
   const selectedDate = model.selectedDate || todayIsoDate();
+  const employeesWithoutPlace = employees.filter((employee) => !employee.permanentPlace);
   const employeeOptions = employees
     .map((employee) => {
       const department = employee.department ? ` · ${employee.department}` : '';
-      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}`)}</option>`;
+      const permanent = employee.permanentPlace ? ` · место ${employee.permanentPlace.code}` : ' · без места';
+      const disabled = employee.permanentPlace ? ' disabled' : '';
+      return `<option value="${escapeHtml(employee.id)}"${disabled}>${escapeHtml(`${employee.displayName}${department}${permanent}`)}</option>`;
     })
     .join('');
+
+  if (!employeesWithoutPlace.length) {
+    return '<p class="empty">На выбранную дату все сотрудники в справочнике имеют постоянные места. Создайте сотрудника без места выше или смените дату.</p>';
+  }
 
   return `
     <form class="action-form" method="post" action="/admin/employee-parking-requests">
@@ -485,6 +524,9 @@ function renderDayDashboard(model) {
 
     <h3>Ручное назначение</h3>
     ${renderManualReservationForm(model)}
+
+    <h3>Создать сотрудника без места</h3>
+    ${renderEmployeeCreateForm(model)}
 
     <h3>Заявки сотрудников</h3>
     ${renderEmployeeRequestForm(model)}
@@ -739,6 +781,10 @@ function renderPage(model) {
         background: #fff;
       }
 
+      option:disabled {
+        color: var(--muted);
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -952,7 +998,7 @@ const server = http.createServer(async (req, res) => {
         fetchJson('/auth/bootstrap-status'),
         fetchJson('/admin/places'),
         fetchJson('/admin/place-releases'),
-        fetchJson('/admin/employees'),
+        fetchJson(`/admin/employees?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`)
       ]);
@@ -965,6 +1011,8 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'ok', text: 'Заявка сотрудника добавлена в очередь.' }
           : url.searchParams.get('requestCanceled') === '1'
             ? { type: 'ok', text: 'Заявка сотрудника отменена.' }
+          : url.searchParams.get('employeeCreated') === '1'
+            ? { type: 'ok', text: 'Сотрудник создан. Теперь его можно поставить в очередь.' }
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
@@ -1033,6 +1081,30 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employees') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const payload = {
+      displayName: form.get('displayName'),
+      department: form.get('department'),
+      email: form.get('email'),
+      phone: form.get('phone'),
+      yandexMessengerUserId: form.get('yandexMessengerUserId')
+    };
+    const result = await postJson('/admin/employees', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(selectedDate)}&employeeCreated=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }

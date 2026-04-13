@@ -207,23 +207,44 @@ async function handleAdminUsersList() {
   }
 }
 
-async function handleAdminEmployeesList() {
+async function handleAdminEmployeesList(searchParams) {
+  const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
   try {
     const employees = await queryMany(
       `
         select
-          id,
-          employee_no,
-          display_name,
-          phone,
-          yandex_messenger_user_id,
-          department,
-          created_at
-        from users
-        where kind = 'employee'
-          and deleted_at is null
-        order by lower(display_name)
-      `
+          u.id,
+          u.employee_no,
+          u.display_name,
+          u.email,
+          u.phone,
+          u.yandex_messenger_user_id,
+          u.department,
+          u.created_at,
+          pp.id as permanent_place_id,
+          pp.code as permanent_place_code
+        from users u
+        left join permanent_assignments pa
+          on pa.user_id = u.id
+          and pa.valid_during @> $1::date
+        left join parking_places pp on pp.id = pa.parking_place_id
+        where u.kind = 'employee'
+          and u.deleted_at is null
+        order by lower(u.display_name)
+      `,
+      [date]
     );
 
     return {
@@ -231,18 +252,170 @@ async function handleAdminEmployeesList() {
       payload: {
         status: 'ok',
         service: 'api',
+        date,
         employees: employees.map((employee) => ({
           id: employee.id,
           employeeNo: employee.employee_no,
           displayName: employee.display_name,
+          email: employee.email,
           phone: employee.phone,
           yandexMessengerUserId: employee.yandex_messenger_user_id,
           department: employee.department,
+          permanentPlace: employee.permanent_place_id
+            ? {
+                id: employee.permanent_place_id,
+                code: employee.permanent_place_code
+              }
+            : null,
           createdAt: employee.created_at
         }))
       }
     };
   } catch (error) {
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  }
+}
+
+async function handleAdminEmployeeCreate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
+  const department = typeof body.department === 'string' ? body.department.trim() || null : null;
+  const email = typeof body.email === 'string' ? body.email.trim() || null : null;
+  const phone = typeof body.phone === 'string' ? body.phone.trim() || null : null;
+  const yandexMessengerUserId =
+    typeof body.yandexMessengerUserId === 'string' ? body.yandexMessengerUserId.trim() || null : null;
+
+  if (!displayName) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'displayName is required'
+      }
+    };
+  }
+
+  const nameParts = displayName.split(/\s+/).filter(Boolean);
+  const lastName = nameParts[0] || displayName;
+  const firstName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : displayName;
+
+  try {
+    const employee = await queryOne(
+      `
+        insert into users (
+          kind,
+          first_name,
+          last_name,
+          display_name,
+          email,
+          phone,
+          department,
+          yandex_messenger_user_id
+        )
+        values (
+          'employee',
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7
+        )
+        returning
+          id,
+          employee_no,
+          display_name,
+          email,
+          phone,
+          department,
+          yandex_messenger_user_id,
+          created_at
+      `,
+      [firstName, lastName, displayName, email, phone, department, yandexMessengerUserId]
+    );
+
+    await queryOne(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'user',
+          $1,
+          'employee_created',
+          'admin-web',
+          $2::jsonb
+        )
+        returning id
+      `,
+      [
+        employee.id,
+        JSON.stringify({
+          displayName,
+          email,
+          phone,
+          department,
+          yandexMessengerUserId
+        })
+      ]
+    );
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        employee: {
+          id: employee.id,
+          employeeNo: employee.employee_no,
+          displayName: employee.display_name,
+          email: employee.email,
+          phone: employee.phone,
+          department: employee.department,
+          yandexMessengerUserId: employee.yandex_messenger_user_id,
+          createdAt: employee.created_at
+        }
+      }
+    };
+  } catch (error) {
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee with the same email or messenger id already exists'
+        }
+      };
+    }
+
     return {
       statusCode: 500,
       payload: {
@@ -1445,7 +1618,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && url.pathname === '/admin/employees') {
-    const result = await handleAdminEmployeesList();
+    const result = await handleAdminEmployeesList(url.searchParams);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employees') {
+    const result = await handleAdminEmployeeCreate(req);
     sendJson(res, result.statusCode, result.payload);
     return;
   }
