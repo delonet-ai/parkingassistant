@@ -96,6 +96,13 @@
 - `GET /health/db`
 - `GET /auth/bootstrap-status`
 - `GET /admin/users`
+- `GET /admin/places`
+
+Текущий Admin Web baseline:
+
+- домашняя страница с агрегированным статусом backend
+- отображение bootstrap admin
+- отображение списка парковочных мест из `GET /admin/places`
 
 Принципиальные ограничения:
 

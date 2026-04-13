@@ -186,6 +186,65 @@ async function handleAdminUsersList() {
   }
 }
 
+async function handleAdminPlacesList() {
+  try {
+    const places = await queryMany(
+      `
+        select
+          pp.id,
+          pp.code,
+          pp.title,
+          pp.floor_label,
+          pp.place_type,
+          pp.guest_priority_rank,
+          pp.is_active,
+          lg.id as line_group_id,
+          lg.code as line_group_code,
+          lg.name as line_group_name,
+          lg.capacity as line_group_capacity
+        from parking_places pp
+        left join line_groups lg on lg.id = pp.line_group_id
+        where pp.deleted_at is null
+        order by pp.floor_label nulls last, pp.code
+      `
+    );
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        places: places.map((place) => ({
+          id: place.id,
+          code: place.code,
+          title: place.title,
+          floorLabel: place.floor_label,
+          placeType: place.place_type,
+          guestPriorityRank: place.guest_priority_rank,
+          isActive: place.is_active,
+          lineGroup: place.line_group_id
+            ? {
+                id: place.line_group_id,
+                code: place.line_group_code,
+                name: place.line_group_name,
+                capacity: place.line_group_capacity
+              }
+            : null
+        }))
+      }
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
@@ -218,12 +277,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/places') {
+    const result = await handleAdminPlacesList();
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     sendJson(res, 200, {
       status: 'ok',
       service: 'api',
       message: 'Parking Assistant API is running',
-      endpoints: ['/health', '/health/db', '/auth/bootstrap-status', '/admin/users']
+      endpoints: ['/health', '/health/db', '/auth/bootstrap-status', '/admin/users', '/admin/places']
     });
     return;
   }

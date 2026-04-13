@@ -69,7 +69,7 @@ services:
       - "${ADMIN_WEB_PORT:-3100}:3100"
     volumes:
       - /opt/git/parkingassistant/staging/logs:/app/storage/logs
-    command: ["/bin/sh", "-lc", "echo 'Admin Web placeholder: replace with real start command'; sleep infinity"]
+    command: ["npm", "run", "admin-web:start"]
 
   bot-adapter:
     build:
