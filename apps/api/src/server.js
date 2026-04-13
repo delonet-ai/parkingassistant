@@ -207,6 +207,53 @@ async function handleAdminUsersList() {
   }
 }
 
+async function handleAdminEmployeesList() {
+  try {
+    const employees = await queryMany(
+      `
+        select
+          id,
+          employee_no,
+          display_name,
+          phone,
+          yandex_messenger_user_id,
+          department,
+          created_at
+        from users
+        where kind = 'employee'
+          and deleted_at is null
+        order by lower(display_name)
+      `
+    );
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        employees: employees.map((employee) => ({
+          id: employee.id,
+          employeeNo: employee.employee_no,
+          displayName: employee.display_name,
+          phone: employee.phone,
+          yandexMessengerUserId: employee.yandex_messenger_user_id,
+          department: employee.department,
+          createdAt: employee.created_at
+        }))
+      }
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  }
+}
+
 async function handleAdminPlacesList() {
   try {
     const places = await queryMany(
@@ -280,6 +327,119 @@ async function handleAdminPlacesList() {
   }
 }
 
+async function handleAdminDashboard(searchParams) {
+  const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const [releasedPlaces, reservations] = await Promise.all([
+    queryMany(
+      `
+        select
+          pr.id as release_id,
+          pr.notes as release_notes,
+          u.id as owner_user_id,
+          u.display_name as owner_display_name,
+          u.department as owner_department,
+          pp.id as parking_place_id,
+          pp.code as parking_place_code,
+          pp.title as parking_place_title,
+          pp.place_type as parking_place_type,
+          r.id as reservation_id
+        from place_releases pr
+        join users u on u.id = pr.user_id
+        join parking_places pp on pp.id = pr.parking_place_id
+        left join reservations r
+          on r.parking_place_id = pp.id
+          and r.reservation_date = $1::date
+          and r.status = 'active'
+        where pr.status = 'active'
+          and pr.release_during @> $1::date
+        order by pp.code
+      `,
+      [date]
+    ),
+    queryMany(
+      `
+        select
+          r.id,
+          r.reservation_date,
+          r.source,
+          r.reason,
+          r.created_at,
+          u.id as user_id,
+          u.display_name as user_display_name,
+          u.department as user_department,
+          pp.id as parking_place_id,
+          pp.code as parking_place_code,
+          pp.title as parking_place_title,
+          pp.place_type as parking_place_type
+        from reservations r
+        join parking_places pp on pp.id = r.parking_place_id
+        left join users u on u.id = r.user_id
+        where r.status = 'active'
+          and r.reservation_date = $1::date
+        order by pp.code
+      `,
+      [date]
+    )
+  ]);
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date,
+      releasedPlaces: releasedPlaces.map((place) => ({
+        releaseId: place.release_id,
+        releaseNotes: place.release_notes,
+        isReserved: Boolean(place.reservation_id),
+        owner: {
+          id: place.owner_user_id,
+          displayName: place.owner_display_name,
+          department: place.owner_department
+        },
+        parkingPlace: {
+          id: place.parking_place_id,
+          code: place.parking_place_code,
+          title: place.parking_place_title,
+          placeType: place.parking_place_type
+        }
+      })),
+      reservations: reservations.map((reservation) => ({
+        id: reservation.id,
+        reservationDate: reservation.reservation_date,
+        source: reservation.source,
+        reason: reservation.reason,
+        createdAt: reservation.created_at,
+        user: reservation.user_id
+          ? {
+              id: reservation.user_id,
+              displayName: reservation.user_display_name,
+              department: reservation.user_department
+            }
+          : null,
+        parkingPlace: {
+          id: reservation.parking_place_id,
+          code: reservation.parking_place_code,
+          title: reservation.parking_place_title,
+          placeType: reservation.parking_place_type
+        }
+      }))
+    }
+  };
+}
+
 async function handleAdminPlaceReleasesList(searchParams) {
   const dateFrom = searchParams.get('dateFrom');
   const dateTo = searchParams.get('dateTo');
@@ -349,6 +509,247 @@ async function handleAdminPlaceReleasesList(searchParams) {
       }))
     }
   };
+}
+
+async function handleAdminManualReservationCreate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const userId = body.userId;
+  const parkingPlaceId = body.parkingPlaceId;
+  const reservationDate = body.reservationDate;
+  const reason = typeof body.reason === 'string' ? body.reason.trim() || null : null;
+
+  if (!userId || !parkingPlaceId || !isIsoDate(reservationDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'userId, parkingPlaceId and reservationDate are required; date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const releasedPlaceResult = await client.query(
+      `
+        select
+          pr.id as release_id,
+          pr.user_id as owner_user_id,
+          pp.code as parking_place_code
+        from place_releases pr
+        join parking_places pp on pp.id = pr.parking_place_id
+        where pr.parking_place_id = $1
+          and pr.status = 'active'
+          and pr.release_during @> $2::date
+        limit 1
+      `,
+      [parkingPlaceId, reservationDate]
+    );
+
+    const releasedPlace = releasedPlaceResult.rows[0];
+    if (!releasedPlace) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Manual assignment is currently allowed only for places released for the selected date'
+        }
+      };
+    }
+
+    if (releasedPlace.owner_user_id === userId) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Released place owner cannot be manually assigned to the same released place'
+        }
+      };
+    }
+
+    const employeeResult = await client.query(
+      `
+        select id, display_name
+        from users
+        where id = $1
+          and kind = 'employee'
+          and deleted_at is null
+      `,
+      [userId]
+    );
+
+    const employee = employeeResult.rows[0];
+    if (!employee) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee not found'
+        }
+      };
+    }
+
+    const reservationResult = await client.query(
+      `
+        insert into reservations (
+          reservation_date,
+          parking_place_id,
+          user_id,
+          source,
+          reason
+        )
+        values (
+          $1::date,
+          $2,
+          $3,
+          'manual',
+          $4
+        )
+        returning id, reservation_date, source, status, created_at
+      `,
+      [reservationDate, parkingPlaceId, userId, reason]
+    );
+
+    const reservation = reservationResult.rows[0];
+
+    await client.query(
+      `
+        insert into reservation_events (
+          reservation_id,
+          event_type,
+          payload,
+          source
+        )
+        values ($1, 'reservation_created', $2::jsonb, 'manual')
+      `,
+      [
+        reservation.id,
+        JSON.stringify({
+          releaseId: releasedPlace.release_id,
+          userId,
+          parkingPlaceId,
+          reservationDate
+        })
+      ]
+    );
+
+    await client.query(
+      `
+        insert into parking_movements (
+          reservation_id,
+          movement_date,
+          to_parking_place_id,
+          movement_type,
+          reason
+        )
+        values ($1, $2::date, $3, 'manual_reassign', $4)
+      `,
+      [reservation.id, reservationDate, parkingPlaceId, reason || 'Manual admin assignment']
+    );
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'reservation',
+          $1,
+          'manual_reservation_created',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        reservation.id,
+        JSON.stringify({
+          releaseId: releasedPlace.release_id,
+          userId,
+          userDisplayName: employee.display_name,
+          parkingPlaceId,
+          parkingPlaceCode: releasedPlace.parking_place_code,
+          reservationDate
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        reservation: {
+          id: reservation.id,
+          reservationDate: reservation.reservation_date,
+          source: reservation.source,
+          status: reservation.status,
+          createdAt: reservation.created_at,
+          user: {
+            id: userId,
+            displayName: employee.display_name
+          },
+          parkingPlace: {
+            id: parkingPlaceId,
+            code: releasedPlace.parking_place_code
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'This place or employee already has an active reservation for the selected date'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
 }
 
 async function handleAdminPlaceReleaseCreate(req) {
@@ -587,9 +988,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/employees') {
+    const result = await handleAdminEmployeesList();
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/admin/places') {
     const result = await handleAdminPlacesList();
     sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/dashboard') {
+    try {
+      const result = await handleAdminDashboard(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
     return;
   }
 
@@ -613,6 +1034,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
+    const result = await handleAdminManualReservationCreate(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     sendJson(res, 200, {
       status: 'ok',
@@ -623,8 +1050,11 @@ const server = http.createServer(async (req, res) => {
         '/health/db',
         '/auth/bootstrap-status',
         '/admin/users',
+        '/admin/employees',
         '/admin/places',
-        '/admin/place-releases'
+        '/admin/dashboard',
+        '/admin/place-releases',
+        '/admin/reservations/manual'
       ]
     });
     return;

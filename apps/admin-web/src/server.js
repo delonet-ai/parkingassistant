@@ -142,7 +142,7 @@ function renderReleaseForm(places, model) {
     .join('');
 
   return `
-    <form class="release-form" method="post" action="/admin/place-releases">
+    <form class="action-form" method="post" action="/admin/place-releases">
       <label>
         <span>Закрепленное место</span>
         <select name="parkingPlaceId" required>
@@ -163,6 +163,18 @@ function renderReleaseForm(places, model) {
         <input type="text" name="notes" value="${escapeHtml(notes)}" placeholder="Например: отпуск, командировка, удаленка" />
       </label>
       <button type="submit">Отдать место</button>
+    </form>
+  `;
+}
+
+function renderDateSelector(selectedDate) {
+  return `
+    <form class="date-form" method="get" action="/">
+      <label>
+        <span>Операционный день</span>
+        <input type="date" name="date" value="${escapeHtml(selectedDate)}" required />
+      </label>
+      <button type="submit">Показать день</button>
     </form>
   `;
 }
@@ -204,10 +216,155 @@ function renderReleasesTable(releases) {
   `;
 }
 
+function renderManualReservationForm(model) {
+  const employees = model.employees?.data?.employees || [];
+  const dashboard = model.dashboard?.data || {};
+  const selectedDate = dashboard.date || model.selectedDate;
+  const availablePlaces = (dashboard.releasedPlaces || []).filter((place) => !place.isReserved);
+
+  if (!availablePlaces.length) {
+    return '<p class="empty">На выбранную дату пока нет свободных отданных мест для ручного назначения.</p>';
+  }
+
+  const placeOptions = availablePlaces
+    .map((item) => {
+      const label = `${item.parkingPlace.code} · владелец ${item.owner.displayName}`;
+      return `<option value="${escapeHtml(item.parkingPlace.id)}">${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  const employeeOptions = employees
+    .map((employee) => {
+      const department = employee.department ? ` · ${employee.department}` : '';
+      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}`)}</option>`;
+    })
+    .join('');
+
+  return `
+    <form class="action-form" method="post" action="/admin/reservations/manual">
+      <input type="hidden" name="reservationDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Отданное место</span>
+        <select name="parkingPlaceId" required>
+          <option value="">Выберите место</option>
+          ${placeOptions}
+        </select>
+      </label>
+      <label>
+        <span>Сотрудник</span>
+        <select name="userId" required>
+          <option value="">Кому назначить</option>
+          ${employeeOptions}
+        </select>
+      </label>
+      <label class="wide">
+        <span>Причина</span>
+        <input type="text" name="reason" placeholder="Например: ручное назначение администратором" />
+      </label>
+      <button type="submit">Назначить</button>
+    </form>
+  `;
+}
+
+function renderDayDashboard(model) {
+  const dashboard = model.dashboard?.data || {};
+  const releasedPlaces = dashboard.releasedPlaces || [];
+  const reservations = dashboard.reservations || [];
+  const freeCount = releasedPlaces.filter((place) => !place.isReserved).length;
+
+  const releaseRows = releasedPlaces.length
+    ? releasedPlaces
+        .map(
+          (item) => `
+            <tr>
+              <td>${escapeHtml(item.parkingPlace.code)}</td>
+              <td>${escapeHtml(item.owner.displayName)}</td>
+              <td>${item.owner.department ? escapeHtml(item.owner.department) : '—'}</td>
+              <td>${item.isReserved ? '<span class="tag reserved">назначено</span>' : '<span class="tag free">свободно</span>'}</td>
+              <td>${item.releaseNotes ? escapeHtml(item.releaseNotes) : '—'}</td>
+            </tr>
+          `
+        )
+        .join('')
+    : '';
+
+  const reservationRows = reservations.length
+    ? reservations
+        .map(
+          (reservation) => `
+            <tr>
+              <td>${escapeHtml(reservation.parkingPlace.code)}</td>
+              <td>${reservation.user ? escapeHtml(reservation.user.displayName) : '—'}</td>
+              <td>${reservation.user?.department ? escapeHtml(reservation.user.department) : '—'}</td>
+              <td>${escapeHtml(reservation.source)}</td>
+              <td>${reservation.reason ? escapeHtml(reservation.reason) : '—'}</td>
+            </tr>
+          `
+        )
+        .join('')
+    : '';
+
+  return `
+    <div class="mini-grid">
+      <article>
+        <p class="label">Отдано мест</p>
+        <p class="value">${escapeHtml(releasedPlaces.length)}</p>
+      </article>
+      <article>
+        <p class="label">Доступно к назначению</p>
+        <p class="value">${escapeHtml(freeCount)}</p>
+      </article>
+      <article>
+        <p class="label">Активных назначений</p>
+        <p class="value">${escapeHtml(reservations.length)}</p>
+      </article>
+    </div>
+
+    <h3>Ручное назначение</h3>
+    ${renderManualReservationForm(model)}
+
+    <h3>Отданные места на день</h3>
+    ${
+      releasedPlaces.length
+        ? `<table>
+            <thead>
+              <tr>
+                <th>Место</th>
+                <th>Владелец</th>
+                <th>Дирекция</th>
+                <th>Статус</th>
+                <th>Комментарий</th>
+              </tr>
+            </thead>
+            <tbody>${releaseRows}</tbody>
+          </table>`
+        : '<p class="empty">На выбранную дату активных отдач нет.</p>'
+    }
+
+    <h3>Назначения на день</h3>
+    ${
+      reservations.length
+        ? `<table>
+            <thead>
+              <tr>
+                <th>Место</th>
+                <th>Кому</th>
+                <th>Дирекция</th>
+                <th>Источник</th>
+                <th>Причина</th>
+              </tr>
+            </thead>
+            <tbody>${reservationRows}</tbody>
+          </table>`
+        : '<p class="empty">На выбранную дату назначений пока нет.</p>'
+    }
+  `;
+}
+
 function renderPage(model) {
   const placesCount = Array.isArray(model.places?.data?.places) ? model.places.data.places.length : 0;
   const places = model.places?.data?.places || [];
   const releases = model.releases?.data?.releases || [];
+  const selectedDate = model.selectedDate || todayIsoDate();
   const bootstrap = model.bootstrap?.data?.bootstrapUser;
   const bootstrapState = bootstrap
     ? `${bootstrap.login} (${bootstrap.authStatus})`
@@ -278,6 +435,11 @@ function renderPage(model) {
         box-shadow: 0 8px 30px rgba(31, 35, 40, 0.06);
       }
 
+      h3 {
+        margin: 24px 0 12px;
+        font-size: 20px;
+      }
+
       .label {
         margin: 0 0 8px;
         color: var(--muted);
@@ -325,7 +487,8 @@ function renderPage(model) {
         color: var(--danger);
       }
 
-      .release-form {
+      .action-form,
+      .date-form {
         display: grid;
         grid-template-columns: minmax(240px, 2fr) repeat(2, minmax(150px, 1fr));
         gap: 14px;
@@ -333,16 +496,22 @@ function renderPage(model) {
         margin-bottom: 22px;
       }
 
-      .release-form label {
+      .date-form {
+        grid-template-columns: minmax(220px, 320px) 180px;
+      }
+
+      .action-form label,
+      .date-form label {
         display: grid;
         gap: 7px;
       }
 
-      .release-form label.wide {
+      .action-form label.wide {
         grid-column: span 2;
       }
 
-      .release-form span {
+      .action-form span,
+      .date-form span {
         color: var(--muted);
         font-size: 13px;
         letter-spacing: 0.05em;
@@ -396,14 +565,37 @@ function renderPage(model) {
         font-size: 13px;
       }
 
+      .tag.free {
+        background: #dcefd7;
+      }
+
+      .tag.reserved {
+        background: #ead8c4;
+      }
+
+      .mini-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-bottom: 8px;
+      }
+
+      .mini-grid article {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.44);
+      }
+
       .empty {
         margin: 0;
         color: var(--muted);
       }
 
       @media (max-width: 760px) {
-        .release-form,
-        .release-form label.wide {
+        .action-form,
+        .date-form,
+        .action-form label.wide {
           display: grid;
           grid-template-columns: 1fr;
           grid-column: auto;
@@ -437,6 +629,13 @@ function renderPage(model) {
       </section>
 
       <section class="card">
+        <h2 class="section-title">Day Dashboard</h2>
+        <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Здесь видны отданные места, свободный пул и ручные назначения.</p>
+        ${renderDateSelector(selectedDate)}
+        ${renderDayDashboard(model)}
+      </section>
+
+      <section class="card">
         <h2 class="section-title">Place Releases</h2>
         <p class="section-copy">Первая рабочая операция: администратор может отметить, что владелец отдал закрепленное место на дату или диапазон.</p>
         ${renderReleaseForm(places, model)}
@@ -463,22 +662,27 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/') {
     try {
-      const [health, db, bootstrap, places, releases] = await Promise.all([
+      const selectedDate = url.searchParams.get('date') || todayIsoDate();
+      const [health, db, bootstrap, places, releases, employees, dashboard] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
         fetchJson('/auth/bootstrap-status'),
         fetchJson('/admin/places'),
-        fetchJson('/admin/place-releases')
+        fetchJson('/admin/place-releases'),
+        fetchJson('/admin/employees'),
+        fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`)
       ]);
       const notice =
         url.searchParams.get('released') === '1'
           ? { type: 'ok', text: 'Отдача места создана.' }
+          : url.searchParams.get('reserved') === '1'
+            ? { type: 'ok', text: 'Ручное назначение создано.' }
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
 
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(renderPage({ health, db, bootstrap, places, releases, notice }));
+      res.end(renderPage({ health, db, bootstrap, places, releases, employees, dashboard, selectedDate, notice }));
       return;
     } catch (error) {
       res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
@@ -498,13 +702,35 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/place-releases', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: '/?released=1' });
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.dateFrom)}&released=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
+    const form = await readFormBody(req);
+    const payload = {
+      userId: form.get('userId'),
+      parkingPlaceId: form.get('parkingPlaceId'),
+      reservationDate: form.get('reservationDate'),
+      reason: form.get('reason')
+    };
+    const result = await postJson('/admin/reservations/manual', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate)}&reserved=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
