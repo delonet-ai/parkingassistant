@@ -65,9 +65,11 @@ services:
       PORT: 3100
       APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
       API_BASE_URL: http://api:3000
+      MAP_STORAGE_PATH: /app/storage/maps
     ports:
       - "${ADMIN_WEB_PORT:-3100}:3100"
     volumes:
+      - /opt/git/parkingassistant/staging/maps:/app/storage/maps
       - /opt/git/parkingassistant/staging/logs:/app/storage/logs
     command: ["npm", "run", "admin-web:start"]
 

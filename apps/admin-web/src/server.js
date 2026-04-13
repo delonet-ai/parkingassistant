@@ -1,10 +1,30 @@
 'use strict';
 
+const fs = require('node:fs');
 const http = require('node:http');
+const path = require('node:path');
 const { URL } = require('node:url');
 
 const port = Number(process.env.PORT || 3100);
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000';
+const mapStoragePath = process.env.MAP_STORAGE_PATH || '/app/storage/maps';
+
+const parkingMaps = [
+  {
+    id: 'g4',
+    title: 'G4',
+    description: 'Underground parking level G4',
+    filename: 'parking-g4.jpg'
+  },
+  {
+    id: 'g5',
+    title: 'G5',
+    description: 'Underground parking level G5',
+    filename: 'parking-g5.jpg'
+  }
+];
+
+const knownMapFiles = new Set(parkingMaps.map((map) => map.filename));
 
 function escapeHtml(value) {
   return String(value)
@@ -79,6 +99,18 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function renderTabs(activeView, selectedDate) {
+  const dashboardHref = `/?date=${encodeURIComponent(selectedDate)}`;
+  const mapsHref = `/?view=maps&date=${encodeURIComponent(selectedDate)}`;
+
+  return `
+    <nav class="tabs" aria-label="Admin sections">
+      <a class="${activeView === 'dashboard' ? 'active' : ''}" href="${dashboardHref}">Операции</a>
+      <a class="${activeView === 'maps' ? 'active' : ''}" href="${mapsHref}">Карты</a>
+    </nav>
+  `;
+}
+
 function renderPlacesTable(places) {
   if (!places.length) {
     return '<p class="empty">Места пока не загружены в каталог.</p>';
@@ -122,6 +154,47 @@ function renderPlacesTable(places) {
       </thead>
       <tbody>${rows}</tbody>
     </table>
+  `;
+}
+
+function renderMapsTab() {
+  const cards = parkingMaps
+    .map(
+      (map) => `
+        <article class="map-card">
+          <div class="map-card-head">
+            <div>
+              <h3>${escapeHtml(map.title)}</h3>
+              <p>${escapeHtml(map.description)}</p>
+            </div>
+            <span class="tag">clickable</span>
+          </div>
+          <button class="map-click-catcher" type="button" data-map-id="${escapeHtml(map.id)}" aria-label="Карта ${escapeHtml(map.title)}">
+            <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" />
+          </button>
+        </article>
+      `
+    )
+    .join('');
+
+  return `
+    <section class="card">
+      <h2 class="section-title">Parking Maps</h2>
+      <p class="section-copy">Черновая вкладка карт. Сейчас клик по изображению показывает координаты точки; следующим шагом на эти координаты можно навесить зоны конкретных мест.</p>
+      <p class="notice notice-ok" id="map-click-output">Кликните по карте, чтобы увидеть координаты точки.</p>
+      <div class="maps-grid">${cards}</div>
+    </section>
+    <script>
+      for (const button of document.querySelectorAll('.map-click-catcher')) {
+        button.addEventListener('click', (event) => {
+          const rect = button.getBoundingClientRect();
+          const x = ((event.clientX - rect.left) / rect.width).toFixed(4);
+          const y = ((event.clientY - rect.top) / rect.height).toFixed(4);
+          const output = document.getElementById('map-click-output');
+          output.textContent = 'Карта ' + button.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y;
+        });
+      }
+    </script>
   `;
 }
 
@@ -365,6 +438,7 @@ function renderPage(model) {
   const places = model.places?.data?.places || [];
   const releases = model.releases?.data?.releases || [];
   const selectedDate = model.selectedDate || todayIsoDate();
+  const activeView = model.activeView || 'dashboard';
   const bootstrap = model.bootstrap?.data?.bootstrapUser;
   const bootstrapState = bootstrap
     ? `${bootstrap.login} (${bootstrap.authStatus})`
@@ -469,6 +543,31 @@ function renderPage(model) {
       .section-copy {
         margin: -8px 0 18px;
         color: var(--muted);
+      }
+
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 0 0 22px;
+      }
+
+      .tabs a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 42px;
+        padding: 10px 16px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--text);
+        background: rgba(255, 250, 242, 0.74);
+        text-decoration: none;
+      }
+
+      .tabs a.active {
+        border-color: var(--accent);
+        color: #fff;
+        background: var(--accent);
       }
 
       .notice {
@@ -587,6 +686,49 @@ function renderPage(model) {
         background: rgba(255, 255, 255, 0.44);
       }
 
+      .maps-grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .map-card {
+        display: grid;
+        gap: 12px;
+      }
+
+      .map-card-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .map-card h3,
+      .map-card p {
+        margin: 0;
+      }
+
+      .map-card p {
+        color: var(--muted);
+      }
+
+      .map-click-catcher {
+        display: block;
+        width: 100%;
+        padding: 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fff;
+        cursor: crosshair;
+      }
+
+      .map-click-catcher img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
       .empty {
         margin: 0;
         color: var(--muted);
@@ -607,6 +749,7 @@ function renderPage(model) {
     <main>
       <h1>Parking Assistant</h1>
       <p class="subhead">Минимальная админка для проверки backend, каталога мест и bootstrap-состояния системы.</p>
+      ${renderTabs(activeView, selectedDate)}
       ${notice}
 
       <section class="grid">
@@ -628,24 +771,30 @@ function renderPage(model) {
         </article>
       </section>
 
-      <section class="card">
-        <h2 class="section-title">Day Dashboard</h2>
-        <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Здесь видны отданные места, свободный пул и ручные назначения.</p>
-        ${renderDateSelector(selectedDate)}
-        ${renderDayDashboard(model)}
-      </section>
+      ${
+        activeView === 'maps'
+          ? renderMapsTab()
+          : `
+            <section class="card">
+              <h2 class="section-title">Day Dashboard</h2>
+              <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Здесь видны отданные места, свободный пул и ручные назначения.</p>
+              ${renderDateSelector(selectedDate)}
+              ${renderDayDashboard(model)}
+            </section>
 
-      <section class="card">
-        <h2 class="section-title">Place Releases</h2>
-        <p class="section-copy">Первая рабочая операция: администратор может отметить, что владелец отдал закрепленное место на дату или диапазон.</p>
-        ${renderReleaseForm(places, model)}
-        ${renderReleasesTable(releases)}
-      </section>
+            <section class="card">
+              <h2 class="section-title">Place Releases</h2>
+              <p class="section-copy">Первая рабочая операция: администратор может отметить, что владелец отдал закрепленное место на дату или диапазон.</p>
+              ${renderReleaseForm(places, model)}
+              ${renderReleasesTable(releases)}
+            </section>
 
-      <section class="card">
-        <h2 class="section-title">Parking Places</h2>
-        ${renderPlacesTable(places)}
-      </section>
+            <section class="card">
+              <h2 class="section-title">Parking Places</h2>
+              ${renderPlacesTable(places)}
+            </section>
+          `
+      }
     </main>
   </body>
 </html>`;
@@ -660,9 +809,40 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/maps/')) {
+    const filename = path.basename(decodeURIComponent(url.pathname.replace('/maps/', '')));
+
+    if (!knownMapFiles.has(filename)) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'error', error: 'Map not found' }));
+      return;
+    }
+
+    const mapPath = path.join(mapStoragePath, filename);
+
+    if (!fs.existsSync(mapPath)) {
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'error', error: 'Map file is not uploaded yet' }));
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'image/jpeg',
+      'cache-control': 'public, max-age=300'
+    });
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+
+    fs.createReadStream(mapPath).pipe(res);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
+      const activeView = url.searchParams.get('view') === 'maps' ? 'maps' : 'dashboard';
       const [health, db, bootstrap, places, releases, employees, dashboard] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
@@ -682,7 +862,7 @@ const server = http.createServer(async (req, res) => {
             : null;
 
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(renderPage({ health, db, bootstrap, places, releases, employees, dashboard, selectedDate, notice }));
+      res.end(renderPage({ health, db, bootstrap, places, releases, employees, dashboard, selectedDate, activeView, notice }));
       return;
     } catch (error) {
       res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
