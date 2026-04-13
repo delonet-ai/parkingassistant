@@ -109,6 +109,8 @@
 - `npm run db:import:parking-catalog`
 - импортирует Excel-каталог мест в `parking_places`
 - исходные статус, дирекция и ФИО пока сохраняются в `metadata`
+- `npm run db:import:permanent-assignments`
+- импортирует сотрудников и постоянные закрепления из Excel-каталога
 
 Принципиальные ограничения:
 

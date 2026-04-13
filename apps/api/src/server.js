@@ -198,11 +198,18 @@ async function handleAdminPlacesList() {
           pp.place_type,
           pp.guest_priority_rank,
           pp.is_active,
+          u.id as owner_user_id,
+          u.display_name as owner_display_name,
+          u.department as owner_department,
           lg.id as line_group_id,
           lg.code as line_group_code,
           lg.name as line_group_name,
           lg.capacity as line_group_capacity
         from parking_places pp
+        left join permanent_assignments pa
+          on pa.parking_place_id = pp.id
+          and pa.valid_during @> current_date
+        left join users u on u.id = pa.user_id
         left join line_groups lg on lg.id = pp.line_group_id
         where pp.deleted_at is null
         order by pp.floor_label nulls last, pp.code
@@ -222,6 +229,13 @@ async function handleAdminPlacesList() {
           placeType: place.place_type,
           guestPriorityRank: place.guest_priority_rank,
           isActive: place.is_active,
+          permanentOwner: place.owner_user_id
+            ? {
+                id: place.owner_user_id,
+                displayName: place.owner_display_name,
+                department: place.owner_department
+              }
+            : null,
           lineGroup: place.line_group_id
             ? {
                 id: place.line_group_id,

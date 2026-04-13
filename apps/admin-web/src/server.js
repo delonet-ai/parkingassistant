@@ -54,6 +54,8 @@ function renderPlacesTable(places) {
           <td>${escapeHtml(place.code)}</td>
           <td>${escapeHtml(place.title)}</td>
           <td>${tags}</td>
+          <td>${place.permanentOwner ? escapeHtml(place.permanentOwner.displayName) : '—'}</td>
+          <td>${place.permanentOwner?.department ? escapeHtml(place.permanentOwner.department) : '—'}</td>
           <td>${place.guestPriorityRank == null ? '—' : escapeHtml(place.guestPriorityRank)}</td>
         </tr>
       `;
@@ -67,6 +69,8 @@ function renderPlacesTable(places) {
           <th>Код</th>
           <th>Название</th>
           <th>Атрибуты</th>
+          <th>Владелец</th>
+          <th>Дирекция</th>
           <th>Guest priority</th>
         </tr>
       </thead>
