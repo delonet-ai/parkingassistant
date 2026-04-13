@@ -338,10 +338,97 @@ function renderManualReservationForm(model) {
   `;
 }
 
+function renderEmployeeRequestForm(model) {
+  const employees = model.employees?.data?.employees || [];
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const employeeOptions = employees
+    .map((employee) => {
+      const department = employee.department ? ` · ${employee.department}` : '';
+      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}`)}</option>`;
+    })
+    .join('');
+
+  return `
+    <form class="action-form" method="post" action="/admin/employee-parking-requests">
+      <input type="hidden" name="requestDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Сотрудник</span>
+        <select name="userId" required>
+          <option value="">Кто просит место</option>
+          ${employeeOptions}
+        </select>
+      </label>
+      <label class="wide">
+        <span>Комментарий</span>
+        <input type="text" name="notes" placeholder="Например: заявка через администратора" />
+      </label>
+      <button type="submit">Поставить в очередь</button>
+    </form>
+  `;
+}
+
+function renderEmployeeRequestsTable(model) {
+  const requests = model.employeeRequests?.data?.requests || [];
+
+  if (!requests.length) {
+    return '<p class="empty">На выбранную дату заявок сотрудников пока нет.</p>';
+  }
+
+  const rows = requests
+    .map((request) => {
+      const canCancel = ['active', 'queued'].includes(request.status);
+      const queuePosition = request.queueEntry?.position ? `#${request.queueEntry.position}` : '—';
+      const queueStatus = request.queueEntry?.status || '—';
+      const assignedPlace = request.assignedReservation?.parkingPlaceCode || '—';
+      const cancelForm = canCancel
+        ? `
+          <form method="post" action="/admin/employee-parking-requests/cancel">
+            <input type="hidden" name="requestId" value="${escapeHtml(request.id)}" />
+            <input type="hidden" name="requestDate" value="${escapeHtml(formatDate(request.requestDate))}" />
+            <button class="button-secondary" type="submit">Отменить</button>
+          </form>
+        `
+        : '—';
+
+      return `
+        <tr>
+          <td>${queuePosition}</td>
+          <td>${escapeHtml(request.user.displayName)}</td>
+          <td>${request.user.department ? escapeHtml(request.user.department) : '—'}</td>
+          <td><span class="tag">${escapeHtml(request.status)}</span></td>
+          <td>${escapeHtml(queueStatus)}</td>
+          <td>${escapeHtml(assignedPlace)}</td>
+          <td>${request.notes ? escapeHtml(request.notes) : '—'}</td>
+          <td>${cancelForm}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Очередь</th>
+          <th>Сотрудник</th>
+          <th>Дирекция</th>
+          <th>Заявка</th>
+          <th>Статус очереди</th>
+          <th>Место</th>
+          <th>Комментарий</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
 function renderDayDashboard(model) {
   const dashboard = model.dashboard?.data || {};
   const releasedPlaces = dashboard.releasedPlaces || [];
   const reservations = dashboard.reservations || [];
+  const employeeRequests = model.employeeRequests?.data?.requests || [];
   const freeCount = releasedPlaces.filter((place) => !place.isReserved).length;
 
   const releaseRows = releasedPlaces.length
@@ -390,10 +477,18 @@ function renderDayDashboard(model) {
         <p class="label">Активных назначений</p>
         <p class="value">${escapeHtml(reservations.length)}</p>
       </article>
+      <article>
+        <p class="label">Заявок сотрудников</p>
+        <p class="value">${escapeHtml(employeeRequests.length)}</p>
+      </article>
     </div>
 
     <h3>Ручное назначение</h3>
     ${renderManualReservationForm(model)}
+
+    <h3>Заявки сотрудников</h3>
+    ${renderEmployeeRequestForm(model)}
+    ${renderEmployeeRequestsTable(model)}
 
     <h3>Отданные места на день</h3>
     ${
@@ -636,6 +731,14 @@ function renderPage(model) {
         cursor: pointer;
       }
 
+      .button-secondary {
+        min-height: 34px;
+        padding: 7px 10px;
+        border-color: var(--line);
+        color: var(--danger);
+        background: #fff;
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -843,26 +946,45 @@ const server = http.createServer(async (req, res) => {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
       const activeView = url.searchParams.get('view') === 'maps' ? 'maps' : 'dashboard';
-      const [health, db, bootstrap, places, releases, employees, dashboard] = await Promise.all([
+      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
         fetchJson('/auth/bootstrap-status'),
         fetchJson('/admin/places'),
         fetchJson('/admin/place-releases'),
         fetchJson('/admin/employees'),
-        fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`)
+        fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
+        fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`)
       ]);
       const notice =
         url.searchParams.get('released') === '1'
           ? { type: 'ok', text: 'Отдача места создана.' }
           : url.searchParams.get('reserved') === '1'
             ? { type: 'ok', text: 'Ручное назначение создано.' }
+          : url.searchParams.get('requested') === '1'
+            ? { type: 'ok', text: 'Заявка сотрудника добавлена в очередь.' }
+          : url.searchParams.get('requestCanceled') === '1'
+            ? { type: 'ok', text: 'Заявка сотрудника отменена.' }
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
 
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(renderPage({ health, db, bootstrap, places, releases, employees, dashboard, selectedDate, activeView, notice }));
+      res.end(
+        renderPage({
+          health,
+          db,
+          bootstrap,
+          places,
+          releases,
+          employees,
+          dashboard,
+          employeeRequests,
+          selectedDate,
+          activeView,
+          notice
+        })
+      );
       return;
     } catch (error) {
       res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
@@ -911,6 +1033,47 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests') {
+    const form = await readFormBody(req);
+    const payload = {
+      userId: form.get('userId'),
+      requestDate: form.get('requestDate'),
+      notes: form.get('notes')
+    };
+    const result = await postJson('/admin/employee-parking-requests', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate)}&requested=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests/cancel') {
+    const form = await readFormBody(req);
+    const payload = {
+      requestId: form.get('requestId')
+    };
+    const requestDate = form.get('requestDate') || todayIsoDate();
+    const result = await postJson('/admin/employee-parking-requests/cancel', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&requestCanceled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }

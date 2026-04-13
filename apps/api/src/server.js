@@ -511,6 +511,462 @@ async function handleAdminPlaceReleasesList(searchParams) {
   };
 }
 
+async function handleAdminEmployeeParkingRequestsList(searchParams) {
+  const requestDate = searchParams.get('date');
+
+  if (requestDate && !isIsoDate(requestDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const requests = await queryMany(
+    `
+      select
+        epr.id,
+        epr.request_date,
+        epr.status,
+        epr.requested_at,
+        epr.canceled_at,
+        epr.notes,
+        u.id as user_id,
+        u.display_name as user_display_name,
+        u.department as user_department,
+        qe.id as queue_entry_id,
+        qe.queue_position,
+        qe.status as queue_status,
+        qe.processed_at,
+        r.id as reservation_id,
+        pp.code as assigned_place_code
+      from employee_parking_requests epr
+      join users u on u.id = epr.user_id
+      left join queue_entries qe on qe.employee_parking_request_id = epr.id
+      left join reservations r on r.id = epr.assigned_reservation_id
+      left join parking_places pp on pp.id = r.parking_place_id
+      where ($1::date is null or epr.request_date = $1::date)
+      order by epr.request_date desc, qe.queue_position nulls last, epr.requested_at
+    `,
+    [requestDate || null]
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      requests: requests.map((request) => ({
+        id: request.id,
+        requestDate: request.request_date,
+        status: request.status,
+        requestedAt: request.requested_at,
+        canceledAt: request.canceled_at,
+        notes: request.notes,
+        user: {
+          id: request.user_id,
+          displayName: request.user_display_name,
+          department: request.user_department
+        },
+        queueEntry: request.queue_entry_id
+          ? {
+              id: request.queue_entry_id,
+              position: request.queue_position,
+              status: request.queue_status,
+              processedAt: request.processed_at
+            }
+          : null,
+        assignedReservation: request.reservation_id
+          ? {
+              id: request.reservation_id,
+              parkingPlaceCode: request.assigned_place_code
+            }
+          : null
+      }))
+    }
+  };
+}
+
+async function handleAdminEmployeeParkingRequestCreate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const userId = body.userId;
+  const requestDate = body.requestDate;
+  const notes = typeof body.notes === 'string' ? body.notes.trim() || null : null;
+
+  if (!userId || !isIsoDate(requestDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'userId and requestDate are required; date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`employee_queue:${requestDate}`]);
+
+    const employeeResult = await client.query(
+      `
+        select id, display_name
+        from users
+        where id = $1
+          and kind = 'employee'
+          and deleted_at is null
+      `,
+      [userId]
+    );
+    const employee = employeeResult.rows[0];
+
+    if (!employee) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee not found'
+        }
+      };
+    }
+
+    const permanentAssignmentResult = await client.query(
+      `
+        select id
+        from permanent_assignments
+        where user_id = $1
+          and valid_during @> $2::date
+        limit 1
+      `,
+      [userId, requestDate]
+    );
+
+    if (permanentAssignmentResult.rows[0]) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee has a permanent parking place for the selected date'
+        }
+      };
+    }
+
+    const requestResult = await client.query(
+      `
+        insert into employee_parking_requests (
+          user_id,
+          request_date,
+          status,
+          notes
+        )
+        values ($1, $2::date, 'queued', $3)
+        returning id, request_date, status, requested_at
+      `,
+      [userId, requestDate, notes]
+    );
+    const parkingRequest = requestResult.rows[0];
+
+    const positionResult = await client.query(
+      `
+        select coalesce(max(queue_position), 0) + 1 as next_position
+        from queue_entries
+        where queue_date = $1::date
+      `,
+      [requestDate]
+    );
+    const queuePosition = Number(positionResult.rows[0].next_position);
+
+    const queueResult = await client.query(
+      `
+        insert into queue_entries (
+          employee_parking_request_id,
+          queue_date,
+          queue_position
+        )
+        values ($1, $2::date, $3)
+        returning id, queue_position, status
+      `,
+      [parkingRequest.id, requestDate, queuePosition]
+    );
+    const queueEntry = queueResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'employee_parking_request',
+          $1,
+          'employee_parking_request_created',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        parkingRequest.id,
+        JSON.stringify({
+          userId,
+          userDisplayName: employee.display_name,
+          requestDate,
+          queueEntryId: queueEntry.id,
+          queuePosition
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        request: {
+          id: parkingRequest.id,
+          requestDate: parkingRequest.request_date,
+          status: parkingRequest.status,
+          requestedAt: parkingRequest.requested_at,
+          user: {
+            id: userId,
+            displayName: employee.display_name
+          },
+          queueEntry: {
+            id: queueEntry.id,
+            position: queueEntry.queue_position,
+            status: queueEntry.status
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee already has an active request for the selected date'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminEmployeeParkingRequestCancel(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const requestId = body.requestId;
+
+  if (!requestId) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'requestId is required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const requestResult = await client.query(
+      `
+        select
+          epr.id,
+          epr.request_date,
+          epr.status,
+          epr.assigned_reservation_id,
+          u.display_name as user_display_name
+        from employee_parking_requests epr
+        join users u on u.id = epr.user_id
+        where epr.id = $1
+        for update
+      `,
+      [requestId]
+    );
+    const parkingRequest = requestResult.rows[0];
+
+    if (!parkingRequest) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee parking request not found'
+        }
+      };
+    }
+
+    if (parkingRequest.assigned_reservation_id) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Assigned requests cannot be canceled here yet'
+        }
+      };
+    }
+
+    if (parkingRequest.status === 'canceled') {
+      await client.query('rollback');
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          request: {
+            id: parkingRequest.id,
+            requestDate: parkingRequest.request_date,
+            status: parkingRequest.status
+          }
+        }
+      };
+    }
+
+    const updateResult = await client.query(
+      `
+        update employee_parking_requests
+        set
+          status = 'canceled',
+          canceled_at = now(),
+          updated_at = now()
+        where id = $1
+        returning id, request_date, status, canceled_at
+      `,
+      [requestId]
+    );
+    const canceledRequest = updateResult.rows[0];
+
+    await client.query(
+      `
+        update queue_entries
+        set
+          status = 'canceled',
+          updated_at = now()
+        where employee_parking_request_id = $1
+          and status = 'waiting'
+      `,
+      [requestId]
+    );
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'employee_parking_request',
+          $1,
+          'employee_parking_request_canceled',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        requestId,
+        JSON.stringify({
+          requestDate: parkingRequest.request_date,
+          userDisplayName: parkingRequest.user_display_name
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        request: {
+          id: canceledRequest.id,
+          requestDate: canceledRequest.request_date,
+          status: canceledRequest.status,
+          canceledAt: canceledRequest.canceled_at
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminManualReservationCreate(req) {
   let body;
 
@@ -1028,8 +1484,34 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/employee-parking-requests') {
+    try {
+      const result = await handleAdminEmployeeParkingRequestsList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
     const result = await handleAdminPlaceReleaseCreate(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests') {
+    const result = await handleAdminEmployeeParkingRequestCreate(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests/cancel') {
+    const result = await handleAdminEmployeeParkingRequestCancel(req);
     sendJson(res, result.statusCode, result.payload);
     return;
   }
@@ -1054,6 +1536,7 @@ const server = http.createServer(async (req, res) => {
         '/admin/places',
         '/admin/dashboard',
         '/admin/place-releases',
+        '/admin/employee-parking-requests',
         '/admin/reservations/manual'
       ]
     });
