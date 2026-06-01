@@ -377,11 +377,11 @@ function renderMapsTab(model) {
           pointerStart = null;
           draft.hidden = true;
 
-          if (geometry.width < 0.004 || geometry.height < 0.004) {
+          if (geometry.width < 0.001 || geometry.height < 0.001) {
             const rect = editor.getBoundingClientRect();
             const x = ((event.clientX - rect.left) / rect.width).toFixed(4);
             const y = ((event.clientY - rect.top) / rect.height).toFixed(4);
-            setOutput('Карта ' + card.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y + '. Для зоны протяните прямоугольник.');
+            setOutput('Карта ' + card.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y + '. Для зоны протяните прямоугольник хотя бы на пару пикселей.');
             return;
           }
 
@@ -1323,7 +1323,7 @@ function renderPage(model) {
       .map-zone,
       .map-draft-zone {
         position: absolute;
-        border: 2px solid rgba(31, 111, 120, 0.88);
+        border: 1px solid rgba(31, 111, 120, 0.88);
         border-radius: 5px;
         background: rgba(47, 104, 70, 0.22);
       }
