@@ -5,6 +5,7 @@
 Начальная схема лежит в:
 
 - [001_initial_schema.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/schema/001_initial_schema.sql)
+- [002_job_runs.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/schema/002_job_runs.sql)
 
 Это foundation-миграция для:
 
@@ -17,6 +18,7 @@
 - назначений, истории и перемещений
 - планов выезда, line occupancy
 - contact access logs и audit log
+- job runs для ручных/фоновых регламентных запусков
 
 Bootstrap seed:
 

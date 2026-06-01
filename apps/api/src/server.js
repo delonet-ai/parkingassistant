@@ -7,6 +7,7 @@ const { Pool } = require('pg');
 const port = Number(process.env.PORT || 3000);
 const startedAt = new Date().toISOString();
 const databaseUrl = process.env.DATABASE_URL;
+const appTimezone = process.env.APP_TIMEZONE || 'Europe/Moscow';
 
 const pool = databaseUrl
   ? new Pool({
@@ -57,6 +58,21 @@ function formatDateForSql(value) {
   return String(value).slice(0, 10);
 }
 
+function currentDateInTimezone(timeZone = appTimezone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
+function addDaysToIsoDate(date, days) {
+  const [year, month, day] = date.split('-').map(Number);
+  const nextDate = new Date(Date.UTC(year, month - 1, day + days));
+  return nextDate.toISOString().slice(0, 10);
+}
+
 async function countAvailableReleasedPlaces(client, date) {
   const result = await client.query(
     `
@@ -75,6 +91,164 @@ async function countAvailableReleasedPlaces(client, date) {
   );
 
   return result.rows[0]?.count || 0;
+}
+
+async function calculateAvailabilitySnapshot(client, date) {
+  const result = await client.query(
+    `
+      select
+        count(*)::int as released_places,
+        count(*) filter (where r.id is null)::int as available_places,
+        count(*) filter (where r.id is null and pp.place_type in ('double', 'triple'))::int as before_19_employee_places,
+        greatest(count(*) filter (where r.id is null)::int - $2::int, 0)::int as after_19_employee_places,
+        count(*) filter (where r.id is null and pp.place_type = 'single')::int as available_single_places,
+        count(*) filter (where r.id is null and pp.place_type = 'double')::int as available_double_places,
+        count(*) filter (where r.id is null and pp.place_type = 'triple')::int as available_triple_places
+      from place_releases pr
+      join parking_places pp on pp.id = pr.parking_place_id
+      left join reservations r
+        on r.parking_place_id = pp.id
+        and r.reservation_date = $1::date
+        and r.status = 'active'
+      where pr.status = 'active'
+        and pr.release_during @> $1::date
+    `,
+    [date, guestReserveMinimum]
+  );
+  const row = result.rows[0] || {};
+  const availablePlaces = row.available_places || 0;
+
+  return {
+    date,
+    timezone: appTimezone,
+    releasedPlaces: row.released_places || 0,
+    availablePlaces,
+    employeeAvailability: {
+      before19: row.before_19_employee_places || 0,
+      after19: row.after_19_employee_places || 0
+    },
+    guestReserve: {
+      minimum: guestReserveMinimum,
+      availablePlaces,
+      status: availablePlaces >= guestReserveMinimum ? 'ok' : 'low'
+    },
+    byType: {
+      single: row.available_single_places || 0,
+      double: row.available_double_places || 0,
+      triple: row.available_triple_places || 0
+    }
+  };
+}
+
+async function withJobRun(jobName, targetDate, runner) {
+  const started = await queryOne(
+    `
+      insert into job_runs (
+        job_name,
+        target_date,
+        status,
+        actor_service
+      )
+      values ($1, $2::date, 'running', 'admin-web')
+      returning id, job_name, target_date, status, started_at
+    `,
+    [jobName, targetDate]
+  );
+
+  try {
+    const payload = await runner();
+    const finished = await queryOne(
+      `
+        update job_runs
+        set
+          status = 'success',
+          finished_at = now(),
+          summary = $1::jsonb
+        where id = $2
+        returning id, job_name, target_date, status, started_at, finished_at, actor_service, summary, error
+      `,
+      [JSON.stringify(payload), started.id]
+    );
+
+    await queryOne(
+      `
+        insert into audit_logs (
+          entity_type,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('system', $1, 'admin-web', $2::jsonb)
+        returning id
+      `,
+      [
+        `job_${jobName}_success`,
+        JSON.stringify({
+          jobRunId: started.id,
+          jobName,
+          targetDate,
+          summary: payload
+        })
+      ]
+    );
+
+    return {
+      ...payload,
+      jobRun: mapJobRun(finished)
+    };
+  } catch (error) {
+    const failed = await queryOne(
+      `
+        update job_runs
+        set
+          status = 'failed',
+          finished_at = now(),
+          error = $1
+        where id = $2
+        returning id, job_name, target_date, status, started_at, finished_at, actor_service, summary, error
+      `,
+      [error.message, started.id]
+    );
+
+    await queryOne(
+      `
+        insert into audit_logs (
+          entity_type,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('system', $1, 'admin-web', $2::jsonb)
+        returning id
+      `,
+      [
+        `job_${jobName}_failed`,
+        JSON.stringify({
+          jobRunId: started.id,
+          jobName,
+          targetDate,
+          error: error.message
+        })
+      ]
+    );
+
+    error.jobRun = mapJobRun(failed);
+    throw error;
+  }
+}
+
+function mapJobRun(run) {
+  return {
+    id: run.id,
+    jobName: run.job_name,
+    targetDate: run.target_date,
+    status: run.status,
+    startedAt: run.started_at,
+    finishedAt: run.finished_at,
+    actorService: run.actor_service,
+    summary: run.summary,
+    error: run.error
+  };
 }
 
 async function queryOne(text, params = []) {
@@ -741,6 +915,38 @@ async function handleAdminDashboard(searchParams) {
         }))
     }
   };
+}
+
+async function handleAdminAvailability(searchParams) {
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    const availability = await calculateAvailabilitySnapshot(client, date);
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        availability
+      }
+    };
+  } finally {
+    client.release();
+  }
 }
 
 async function handleAdminPlaceReleasesList(searchParams) {
@@ -2182,35 +2388,7 @@ async function handleAdminGuestParkingRequestCancel(req) {
   }
 }
 
-async function handleAdminQueueProcess(req) {
-  let body;
-
-  try {
-    body = await readJsonBody(req);
-  } catch {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'Request body must be valid JSON'
-      }
-    };
-  }
-
-  const queueDate = body.date;
-
-  if (!isIsoDate(queueDate)) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'date is required and must use YYYY-MM-DD format'
-      }
-    };
-  }
-
+async function processQueueForDate(queueDate) {
   const client = await pool.connect();
 
   try {
@@ -2460,44 +2638,334 @@ async function handleAdminQueueProcess(req) {
     await client.query('commit');
 
     return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        date: queueDate,
-        guestReserveMinimum,
-        availableReleasedPlacesCount: availablePlaces.length,
-        assignedCount: assignments.length,
-        skippedCount: skipped.length,
-        assignments,
-        skipped
-      }
+      date: queueDate,
+      guestReserveMinimum,
+      availableReleasedPlacesCount: availablePlaces.length,
+      assignedCount: assignments.length,
+      skippedCount: skipped.length,
+      assignments,
+      skipped
     };
   } catch (error) {
     await client.query('rollback');
 
     if (error.code === '23505') {
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Queue processing hit an existing active reservation for this date'
-        }
-      };
+      error.statusCode = 409;
+      error.message = 'Queue processing hit an existing active reservation for this date';
     }
 
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminQueueProcess(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const queueDate = body.date;
+
+  if (!isIsoDate(queueDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date is required and must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  try {
+    const result = await withJobRun('process_queue', queueDate, () => processQueueForDate(queueDate));
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        ...result
+      }
+    };
+  } catch (error) {
+    return {
+      statusCode: error.statusCode || 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message,
+        jobRun: error.jobRun || null
+      }
+    };
+  }
+}
+
+async function handleAdminJobProcessQueue(req) {
+  return handleAdminQueueProcess(req);
+}
+
+async function handleAdminJobFreezeNextDay(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const targetDate = body.date || addDaysToIsoDate(currentDateInTimezone(appTimezone), 1);
+
+  if (!isIsoDate(targetDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  try {
+    const result = await withJobRun('freeze_next_day', targetDate, async () => {
+      const client = await pool.connect();
+
+      try {
+        const snapshot = await calculateAvailabilitySnapshot(client, targetDate);
+        const releaseResult = await client.query(
+          `
+            select
+              pr.id,
+              pp.id as parking_place_id,
+              pp.code as parking_place_code,
+              pp.place_type,
+              pr.user_id as owner_user_id
+            from place_releases pr
+            join parking_places pp on pp.id = pr.parking_place_id
+            where pr.status = 'active'
+              and pr.release_during @> $1::date
+            order by pp.code
+          `,
+          [targetDate]
+        );
+
+        await client.query(
+          `
+            insert into audit_logs (
+              entity_type,
+              action,
+              actor_service,
+              metadata
+            )
+            values ('system', 'availability_frozen', 'admin-web', $1::jsonb)
+          `,
+          [
+            JSON.stringify({
+              targetDate,
+              timezone: appTimezone,
+              releaseCount: releaseResult.rows.length,
+              availability: snapshot
+            })
+          ]
+        );
+
+        return {
+          date: targetDate,
+          timezone: appTimezone,
+          releaseCount: releaseResult.rows.length,
+          availability: snapshot,
+          frozenReleases: releaseResult.rows.map((release) => ({
+            id: release.id,
+            parkingPlaceId: release.parking_place_id,
+            parkingPlaceCode: release.parking_place_code,
+            placeType: release.place_type,
+            ownerUserId: release.owner_user_id
+          }))
+        };
+      } finally {
+        client.release();
+      }
+    });
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        ...result
+      }
+    };
+  } catch (error) {
     return {
       statusCode: 500,
       payload: {
         status: 'error',
         service: 'api',
-        error: error.message
+        error: error.message,
+        jobRun: error.jobRun || null
       }
     };
-  } finally {
-    client.release();
   }
+}
+
+async function handleAdminJobLockDeparturePlans(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const targetDate = body.date || currentDateInTimezone(appTimezone);
+
+  if (!isIsoDate(targetDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  try {
+    const result = await withJobRun('lock_departure_plans', targetDate, async () => {
+      const summary = await queryOne(
+        `
+          select
+            count(*)::int as plans_count,
+            count(*) filter (where is_early = true)::int as early_plans_count
+          from departure_plans
+          where plan_date = $1::date
+        `,
+        [targetDate]
+      );
+
+      await queryOne(
+        `
+          insert into audit_logs (
+            entity_type,
+            action,
+            actor_service,
+            metadata
+          )
+          values ('system', 'departure_plan_editing_locked', 'admin-web', $1::jsonb)
+          returning id
+        `,
+        [
+          JSON.stringify({
+            targetDate,
+            timezone: appTimezone,
+            plansCount: summary?.plans_count || 0,
+            earlyPlansCount: summary?.early_plans_count || 0
+          })
+        ]
+      );
+
+      return {
+        date: targetDate,
+        timezone: appTimezone,
+        plansCount: summary?.plans_count || 0,
+        earlyPlansCount: summary?.early_plans_count || 0
+      };
+    });
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        ...result
+      }
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message,
+        jobRun: error.jobRun || null
+      }
+    };
+  }
+}
+
+async function handleAdminJobRunsList(searchParams) {
+  const limit = Math.min(Math.max(Number(searchParams.get('limit') || 20), 1), 100);
+  const jobName = searchParams.get('jobName');
+  const targetDate = searchParams.get('date');
+
+  if (targetDate && !isIsoDate(targetDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const runs = await queryMany(
+    `
+      select
+        id,
+        job_name,
+        target_date,
+        status,
+        started_at,
+        finished_at,
+        actor_service,
+        summary,
+        error
+      from job_runs
+      where ($1::text is null or job_name = $1)
+        and ($2::date is null or target_date = $2::date)
+      order by started_at desc
+      limit $3
+    `,
+    [jobName || null, targetDate || null, limit]
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      timezone: appTimezone,
+      runs: runs.map(mapJobRun)
+    }
+  };
 }
 
 async function handleAdminManualReservationCreate(req) {
@@ -3459,6 +3927,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/availability') {
+    try {
+      const result = await handleAdminAvailability(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/admin/place-releases') {
     try {
       const result = await handleAdminPlaceReleasesList(url.searchParams);
@@ -3549,6 +4031,38 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/admin/jobs/process-queue') {
+    const result = await handleAdminJobProcessQueue(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/jobs/freeze-next-day') {
+    const result = await handleAdminJobFreezeNextDay(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/jobs/lock-departure-plans') {
+    const result = await handleAdminJobLockDeparturePlans(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/jobs/runs') {
+    try {
+      const result = await handleAdminJobRunsList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
     const result = await handleAdminManualReservationCreate(req);
     sendJson(res, result.statusCode, result.payload);
@@ -3574,12 +4088,17 @@ const server = http.createServer(async (req, res) => {
         '/admin/employees',
         '/admin/places',
         '/admin/dashboard',
+        '/admin/availability',
         '/admin/place-releases',
         '/admin/place-releases/cancel',
         '/admin/employee-parking-requests',
         '/admin/guest-parking-requests',
         '/admin/guest-parking-requests/assign',
         '/admin/queue/process',
+        '/admin/jobs/process-queue',
+        '/admin/jobs/freeze-next-day',
+        '/admin/jobs/lock-departure-plans',
+        '/admin/jobs/runs',
         '/admin/reservations/manual',
         '/admin/reservations/cancel'
       ]

@@ -580,6 +580,62 @@ function renderGuestRequestsTable(model) {
   `;
 }
 
+function renderJobsPanel(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const runs = model.jobRuns?.data?.runs || [];
+  const rows = runs
+    .map(
+      (run) => `
+        <tr>
+          <td>${escapeHtml(run.jobName)}</td>
+          <td>${run.targetDate ? escapeHtml(formatDate(run.targetDate)) : '—'}</td>
+          <td><span class="tag ${run.status === 'success' ? 'free' : run.status === 'failed' ? 'reserved' : ''}">${escapeHtml(run.status)}</span></td>
+          <td>${run.startedAt ? escapeHtml(new Date(run.startedAt).toLocaleString('ru-RU')) : '—'}</td>
+          <td>${run.finishedAt ? escapeHtml(new Date(run.finishedAt).toLocaleString('ru-RU')) : '—'}</td>
+          <td>${run.error ? escapeHtml(run.error) : '—'}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <div class="jobs-actions">
+      <form class="inline-action-form" method="post" action="/admin/jobs/process-queue">
+        <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+        <button type="submit">Job: начало дня</button>
+        <span>Обработать очередь на выбранную дату</span>
+      </form>
+      <form class="inline-action-form" method="post" action="/admin/jobs/freeze-next-day">
+        <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+        <button type="submit">Job: 19:00</button>
+        <span>Зафиксировать snapshot доступности на дату</span>
+      </form>
+      <form class="inline-action-form" method="post" action="/admin/jobs/lock-departure-plans">
+        <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+        <button type="submit">Job: 07:00</button>
+        <span>Закрыть окно редактирования выездов на дату</span>
+      </form>
+    </div>
+    ${
+      rows
+        ? `<table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Дата</th>
+                <th>Статус</th>
+                <th>Старт</th>
+                <th>Финиш</th>
+                <th>Ошибка</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`
+        : '<p class="empty">Запусков jobs пока нет.</p>'
+    }
+  `;
+}
+
 function renderDayDashboard(model) {
   const dashboard = model.dashboard?.data || {};
   const releasedPlaces = dashboard.releasedPlaces || [];
@@ -670,6 +726,9 @@ function renderDayDashboard(model) {
     <h3>Гостевые заявки</h3>
     ${renderGuestRequestForm(model)}
     ${renderGuestRequestsTable(model)}
+
+    <h3>Jobs и регламент</h3>
+    ${renderJobsPanel(model)}
 
     <h3>Отданные места на день</h3>
     ${
@@ -1153,7 +1212,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
       const activeView = url.searchParams.get('view') === 'maps' ? 'maps' : 'dashboard';
-      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests, guestRequests] = await Promise.all([
+      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests, guestRequests, jobRuns] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
         fetchJson('/auth/bootstrap-status'),
@@ -1162,7 +1221,8 @@ const server = http.createServer(async (req, res) => {
         fetchJson(`/admin/employees?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`),
-        fetchJson(`/admin/guest-parking-requests?date=${encodeURIComponent(selectedDate)}`)
+        fetchJson(`/admin/guest-parking-requests?date=${encodeURIComponent(selectedDate)}`),
+        fetchJson('/admin/jobs/runs?limit=8')
       ]);
       const notice =
         url.searchParams.get('released') === '1'
@@ -1188,6 +1248,8 @@ const server = http.createServer(async (req, res) => {
                 type: 'ok',
                 text: `Очередь обработана: назначено ${url.searchParams.get('assigned') || 0}, пропущено ${url.searchParams.get('skipped') || 0}.`
               }
+          : url.searchParams.get('jobDone')
+            ? { type: 'ok', text: `Job выполнен: ${url.searchParams.get('jobDone')}.` }
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
@@ -1204,6 +1266,7 @@ const server = http.createServer(async (req, res) => {
           dashboard,
           employeeRequests,
           guestRequests,
+          jobRuns,
           selectedDate,
           activeView,
           notice
@@ -1421,6 +1484,57 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(303, {
         location: `/?date=${encodeURIComponent(date)}&queueProcessed=1&assigned=${encodeURIComponent(assigned)}&skipped=${encodeURIComponent(skipped)}`
       });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/jobs/process-queue') {
+    const form = await readFormBody(req);
+    const date = form.get('date') || todayIsoDate();
+    const result = await postJson('/admin/jobs/process-queue', { date });
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&jobDone=process_queue` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/jobs/freeze-next-day') {
+    const form = await readFormBody(req);
+    const date = form.get('date') || todayIsoDate();
+    const result = await postJson('/admin/jobs/freeze-next-day', { date });
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&jobDone=freeze_next_day` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/jobs/lock-departure-plans') {
+    const form = await readFormBody(req);
+    const date = form.get('date') || todayIsoDate();
+    const result = await postJson('/admin/jobs/lock-departure-plans', { date });
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&jobDone=lock_departure_plans` });
       res.end();
       return;
     }
