@@ -81,6 +81,21 @@ async function postJson(pathname, payload) {
   };
 }
 
+async function readJsonBody(req) {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+
+  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
+  if (!rawBody) {
+    return {};
+  }
+
+  return JSON.parse(rawBody);
+}
+
 async function readFormBody(req) {
   const chunks = [];
 
@@ -180,7 +195,7 @@ function renderMapsTab(model) {
             <span class="tag">markup</span>
           </div>
           <div class="map-editor" data-map-id="${escapeHtml(map.id)}">
-            <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" />
+            <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" draggable="false" />
             <div class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></div>
             <div class="map-draft-zone" hidden></div>
           </div>
@@ -333,6 +348,7 @@ function renderMapsTab(model) {
           if (event.target.closest('.map-zone')) {
             return;
           }
+          event.preventDefault();
           pointerStart = event;
           draft.hidden = false;
           draft.style.left = '0';
@@ -1295,6 +1311,7 @@ function renderPage(model) {
         width: 100%;
         height: auto;
         user-select: none;
+        -webkit-user-drag: none;
       }
 
       .map-zones-layer,
@@ -1450,6 +1467,30 @@ const server = http.createServer(async (req, res) => {
     }
 
     fs.createReadStream(mapPath).pipe(res);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
+    const result = await fetchJson(`/admin/map-zones?${url.searchParams.toString()}`);
+    res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(result.data));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
+    let payload;
+
+    try {
+      payload = await readJsonBody(req);
+    } catch {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'error', error: 'Request body must be valid JSON' }));
+      return;
+    }
+
+    const result = await postJson('/admin/map-zones', payload);
+    res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(result.data));
     return;
   }
 
