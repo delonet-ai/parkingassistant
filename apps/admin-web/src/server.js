@@ -161,21 +161,29 @@ function renderPlacesTable(places) {
   `;
 }
 
-function renderMapsTab() {
+function renderMapsTab(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const places = model.places?.data?.places || [];
+  const placeOptions = places
+    .map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(`${place.code} · ${place.title}`)}</option>`)
+    .join('');
+
   const cards = parkingMaps
     .map(
       (map) => `
-        <article class="map-card">
+        <article class="map-card" data-map-id="${escapeHtml(map.id)}" data-map-title="${escapeHtml(map.title)}" data-map-filename="${escapeHtml(map.filename)}">
           <div class="map-card-head">
             <div>
               <h3>${escapeHtml(map.title)}</h3>
               <p>${escapeHtml(map.description)}</p>
             </div>
-            <span class="tag">clickable</span>
+            <span class="tag">markup</span>
           </div>
-          <button class="map-click-catcher" type="button" data-map-id="${escapeHtml(map.id)}" aria-label="Карта ${escapeHtml(map.title)}">
+          <div class="map-editor" data-map-id="${escapeHtml(map.id)}">
             <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" />
-          </button>
+            <div class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></div>
+            <div class="map-draft-zone" hidden></div>
+          </div>
         </article>
       `
     )
@@ -184,18 +192,184 @@ function renderMapsTab() {
   return `
     <section class="card">
       <h2 class="section-title">Parking Maps</h2>
-      <p class="section-copy">Черновая вкладка карт. Сейчас клик по изображению показывает координаты точки; следующим шагом на эти координаты можно навесить зоны конкретных мест.</p>
-      <p class="notice notice-ok" id="map-click-output">Кликните по карте, чтобы увидеть координаты точки.</p>
+      <p class="section-copy">Режим разметки: выберите место, затем протяните прямоугольник поверх красной или оранжевой зоны. Координаты сохраняются в долях картинки, поэтому overlay не ломается на разных экранах.</p>
+      <div class="map-toolbar">
+        <label>
+          <span>Место для разметки</span>
+          <select id="map-place-select">
+            <option value="">Выберите место</option>
+            ${placeOptions}
+          </select>
+        </label>
+        <label>
+          <span>Тип зоны</span>
+          <select id="map-zone-type">
+            <option value="rotatable">Ротируемое/гостевое</option>
+            <option value="regular">Обычное</option>
+            <option value="blocked">Недоступное</option>
+          </select>
+        </label>
+      </div>
+      <p class="notice notice-ok" id="map-click-output">Overlay готов. Свободные зоны зеленые, занятые медовые, ротируемые красные.</p>
       <div class="maps-grid">${cards}</div>
     </section>
     <script>
-      for (const button of document.querySelectorAll('.map-click-catcher')) {
-        button.addEventListener('click', (event) => {
-          const rect = button.getBoundingClientRect();
-          const x = ((event.clientX - rect.left) / rect.width).toFixed(4);
-          const y = ((event.clientY - rect.top) / rect.height).toFixed(4);
-          const output = document.getElementById('map-click-output');
-          output.textContent = 'Карта ' + button.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y;
+      const selectedDate = ${JSON.stringify(selectedDate)};
+      const placeSelect = document.getElementById('map-place-select');
+      const zoneTypeSelect = document.getElementById('map-zone-type');
+      const output = document.getElementById('map-click-output');
+      const maps = ${JSON.stringify(parkingMaps)};
+      const places = ${JSON.stringify(places.map((place) => ({ id: place.id, code: place.code, title: place.title })))};
+      const placesById = new Map(places.map((place) => [place.id, place]));
+
+      function setOutput(text, isError = false) {
+        output.textContent = text;
+        output.classList.toggle('notice-error', isError);
+        output.classList.toggle('notice-ok', !isError);
+      }
+
+      function renderZone(layer, zone) {
+        const geometry = zone.geometry || {};
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.className = 'map-zone map-zone-' + (zone.status || 'free');
+        element.style.left = (geometry.x * 100) + '%';
+        element.style.top = (geometry.y * 100) + '%';
+        element.style.width = (geometry.width * 100) + '%';
+        element.style.height = (geometry.height * 100) + '%';
+        element.textContent = zone.parkingPlace?.code || zone.zoneKey || '?';
+        element.title = [
+          zone.parkingPlace?.code || '',
+          zone.status || 'free',
+          zone.reservation?.userDisplayName || ''
+        ].filter(Boolean).join(' · ');
+        element.addEventListener('click', (event) => {
+          event.stopPropagation();
+          setOutput(element.title);
+        });
+        layer.appendChild(element);
+      }
+
+      async function loadZones(card) {
+        const mapId = card.dataset.mapId;
+        const layer = card.querySelector('.map-zones-layer');
+        layer.innerHTML = '';
+
+        const response = await fetch('/admin/map-zones?mapCode=' + encodeURIComponent(mapId) + '&date=' + encodeURIComponent(selectedDate));
+        const data = await response.json();
+
+        if (!response.ok) {
+          setOutput(data.error || 'Не удалось загрузить зоны', true);
+          return;
+        }
+
+        for (const zone of data.zones || []) {
+          renderZone(layer, zone);
+        }
+      }
+
+      async function saveZone(card, geometry) {
+        const parkingPlaceId = placeSelect.value;
+        const selectedPlace = placesById.get(parkingPlaceId);
+
+        if (!selectedPlace) {
+          setOutput('Сначала выберите место для разметки.', true);
+          return;
+        }
+
+        const payload = {
+          mapCode: card.dataset.mapId,
+          mapTitle: card.dataset.mapTitle,
+          floorLabel: card.dataset.mapId.replace('g', ''),
+          filePath: '/maps/' + card.dataset.mapFilename,
+          parkingPlaceId,
+          zoneType: zoneTypeSelect.value,
+          geometry
+        };
+
+        const response = await fetch('/admin/map-zones', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          setOutput(data.error || 'Не удалось сохранить зону', true);
+          return;
+        }
+
+        setOutput('Зона сохранена: ' + selectedPlace.code + ' на карте ' + card.dataset.mapId.toUpperCase());
+        await loadZones(card);
+      }
+
+      function normalizedRect(editor, startEvent, currentEvent) {
+        const rect = editor.getBoundingClientRect();
+        const startX = Math.min(Math.max(startEvent.clientX - rect.left, 0), rect.width);
+        const startY = Math.min(Math.max(startEvent.clientY - rect.top, 0), rect.height);
+        const currentX = Math.min(Math.max(currentEvent.clientX - rect.left, 0), rect.width);
+        const currentY = Math.min(Math.max(currentEvent.clientY - rect.top, 0), rect.height);
+        const left = Math.min(startX, currentX);
+        const top = Math.min(startY, currentY);
+        const width = Math.abs(currentX - startX);
+        const height = Math.abs(currentY - startY);
+
+        return {
+          x: Number((left / rect.width).toFixed(6)),
+          y: Number((top / rect.height).toFixed(6)),
+          width: Number((width / rect.width).toFixed(6)),
+          height: Number((height / rect.height).toFixed(6))
+        };
+      }
+
+      for (const card of document.querySelectorAll('.map-card')) {
+        const editor = card.querySelector('.map-editor');
+        const draft = card.querySelector('.map-draft-zone');
+        let pointerStart = null;
+
+        loadZones(card);
+
+        editor.addEventListener('pointerdown', (event) => {
+          if (event.target.closest('.map-zone')) {
+            return;
+          }
+          pointerStart = event;
+          draft.hidden = false;
+          draft.style.left = '0';
+          draft.style.top = '0';
+          draft.style.width = '0';
+          draft.style.height = '0';
+          editor.setPointerCapture(event.pointerId);
+        });
+
+        editor.addEventListener('pointermove', (event) => {
+          if (!pointerStart) {
+            return;
+          }
+          const geometry = normalizedRect(editor, pointerStart, event);
+          draft.style.left = (geometry.x * 100) + '%';
+          draft.style.top = (geometry.y * 100) + '%';
+          draft.style.width = (geometry.width * 100) + '%';
+          draft.style.height = (geometry.height * 100) + '%';
+        });
+
+        editor.addEventListener('pointerup', async (event) => {
+          if (!pointerStart) {
+            return;
+          }
+          const geometry = normalizedRect(editor, pointerStart, event);
+          pointerStart = null;
+          draft.hidden = true;
+
+          if (geometry.width < 0.004 || geometry.height < 0.004) {
+            const rect = editor.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / rect.width).toFixed(4);
+            const y = ((event.clientY - rect.top) / rect.height).toFixed(4);
+            setOutput('Карта ' + card.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y + '. Для зоны протяните прямоугольник.');
+            return;
+          }
+
+          await saveZone(card, geometry);
         });
       }
     </script>
@@ -1085,8 +1259,27 @@ function renderPage(model) {
         color: var(--muted);
       }
 
-      .map-click-catcher {
-        display: block;
+      .map-toolbar {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px);
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+
+      .map-toolbar label {
+        display: grid;
+        gap: 7px;
+      }
+
+      .map-toolbar span {
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .map-editor {
+        position: relative;
         width: 100%;
         padding: 0;
         overflow: hidden;
@@ -1094,12 +1287,59 @@ function renderPage(model) {
         border-radius: 16px;
         background: #fff;
         cursor: crosshair;
+        touch-action: none;
       }
 
-      .map-click-catcher img {
+      .map-editor img {
         display: block;
         width: 100%;
         height: auto;
+        user-select: none;
+      }
+
+      .map-zones-layer,
+      .map-draft-zone {
+        position: absolute;
+        inset: 0;
+      }
+
+      .map-zone,
+      .map-draft-zone {
+        position: absolute;
+        border: 2px solid rgba(31, 111, 120, 0.88);
+        border-radius: 5px;
+        background: rgba(47, 104, 70, 0.22);
+      }
+
+      .map-zone {
+        display: grid;
+        place-items: center;
+        padding: 0;
+        color: #111;
+        font: 700 11px/1.1 ui-sans-serif, system-ui, sans-serif;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.75);
+        cursor: pointer;
+      }
+
+      .map-zone-occupied {
+        border-color: rgba(159, 58, 42, 0.92);
+        background: rgba(234, 216, 196, 0.52);
+      }
+
+      .map-zone-rotatable {
+        border-color: rgba(170, 33, 34, 0.92);
+        background: rgba(170, 33, 34, 0.28);
+      }
+
+      .map-zone-blocked {
+        border-color: rgba(31, 35, 40, 0.76);
+        background: rgba(31, 35, 40, 0.26);
+      }
+
+      .map-draft-zone {
+        pointer-events: none;
+        border-style: dashed;
+        background: rgba(31, 111, 120, 0.18);
       }
 
       .empty {
@@ -1110,6 +1350,7 @@ function renderPage(model) {
       @media (max-width: 760px) {
         .action-form,
         .date-form,
+        .map-toolbar,
         .action-form label.wide {
           display: grid;
           grid-template-columns: 1fr;
@@ -1146,7 +1387,7 @@ function renderPage(model) {
 
       ${
         activeView === 'maps'
-          ? renderMapsTab()
+          ? renderMapsTab(model)
           : `
             <section class="card">
               <h2 class="section-title">Day Dashboard</h2>

@@ -709,6 +709,375 @@ async function handleAdminPlacesList() {
   }
 }
 
+async function ensureParkingPlaceMap(mapCode, mapTitle, floorLabel, filePath) {
+  return queryOne(
+    `
+      insert into parking_place_maps (
+        code,
+        title,
+        floor_label,
+        file_type,
+        file_path
+      )
+      values ($1, $2, $3, 'png', $4)
+      on conflict (code)
+      do update set
+        title = excluded.title,
+        floor_label = excluded.floor_label,
+        file_type = excluded.file_type,
+        file_path = excluded.file_path,
+        is_active = true,
+        updated_at = now()
+      returning id, code, title, floor_label, file_type, file_path, version, is_active
+    `,
+    [mapCode, mapTitle, floorLabel, filePath]
+  );
+}
+
+async function handleAdminMapZonesList(searchParams) {
+  const mapCode = searchParams.get('mapCode');
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
+
+  if (!mapCode) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'mapCode is required'
+      }
+    };
+  }
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const map = await queryOne(
+    `
+      select id, code, title, floor_label, file_type, file_path, version, is_active
+      from parking_place_maps
+      where code = $1
+        and is_active = true
+    `,
+    [mapCode]
+  );
+
+  if (!map) {
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        map: null,
+        zones: []
+      }
+    };
+  }
+
+  const zones = await queryMany(
+    `
+      select
+        z.id,
+        z.zone_key,
+        z.geometry,
+        z.label_x,
+        z.label_y,
+        z.created_at,
+        z.updated_at,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.place_type,
+        pp.guest_priority_rank,
+        r.id as reservation_id,
+        r.source as reservation_source,
+        r.status as reservation_status,
+        u.display_name as reserved_user_display_name
+      from parking_place_map_zones z
+      join parking_places pp on pp.id = z.parking_place_id
+      left join reservations r
+        on r.parking_place_id = pp.id
+        and r.reservation_date = $2::date
+        and r.status = 'active'
+      left join users u on u.id = r.user_id
+      where z.parking_place_map_id = $1
+      order by pp.code
+    `,
+    [map.id, date]
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date,
+      map: {
+        id: map.id,
+        code: map.code,
+        title: map.title,
+        floorLabel: map.floor_label,
+        fileType: map.file_type,
+        filePath: map.file_path,
+        version: map.version,
+        isActive: map.is_active
+      },
+      zones: zones.map((zone) => ({
+        id: zone.id,
+        zoneKey: zone.zone_key,
+        geometry: zone.geometry,
+        labelX: zone.label_x,
+        labelY: zone.label_y,
+        createdAt: zone.created_at,
+        updatedAt: zone.updated_at,
+        parkingPlace: {
+          id: zone.parking_place_id,
+          code: zone.parking_place_code,
+          title: zone.parking_place_title,
+          placeType: zone.place_type,
+          guestPriorityRank: zone.guest_priority_rank
+        },
+        status: zone.reservation_id
+          ? 'occupied'
+          : zone.geometry?.zoneType === 'blocked'
+            ? 'blocked'
+            : zone.geometry?.zoneType === 'rotatable'
+              ? 'rotatable'
+              : 'free',
+        reservation: zone.reservation_id
+          ? {
+              id: zone.reservation_id,
+              source: zone.reservation_source,
+              status: zone.reservation_status,
+              userDisplayName: zone.reserved_user_display_name
+            }
+          : null
+      }))
+    }
+  };
+}
+
+async function handleAdminMapZoneSave(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const mapCode = typeof body.mapCode === 'string' ? body.mapCode.trim().toLowerCase() : '';
+  const mapTitle = typeof body.mapTitle === 'string' ? body.mapTitle.trim() : mapCode.toUpperCase();
+  const floorLabel = typeof body.floorLabel === 'string' ? body.floorLabel.trim() : mapCode.replace(/^g/, '');
+  const filePath = typeof body.filePath === 'string' ? body.filePath.trim() : `/maps/parking-${mapCode}.png`;
+  const parkingPlaceId = body.parkingPlaceId;
+  const zoneType = ['regular', 'rotatable', 'blocked'].includes(body.zoneType) ? body.zoneType : 'regular';
+  const geometry = body.geometry;
+
+  if (!mapCode || !parkingPlaceId || !geometry) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'mapCode, parkingPlaceId and geometry are required'
+      }
+    };
+  }
+
+  const x = Number(geometry.x);
+  const y = Number(geometry.y);
+  const width = Number(geometry.width);
+  const height = Number(geometry.height);
+
+  if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1 || y + height > 1) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'geometry must contain normalized x, y, width and height values between 0 and 1'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const mapResult = await client.query(
+      `
+        insert into parking_place_maps (
+          code,
+          title,
+          floor_label,
+          file_type,
+          file_path
+        )
+        values ($1, $2, $3, 'png', $4)
+        on conflict (code)
+        do update set
+          title = excluded.title,
+          floor_label = excluded.floor_label,
+          file_type = excluded.file_type,
+          file_path = excluded.file_path,
+          is_active = true,
+          updated_at = now()
+        returning id, code, title, floor_label, file_type, file_path
+      `,
+      [mapCode, mapTitle || mapCode.toUpperCase(), floorLabel || null, filePath]
+    );
+    const map = mapResult.rows[0];
+
+    const placeResult = await client.query(
+      `
+        select id, code, title, place_type, guest_priority_rank
+        from parking_places
+        where id = $1
+          and deleted_at is null
+      `,
+      [parkingPlaceId]
+    );
+    const place = placeResult.rows[0];
+
+    if (!place) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Parking place not found'
+        }
+      };
+    }
+
+    const zoneKey = `${mapCode}:${place.code}`;
+    const zoneResult = await client.query(
+      `
+        insert into parking_place_map_zones (
+          parking_place_map_id,
+          parking_place_id,
+          zone_key,
+          geometry,
+          label_x,
+          label_y
+        )
+        values ($1, $2, $3, $4::jsonb, $5, $6)
+        on conflict (parking_place_map_id, parking_place_id)
+        do update set
+          zone_key = excluded.zone_key,
+          geometry = excluded.geometry,
+          label_x = excluded.label_x,
+          label_y = excluded.label_y,
+          updated_at = now()
+        returning id, zone_key, geometry, label_x, label_y, created_at, updated_at
+      `,
+      [
+        map.id,
+        place.id,
+        zoneKey,
+        JSON.stringify({ type: 'rect', zoneType, x, y, width, height }),
+        x + width / 2,
+        y + height / 2
+      ]
+    );
+    const zone = zoneResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('parking_place_map_zone', $1, 'parking_place_map_zone_saved', 'admin-web', $2::jsonb)
+      `,
+      [
+        zone.id,
+        JSON.stringify({
+          mapCode,
+          parkingPlaceId: place.id,
+          parkingPlaceCode: place.code,
+          geometry: zone.geometry,
+          zoneType
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        zone: {
+          id: zone.id,
+          zoneKey: zone.zone_key,
+          geometry: zone.geometry,
+          labelX: zone.label_x,
+          labelY: zone.label_y,
+          parkingPlace: {
+            id: place.id,
+            code: place.code,
+            title: place.title,
+            placeType: place.place_type,
+            guestPriorityRank: place.guest_priority_rank
+          },
+          map: {
+            id: map.id,
+            code: map.code,
+            title: map.title
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Map zone conflicts with an existing zone key or place mapping'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminDashboard(searchParams) {
   const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
 
@@ -3913,6 +4282,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
+    try {
+      const result = await handleAdminMapZonesList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
+    const result = await handleAdminMapZoneSave(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/admin/dashboard') {
     try {
       const result = await handleAdminDashboard(url.searchParams);
@@ -4087,6 +4476,7 @@ const server = http.createServer(async (req, res) => {
         '/admin/users',
         '/admin/employees',
         '/admin/places',
+        '/admin/map-zones',
         '/admin/dashboard',
         '/admin/availability',
         '/admin/place-releases',
