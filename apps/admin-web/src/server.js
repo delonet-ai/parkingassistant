@@ -11,20 +11,24 @@ const mapStoragePath = process.env.MAP_STORAGE_PATH || '/app/storage/maps';
 
 const parkingMaps = [
   {
+    id: 'g3',
+    title: 'G3',
+    description: 'Underground parking level G3',
+    filename: 'parking-g3.png'
+  },
+  {
     id: 'g4',
     title: 'G4',
     description: 'Underground parking level G4',
-    filename: 'parking-g4.jpg'
-  },
-  {
-    id: 'g5',
-    title: 'G5',
-    description: 'Underground parking level G5',
-    filename: 'parking-g5.jpg'
+    filename: 'parking-g4.png'
   }
 ];
 
 const knownMapFiles = new Set(parkingMaps.map((map) => map.filename));
+
+function contentTypeForMap(filename) {
+  return filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -1196,7 +1200,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     res.writeHead(200, {
-      'content-type': 'image/jpeg',
+      'content-type': contentTypeForMap(filename),
       'cache-control': 'public, max-age=300'
     });
     if (req.method === 'HEAD') {
