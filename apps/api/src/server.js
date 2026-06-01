@@ -1078,6 +1078,259 @@ async function handleAdminMapZoneSave(req) {
   }
 }
 
+async function handleAdminMapZoneUpdate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const zoneId = body.zoneId;
+  const zoneType = ['regular', 'rotatable', 'blocked'].includes(body.zoneType) ? body.zoneType : null;
+
+  if (!zoneId || !zoneType) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'zoneId and valid zoneType are required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const zoneResult = await client.query(
+      `
+        select
+          z.id,
+          z.geometry,
+          pp.code as parking_place_code,
+          ppm.code as map_code
+        from parking_place_map_zones z
+        join parking_places pp on pp.id = z.parking_place_id
+        join parking_place_maps ppm on ppm.id = z.parking_place_map_id
+        where z.id = $1
+        for update of z
+      `,
+      [zoneId]
+    );
+    const existingZone = zoneResult.rows[0];
+
+    if (!existingZone) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Map zone not found'
+        }
+      };
+    }
+
+    const nextGeometry = {
+      ...(existingZone.geometry || {}),
+      zoneType
+    };
+
+    const updatedResult = await client.query(
+      `
+        update parking_place_map_zones
+        set
+          geometry = $1::jsonb,
+          updated_at = now()
+        where id = $2
+        returning id, zone_key, geometry, label_x, label_y, updated_at
+      `,
+      [JSON.stringify(nextGeometry), zoneId]
+    );
+    const updatedZone = updatedResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('parking_place_map_zone', $1, 'parking_place_map_zone_type_changed', 'admin-web', $2::jsonb)
+      `,
+      [
+        zoneId,
+        JSON.stringify({
+          mapCode: existingZone.map_code,
+          parkingPlaceCode: existingZone.parking_place_code,
+          zoneType
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        zone: {
+          id: updatedZone.id,
+          zoneKey: updatedZone.zone_key,
+          geometry: updatedZone.geometry,
+          labelX: updatedZone.label_x,
+          labelY: updatedZone.label_y,
+          updatedAt: updatedZone.updated_at
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminMapZoneDelete(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const zoneId = body.zoneId;
+
+  if (!zoneId) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'zoneId is required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const deletedResult = await client.query(
+      `
+        delete from parking_place_map_zones z
+        using parking_places pp, parking_place_maps ppm
+        where z.parking_place_id = pp.id
+          and z.parking_place_map_id = ppm.id
+          and z.id = $1
+        returning
+          z.id,
+          z.zone_key,
+          z.geometry,
+          pp.code as parking_place_code,
+          ppm.code as map_code
+      `,
+      [zoneId]
+    );
+    const deletedZone = deletedResult.rows[0];
+
+    if (!deletedZone) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Map zone not found'
+        }
+      };
+    }
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('parking_place_map_zone', $1, 'parking_place_map_zone_deleted', 'admin-web', $2::jsonb)
+      `,
+      [
+        zoneId,
+        JSON.stringify({
+          mapCode: deletedZone.map_code,
+          parkingPlaceCode: deletedZone.parking_place_code,
+          zoneKey: deletedZone.zone_key,
+          geometry: deletedZone.geometry
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        deletedZone: {
+          id: deletedZone.id,
+          zoneKey: deletedZone.zone_key,
+          mapCode: deletedZone.map_code,
+          parkingPlaceCode: deletedZone.parking_place_code
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminDashboard(searchParams) {
   const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
 
@@ -4298,6 +4551,18 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
     const result = await handleAdminMapZoneSave(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/map-zones/update') {
+    const result = await handleAdminMapZoneUpdate(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/map-zones/delete') {
+    const result = await handleAdminMapZoneDelete(req);
     sendJson(res, result.statusCode, result.payload);
     return;
   }

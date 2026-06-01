@@ -227,6 +227,10 @@ function renderMapsTab(model) {
       </div>
       <p class="notice notice-ok" id="map-click-output">Overlay готов. Свободные зоны зеленые, занятые медовые, ротируемые красные.</p>
       <div class="maps-grid">${cards}</div>
+      <h3>Размеченные места</h3>
+      <div id="map-zones-list">
+        <p class="empty">Зоны пока не загружены.</p>
+      </div>
     </section>
     <script>
       const selectedDate = ${JSON.stringify(selectedDate)};
@@ -236,6 +240,8 @@ function renderMapsTab(model) {
       const maps = ${JSON.stringify(parkingMaps)};
       const places = ${JSON.stringify(places.map((place) => ({ id: place.id, code: place.code, title: place.title })))};
       const placesById = new Map(places.map((place) => [place.id, place]));
+      const zonesByMap = new Map();
+      const zonesList = document.getElementById('map-zones-list');
 
       function setOutput(text, isError = false) {
         output.textContent = text;
@@ -265,6 +271,80 @@ function renderMapsTab(model) {
         layer.appendChild(element);
       }
 
+      function zoneTypeLabel(zoneType) {
+        if (zoneType === 'rotatable') {
+          return 'Ротируемое/гостевое';
+        }
+        if (zoneType === 'blocked') {
+          return 'Недоступное';
+        }
+        return 'Обычное';
+      }
+
+      function renderZonesList() {
+        const zones = Array.from(zonesByMap.entries()).flatMap(([mapId, mapZones]) =>
+          mapZones.map((zone) => ({ ...zone, mapId }))
+        );
+
+        if (!zones.length) {
+          zonesList.innerHTML = '<p class="empty">Размеченных мест пока нет. Выберите место сверху и протяните прямоугольник по карте.</p>';
+          return;
+        }
+
+        const rows = zones
+          .sort((left, right) => String(left.parkingPlace?.code || '').localeCompare(String(right.parkingPlace?.code || ''), 'ru'))
+          .map((zone) => {
+            const geometry = zone.geometry || {};
+            const zoneType = geometry.zoneType || 'regular';
+            const coords = [
+              'x=' + Number(geometry.x || 0).toFixed(4),
+              'y=' + Number(geometry.y || 0).toFixed(4),
+              'w=' + Number(geometry.width || 0).toFixed(4),
+              'h=' + Number(geometry.height || 0).toFixed(4)
+            ].join(', ');
+
+            return \`
+              <tr>
+                <td>\${zone.mapId.toUpperCase()}</td>
+                <td>\${zone.parkingPlace?.code || '—'}</td>
+                <td>\${zone.parkingPlace?.title || '—'}</td>
+                <td>
+                  <select class="map-zone-type-select" data-zone-id="\${zone.id}" data-map-id="\${zone.mapId}">
+                    <option value="regular"\${zoneType === 'regular' ? ' selected' : ''}>Обычное</option>
+                    <option value="rotatable"\${zoneType === 'rotatable' ? ' selected' : ''}>Ротируемое/гостевое</option>
+                    <option value="blocked"\${zoneType === 'blocked' ? ' selected' : ''}>Недоступное</option>
+                  </select>
+                </td>
+                <td><span class="tag map-zone-status-\${zone.status || 'free'}">\${zone.status || 'free'}</span></td>
+                <td>\${coords}</td>
+                <td>
+                  <button class="button-secondary map-zone-delete" type="button" data-zone-id="\${zone.id}" data-map-id="\${zone.mapId}">
+                    Удалить с карты
+                  </button>
+                </td>
+              </tr>
+            \`;
+          })
+          .join('');
+
+        zonesList.innerHTML = \`
+          <table>
+            <thead>
+              <tr>
+                <th>Карта</th>
+                <th>Место</th>
+                <th>Название</th>
+                <th>Тип зоны</th>
+                <th>Статус</th>
+                <th>Координаты</th>
+                <th>Действие</th>
+              </tr>
+            </thead>
+            <tbody>\${rows}</tbody>
+          </table>
+        \`;
+      }
+
       async function loadZones(card) {
         const mapId = card.dataset.mapId;
         const layer = card.querySelector('.map-zones-layer');
@@ -278,8 +358,50 @@ function renderMapsTab(model) {
           return;
         }
 
+        zonesByMap.set(mapId, data.zones || []);
         for (const zone of data.zones || []) {
           renderZone(layer, zone);
+        }
+        renderZonesList();
+      }
+
+      async function updateZoneType(zoneId, zoneType, mapId) {
+        const response = await fetch('/admin/map-zones/update', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ zoneId, zoneType })
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          setOutput(data.error || 'Не удалось изменить тип зоны', true);
+          return;
+        }
+
+        setOutput('Тип зоны изменен: ' + zoneTypeLabel(zoneType));
+        const card = document.querySelector('.map-card[data-map-id="' + mapId + '"]');
+        if (card) {
+          await loadZones(card);
+        }
+      }
+
+      async function deleteZone(zoneId, mapId) {
+        const response = await fetch('/admin/map-zones/delete', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ zoneId })
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          setOutput(data.error || 'Не удалось удалить зону', true);
+          return;
+        }
+
+        setOutput('Зона удалена с карты.');
+        const card = document.querySelector('.map-card[data-map-id="' + mapId + '"]');
+        if (card) {
+          await loadZones(card);
         }
       }
 
@@ -388,6 +510,27 @@ function renderMapsTab(model) {
           await saveZone(card, geometry);
         });
       }
+
+      zonesList.addEventListener('change', async (event) => {
+        if (!event.target.classList.contains('map-zone-type-select')) {
+          return;
+        }
+
+        await updateZoneType(event.target.dataset.zoneId, event.target.value, event.target.dataset.mapId);
+      });
+
+      zonesList.addEventListener('click', async (event) => {
+        const button = event.target.closest('.map-zone-delete');
+        if (!button) {
+          return;
+        }
+
+        if (!window.confirm('Удалить это место с карты?')) {
+          return;
+        }
+
+        await deleteZone(button.dataset.zoneId, button.dataset.mapId);
+      });
     </script>
   `;
 }
@@ -1477,7 +1620,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
+  if (
+    req.method === 'POST' &&
+    (url.pathname === '/admin/map-zones' ||
+      url.pathname === '/admin/map-zones/update' ||
+      url.pathname === '/admin/map-zones/delete')
+  ) {
     let payload;
 
     try {
@@ -1488,7 +1636,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const result = await postJson('/admin/map-zones', payload);
+    const result = await postJson(url.pathname, payload);
     res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result.data));
     return;
