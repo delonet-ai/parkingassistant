@@ -15,6 +15,7 @@ const pool = databaseUrl
   : null;
 
 const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+const guestReserveMinimum = Number(process.env.GUEST_RESERVE_MINIMUM || 5);
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -38,6 +39,42 @@ async function readJsonBody(req) {
 
 function isIsoDate(value) {
   return typeof value === 'string' && isoDatePattern.test(value);
+}
+
+function splitDisplayName(displayName) {
+  const nameParts = displayName.split(/\s+/).filter(Boolean);
+  return {
+    lastName: nameParts[0] || displayName,
+    firstName: nameParts.length > 1 ? nameParts.slice(1).join(' ') : displayName
+  };
+}
+
+function formatDateForSql(value) {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  return String(value).slice(0, 10);
+}
+
+async function countAvailableReleasedPlaces(client, date) {
+  const result = await client.query(
+    `
+      select count(*)::int as count
+      from place_releases pr
+      join parking_places pp on pp.id = pr.parking_place_id
+      left join reservations r
+        on r.parking_place_id = pp.id
+        and r.reservation_date = $1::date
+        and r.status = 'active'
+      where pr.status = 'active'
+        and pr.release_during @> $1::date
+        and r.id is null
+    `,
+    [date]
+  );
+
+  return result.rows[0]?.count || 0;
 }
 
 async function queryOne(text, params = []) {
@@ -317,9 +354,7 @@ async function handleAdminEmployeeCreate(req) {
     };
   }
 
-  const nameParts = displayName.split(/\s+/).filter(Boolean);
-  const lastName = nameParts[0] || displayName;
-  const firstName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : displayName;
+  const { firstName, lastName } = splitDisplayName(displayName);
 
   try {
     const employee = await queryOne(
@@ -514,7 +549,7 @@ async function handleAdminDashboard(searchParams) {
     };
   }
 
-  const [releasedPlaces, reservations] = await Promise.all([
+  const [releasedPlaces, reservations, guestRequests, guestReserve] = await Promise.all([
     queryMany(
       `
         select
@@ -564,6 +599,50 @@ async function handleAdminDashboard(searchParams) {
         order by pp.code
       `,
       [date]
+    ),
+    queryMany(
+      `
+        select
+          gpr.id,
+          gpr.request_date,
+          gpr.status,
+          gpr.guest_name,
+          gpr.guest_phone,
+          gpr.vehicle_plate_number,
+          gpr.created_at,
+          gpr.canceled_at,
+          gpr.notes,
+          host.id as host_user_id,
+          host.display_name as host_display_name,
+          host.department as host_department,
+          r.id as reservation_id,
+          pp.id as parking_place_id,
+          pp.code as parking_place_code,
+          pp.title as parking_place_title,
+          pp.place_type as parking_place_type
+        from guest_parking_requests gpr
+        join users host on host.id = gpr.host_user_id
+        left join reservations r on r.id = gpr.assigned_reservation_id
+        left join parking_places pp on pp.id = r.parking_place_id
+        where gpr.request_date = $1::date
+        order by gpr.created_at desc
+      `,
+      [date]
+    ),
+    queryOne(
+      `
+        select count(*)::int as available_places
+        from place_releases pr
+        join parking_places pp on pp.id = pr.parking_place_id
+        left join reservations r
+          on r.parking_place_id = pp.id
+          and r.reservation_date = $1::date
+          and r.status = 'active'
+        where pr.status = 'active'
+          and pr.release_during @> $1::date
+          and r.id is null
+      `,
+      [date]
     )
   ]);
 
@@ -608,7 +687,58 @@ async function handleAdminDashboard(searchParams) {
           title: reservation.parking_place_title,
           placeType: reservation.parking_place_type
         }
-      }))
+      })),
+      guestReserve: {
+        minimum: guestReserveMinimum,
+        availablePlaces: guestReserve?.available_places || 0,
+        status: (guestReserve?.available_places || 0) >= guestReserveMinimum ? 'ok' : 'low'
+      },
+      guestRequests: guestRequests.map((request) => ({
+        id: request.id,
+        requestDate: request.request_date,
+        status: request.status,
+        guestName: request.guest_name,
+        guestPhone: request.guest_phone,
+        vehiclePlateNumber: request.vehicle_plate_number,
+        createdAt: request.created_at,
+        canceledAt: request.canceled_at,
+        notes: request.notes,
+        host: {
+          id: request.host_user_id,
+          displayName: request.host_display_name,
+          department: request.host_department
+        },
+        assignedReservation: request.reservation_id
+          ? {
+              id: request.reservation_id,
+              parkingPlace: {
+                id: request.parking_place_id,
+                code: request.parking_place_code,
+                title: request.parking_place_title,
+                placeType: request.parking_place_type
+              }
+            }
+          : null
+      })),
+      guestReservations: reservations
+        .filter((reservation) => reservation.source === 'guest')
+        .map((reservation) => ({
+          id: reservation.id,
+          reservationDate: reservation.reservation_date,
+          user: reservation.user_id
+            ? {
+                id: reservation.user_id,
+                displayName: reservation.user_display_name,
+                department: reservation.user_department
+              }
+            : null,
+          parkingPlace: {
+            id: reservation.parking_place_id,
+            code: reservation.parking_place_code,
+            title: reservation.parking_place_title,
+            placeType: reservation.parking_place_type
+          }
+        }))
     }
   };
 }
@@ -1140,6 +1270,918 @@ async function handleAdminEmployeeParkingRequestCancel(req) {
   }
 }
 
+async function handleAdminGuestParkingRequestsList(searchParams) {
+  const requestDate = searchParams.get('date');
+
+  if (requestDate && !isIsoDate(requestDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const requests = await queryMany(
+    `
+      select
+        gpr.id,
+        gpr.request_date,
+        gpr.status,
+        gpr.guest_name,
+        gpr.guest_phone,
+        gpr.vehicle_plate_number,
+        gpr.created_at,
+        gpr.canceled_at,
+        gpr.notes,
+        guest.id as guest_user_id,
+        guest.display_name as guest_display_name,
+        host.id as host_user_id,
+        host.display_name as host_display_name,
+        host.department as host_department,
+        r.id as reservation_id,
+        r.status as reservation_status,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.place_type as parking_place_type
+      from guest_parking_requests gpr
+      join users guest on guest.id = gpr.guest_user_id
+      join users host on host.id = gpr.host_user_id
+      left join reservations r on r.id = gpr.assigned_reservation_id
+      left join parking_places pp on pp.id = r.parking_place_id
+      where ($1::date is null or gpr.request_date = $1::date)
+      order by gpr.request_date desc, gpr.created_at desc
+    `,
+    [requestDate || null]
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      requests: requests.map((request) => ({
+        id: request.id,
+        requestDate: request.request_date,
+        status: request.status,
+        guestName: request.guest_name,
+        guestPhone: request.guest_phone,
+        vehiclePlateNumber: request.vehicle_plate_number,
+        createdAt: request.created_at,
+        canceledAt: request.canceled_at,
+        notes: request.notes,
+        guest: {
+          id: request.guest_user_id,
+          displayName: request.guest_display_name
+        },
+        host: {
+          id: request.host_user_id,
+          displayName: request.host_display_name,
+          department: request.host_department
+        },
+        assignedReservation: request.reservation_id
+          ? {
+              id: request.reservation_id,
+              status: request.reservation_status,
+              parkingPlace: {
+                id: request.parking_place_id,
+                code: request.parking_place_code,
+                title: request.parking_place_title,
+                placeType: request.parking_place_type
+              }
+            }
+          : null
+      }))
+    }
+  };
+}
+
+async function handleAdminGuestParkingRequestCreate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const hostUserId = body.hostUserId;
+  const requestDate = body.requestDate;
+  const guestName = typeof body.guestName === 'string' ? body.guestName.trim() : '';
+  const guestPhone = typeof body.guestPhone === 'string' ? body.guestPhone.trim() || null : null;
+  const vehiclePlateNumber =
+    typeof body.vehiclePlateNumber === 'string' ? body.vehiclePlateNumber.trim() || null : null;
+  const notes = typeof body.notes === 'string' ? body.notes.trim() || null : null;
+
+  if (!hostUserId || !isIsoDate(requestDate) || !guestName) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'hostUserId, guestName and requestDate are required; date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`guest_assignment:${requestDate}`]);
+
+    const hostResult = await client.query(
+      `
+        select id, display_name, department
+        from users
+        where id = $1
+          and kind = 'employee'
+          and is_active = true
+          and deleted_at is null
+      `,
+      [hostUserId]
+    );
+    const host = hostResult.rows[0];
+
+    if (!host) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Host employee not found'
+        }
+      };
+    }
+
+    const placeResult = await client.query(
+      `
+        select
+          pr.id as release_id,
+          pp.id as parking_place_id,
+          pp.code as parking_place_code,
+          pp.title as parking_place_title,
+          pp.place_type
+        from place_releases pr
+        join parking_places pp on pp.id = pr.parking_place_id
+        left join reservations r
+          on r.parking_place_id = pp.id
+          and r.reservation_date = $1::date
+          and r.status = 'active'
+        where pr.status = 'active'
+          and pr.release_during @> $1::date
+          and r.id is null
+        order by
+          case pp.place_type
+            when 'single' then 1
+            when 'double' then 2
+            when 'triple' then 3
+            else 4
+          end,
+          pp.guest_priority_rank nulls last,
+          pp.code
+        limit 1
+        for update of pr, pp
+      `,
+      [requestDate]
+    );
+    const place = placeResult.rows[0];
+
+    if (!place) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'No released parking place is available for guest assignment on this date'
+        }
+      };
+    }
+
+    const { firstName, lastName } = splitDisplayName(guestName);
+    const guestResult = await client.query(
+      `
+        insert into users (
+          kind,
+          first_name,
+          last_name,
+          display_name,
+          phone
+        )
+        values ('guest', $1, $2, $3, $4)
+        returning id, display_name, phone
+      `,
+      [firstName, lastName, guestName, guestPhone]
+    );
+    const guest = guestResult.rows[0];
+
+    const requestResult = await client.query(
+      `
+        insert into guest_parking_requests (
+          guest_user_id,
+          host_user_id,
+          request_date,
+          status,
+          guest_name,
+          guest_phone,
+          vehicle_plate_number,
+          notes
+        )
+        values ($1, $2, $3::date, 'assigned', $4, $5, $6, $7)
+        returning id, request_date, status, created_at
+      `,
+      [guest.id, hostUserId, requestDate, guestName, guestPhone, vehiclePlateNumber, notes]
+    );
+    const guestRequest = requestResult.rows[0];
+
+    const reservationResult = await client.query(
+      `
+        insert into reservations (
+          reservation_date,
+          parking_place_id,
+          user_id,
+          guest_parking_request_id,
+          source,
+          reason
+        )
+        values ($1::date, $2, $3, $4, 'guest', $5)
+        returning id, reservation_date, source, status, created_at
+      `,
+      [
+        requestDate,
+        place.parking_place_id,
+        guest.id,
+        guestRequest.id,
+        `Guest assignment hosted by ${host.display_name}`
+      ]
+    );
+    const reservation = reservationResult.rows[0];
+
+    await client.query(
+      `
+        update guest_parking_requests
+        set
+          assigned_reservation_id = $1,
+          updated_at = now()
+        where id = $2
+      `,
+      [reservation.id, guestRequest.id]
+    );
+
+    await client.query(
+      `
+        insert into reservation_events (
+          reservation_id,
+          event_type,
+          payload,
+          source
+        )
+        values ($1, 'reservation_created', $2::jsonb, 'guest')
+      `,
+      [
+        reservation.id,
+        JSON.stringify({
+          releaseId: place.release_id,
+          guestParkingRequestId: guestRequest.id,
+          guestUserId: guest.id,
+          guestName,
+          hostUserId,
+          hostDisplayName: host.display_name,
+          parkingPlaceId: place.parking_place_id,
+          requestDate
+        })
+      ]
+    );
+
+    await client.query(
+      `
+        insert into parking_movements (
+          reservation_id,
+          movement_date,
+          to_parking_place_id,
+          movement_type,
+          reason
+        )
+        values ($1, $2::date, $3, 'guest_assignment', $4)
+      `,
+      [reservation.id, requestDate, place.parking_place_id, `Guest assignment hosted by ${host.display_name}`]
+    );
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'guest_parking_request',
+          $1,
+          'guest_parking_request_created_and_assigned',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        guestRequest.id,
+        JSON.stringify({
+          guestUserId: guest.id,
+          guestName,
+          hostUserId,
+          hostDisplayName: host.display_name,
+          reservationId: reservation.id,
+          parkingPlaceId: place.parking_place_id,
+          parkingPlaceCode: place.parking_place_code,
+          requestDate
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        request: {
+          id: guestRequest.id,
+          requestDate: guestRequest.request_date,
+          status: guestRequest.status,
+          guestName,
+          guestPhone,
+          vehiclePlateNumber,
+          createdAt: guestRequest.created_at,
+          guest: {
+            id: guest.id,
+            displayName: guest.display_name,
+            phone: guest.phone
+          },
+          host: {
+            id: host.id,
+            displayName: host.display_name,
+            department: host.department
+          },
+          assignedReservation: {
+            id: reservation.id,
+            reservationDate: reservation.reservation_date,
+            source: reservation.source,
+            status: reservation.status,
+            parkingPlace: {
+              id: place.parking_place_id,
+              code: place.parking_place_code,
+              title: place.parking_place_title,
+              placeType: place.place_type
+            }
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Guest request or reservation already exists for this date'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminGuestParkingRequestAssign(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const requestId = body.requestId;
+
+  if (!requestId) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'requestId is required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const requestResult = await client.query(
+      `
+        select
+          gpr.id,
+          gpr.request_date,
+          gpr.status,
+          gpr.guest_user_id,
+          gpr.host_user_id,
+          gpr.guest_name,
+          gpr.assigned_reservation_id,
+          host.display_name as host_display_name
+        from guest_parking_requests gpr
+        join users host on host.id = gpr.host_user_id
+        where gpr.id = $1
+        for update of gpr
+      `,
+      [requestId]
+    );
+    const guestRequest = requestResult.rows[0];
+
+    if (!guestRequest) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Guest parking request not found'
+        }
+      };
+    }
+
+    if (guestRequest.status === 'canceled') {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Canceled guest requests cannot be assigned'
+        }
+      };
+    }
+
+    if (guestRequest.assigned_reservation_id || guestRequest.status === 'assigned') {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Guest request is already assigned'
+        }
+      };
+    }
+
+    const requestDate = formatDateForSql(guestRequest.request_date);
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`guest_assignment:${requestDate}`]);
+
+    const placeResult = await client.query(
+      `
+        select
+          pr.id as release_id,
+          pp.id as parking_place_id,
+          pp.code as parking_place_code,
+          pp.title as parking_place_title,
+          pp.place_type
+        from place_releases pr
+        join parking_places pp on pp.id = pr.parking_place_id
+        left join reservations r
+          on r.parking_place_id = pp.id
+          and r.reservation_date = $1::date
+          and r.status = 'active'
+        where pr.status = 'active'
+          and pr.release_during @> $1::date
+          and r.id is null
+        order by
+          case pp.place_type
+            when 'single' then 1
+            when 'double' then 2
+            when 'triple' then 3
+            else 4
+          end,
+          pp.guest_priority_rank nulls last,
+          pp.code
+        limit 1
+        for update of pr, pp
+      `,
+      [requestDate]
+    );
+    const place = placeResult.rows[0];
+
+    if (!place) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'No released parking place is available for guest assignment on this date'
+        }
+      };
+    }
+
+    const reservationResult = await client.query(
+      `
+        insert into reservations (
+          reservation_date,
+          parking_place_id,
+          user_id,
+          guest_parking_request_id,
+          source,
+          reason
+        )
+        values ($1::date, $2, $3, $4, 'guest', $5)
+        returning id, reservation_date, source, status, created_at
+      `,
+      [
+        requestDate,
+        place.parking_place_id,
+        guestRequest.guest_user_id,
+        guestRequest.id,
+        `Guest assignment hosted by ${guestRequest.host_display_name}`
+      ]
+    );
+    const reservation = reservationResult.rows[0];
+
+    await client.query(
+      `
+        update guest_parking_requests
+        set
+          status = 'assigned',
+          assigned_reservation_id = $1,
+          updated_at = now()
+        where id = $2
+      `,
+      [reservation.id, guestRequest.id]
+    );
+
+    await client.query(
+      `
+        insert into reservation_events (
+          reservation_id,
+          event_type,
+          payload,
+          source
+        )
+        values ($1, 'reservation_created', $2::jsonb, 'guest')
+      `,
+      [
+        reservation.id,
+        JSON.stringify({
+          releaseId: place.release_id,
+          guestParkingRequestId: guestRequest.id,
+          guestUserId: guestRequest.guest_user_id,
+          guestName: guestRequest.guest_name,
+          hostUserId: guestRequest.host_user_id,
+          parkingPlaceId: place.parking_place_id,
+          requestDate
+        })
+      ]
+    );
+
+    await client.query(
+      `
+        insert into parking_movements (
+          reservation_id,
+          movement_date,
+          to_parking_place_id,
+          movement_type,
+          reason
+        )
+        values ($1, $2::date, $3, 'guest_assignment', $4)
+      `,
+      [reservation.id, requestDate, place.parking_place_id, `Guest assignment hosted by ${guestRequest.host_display_name}`]
+    );
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'guest_parking_request',
+          $1,
+          'guest_parking_request_assigned',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        guestRequest.id,
+        JSON.stringify({
+          guestUserId: guestRequest.guest_user_id,
+          guestName: guestRequest.guest_name,
+          hostUserId: guestRequest.host_user_id,
+          reservationId: reservation.id,
+          parkingPlaceId: place.parking_place_id,
+          parkingPlaceCode: place.parking_place_code,
+          requestDate
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        request: {
+          id: guestRequest.id,
+          requestDate: reservation.reservation_date,
+          status: 'assigned',
+          guestName: guestRequest.guest_name,
+          assignedReservation: {
+            id: reservation.id,
+            reservationDate: reservation.reservation_date,
+            source: reservation.source,
+            status: reservation.status,
+            parkingPlace: {
+              id: place.parking_place_id,
+              code: place.parking_place_code,
+              title: place.parking_place_title,
+              placeType: place.place_type
+            }
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Guest reservation already exists for this date'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminGuestParkingRequestCancel(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const requestId = body.requestId;
+
+  if (!requestId) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'requestId is required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const requestResult = await client.query(
+      `
+        select
+          gpr.id,
+          gpr.request_date,
+          gpr.status,
+          gpr.guest_user_id,
+          gpr.host_user_id,
+          gpr.guest_name,
+          gpr.assigned_reservation_id,
+          host.display_name as host_display_name
+        from guest_parking_requests gpr
+        join users host on host.id = gpr.host_user_id
+        where gpr.id = $1
+        for update of gpr
+      `,
+      [requestId]
+    );
+    const guestRequest = requestResult.rows[0];
+
+    if (!guestRequest) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Guest parking request not found'
+        }
+      };
+    }
+
+    if (guestRequest.status === 'canceled') {
+      await client.query('rollback');
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          request: {
+            id: guestRequest.id,
+            requestDate: guestRequest.request_date,
+            status: guestRequest.status
+          }
+        }
+      };
+    }
+
+    let canceledReservation = null;
+
+    if (guestRequest.assigned_reservation_id) {
+      const reservationResult = await client.query(
+        `
+          update reservations
+          set
+            status = 'canceled',
+            canceled_at = now(),
+            updated_at = now()
+          where id = $1
+            and status = 'active'
+          returning id, reservation_date, parking_place_id, status, canceled_at
+        `,
+        [guestRequest.assigned_reservation_id]
+      );
+      canceledReservation = reservationResult.rows[0] || null;
+
+      if (canceledReservation) {
+        await client.query(
+          `
+            insert into reservation_events (
+              reservation_id,
+              event_type,
+              payload,
+              source
+            )
+            values ($1, 'reservation_canceled', $2::jsonb, 'guest')
+          `,
+          [
+            canceledReservation.id,
+            JSON.stringify({
+              guestParkingRequestId: guestRequest.id,
+              guestUserId: guestRequest.guest_user_id,
+              hostUserId: guestRequest.host_user_id,
+              requestDate: guestRequest.request_date
+            })
+          ]
+        );
+      }
+    }
+
+    const canceledRequestResult = await client.query(
+      `
+        update guest_parking_requests
+        set
+          status = 'canceled',
+          canceled_at = now(),
+          updated_at = now()
+        where id = $1
+        returning id, request_date, status, canceled_at
+      `,
+      [requestId]
+    );
+    const canceledRequest = canceledRequestResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values (
+          'guest_parking_request',
+          $1,
+          'guest_parking_request_canceled',
+          'admin-web',
+          $2::jsonb
+        )
+      `,
+      [
+        requestId,
+        JSON.stringify({
+          guestUserId: guestRequest.guest_user_id,
+          guestName: guestRequest.guest_name,
+          hostUserId: guestRequest.host_user_id,
+          hostDisplayName: guestRequest.host_display_name,
+          reservationId: guestRequest.assigned_reservation_id,
+          canceledReservationId: canceledReservation?.id || null,
+          requestDate: guestRequest.request_date
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        request: {
+          id: canceledRequest.id,
+          requestDate: canceledRequest.request_date,
+          status: canceledRequest.status,
+          canceledAt: canceledRequest.canceled_at
+        },
+        canceledReservation: canceledReservation
+          ? {
+              id: canceledReservation.id,
+              reservationDate: canceledReservation.reservation_date,
+              status: canceledReservation.status,
+              canceledAt: canceledReservation.canceled_at
+            }
+          : null
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminQueueProcess(req) {
   let body;
 
@@ -1226,11 +2268,24 @@ async function handleAdminQueueProcess(req) {
 
     const queueEntries = queueResult.rows;
     const availablePlaces = availablePlacesResult.rows;
+    const maxEmployeeAssignments = Math.max(0, availablePlaces.length - guestReserveMinimum);
     const assignments = [];
     const skipped = [];
     let placeIndex = 0;
 
     for (const entry of queueEntries) {
+      if (assignments.length >= maxEmployeeAssignments) {
+        skipped.push({
+          requestId: entry.request_id,
+          queueEntryId: entry.queue_entry_id,
+          queuePosition: entry.queue_position,
+          userId: entry.user_id,
+          userDisplayName: entry.user_display_name,
+          reason: 'guest_reserve_minimum_reached'
+        });
+        continue;
+      }
+
       while (placeIndex < availablePlaces.length && availablePlaces[placeIndex].owner_user_id === entry.user_id) {
         placeIndex += 1;
       }
@@ -1393,6 +2448,7 @@ async function handleAdminQueueProcess(req) {
           queueDate,
           waitingCount: queueEntries.length,
           availableReleasedPlacesCount: availablePlaces.length,
+          guestReserveMinimum,
           assignedCount: assignments.length,
           skippedCount: skipped.length,
           assignments,
@@ -1409,6 +2465,8 @@ async function handleAdminQueueProcess(req) {
         status: 'ok',
         service: 'api',
         date: queueDate,
+        guestReserveMinimum,
+        availableReleasedPlacesCount: availablePlaces.length,
         assignedCount: assignments.length,
         skippedCount: skipped.length,
         assignments,
@@ -1478,6 +2536,7 @@ async function handleAdminManualReservationCreate(req) {
 
   try {
     await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`manual_assignment:${reservationDate}`]);
 
     const releasedPlaceResult = await client.query(
       `
@@ -1540,6 +2599,23 @@ async function handleAdminManualReservationCreate(req) {
           status: 'error',
           service: 'api',
           error: 'Employee not found'
+        }
+      };
+    }
+
+    const availableReleasedPlacesCount = await countAvailableReleasedPlaces(client, reservationDate);
+    if (availableReleasedPlacesCount <= guestReserveMinimum) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: `Manual employee assignment would reduce guest reserve below ${guestReserveMinimum} places`,
+          guestReserve: {
+            minimum: guestReserveMinimum,
+            availablePlaces: availableReleasedPlacesCount
+          }
         }
       };
     }
@@ -2028,6 +3104,21 @@ async function handleAdminReservationCancel(req) {
       );
     }
 
+    if (reservation.guest_parking_request_id) {
+      await client.query(
+        `
+          update guest_parking_requests
+          set
+            status = 'canceled',
+            canceled_at = now(),
+            updated_at = now()
+          where id = $1
+            and status <> 'canceled'
+        `,
+        [reservation.guest_parking_request_id]
+      );
+    }
+
     await client.query(
       `
         insert into reservation_events (
@@ -2396,6 +3487,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/guest-parking-requests') {
+    try {
+      const result = await handleAdminGuestParkingRequestsList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
     const result = await handleAdminPlaceReleaseCreate(req);
     sendJson(res, result.statusCode, result.payload);
@@ -2416,6 +3521,24 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests/cancel') {
     const result = await handleAdminEmployeeParkingRequestCancel(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests') {
+    const result = await handleAdminGuestParkingRequestCreate(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/assign') {
+    const result = await handleAdminGuestParkingRequestAssign(req);
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/cancel') {
+    const result = await handleAdminGuestParkingRequestCancel(req);
     sendJson(res, result.statusCode, result.payload);
     return;
   }
@@ -2454,6 +3577,8 @@ const server = http.createServer(async (req, res) => {
         '/admin/place-releases',
         '/admin/place-releases/cancel',
         '/admin/employee-parking-requests',
+        '/admin/guest-parking-requests',
+        '/admin/guest-parking-requests/assign',
         '/admin/queue/process',
         '/admin/reservations/manual',
         '/admin/reservations/cancel'

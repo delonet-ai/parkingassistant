@@ -486,11 +486,107 @@ function renderQueueProcessForm(model) {
   `;
 }
 
+function renderGuestRequestForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const employees = model.employees?.data?.employees || [];
+  const options = employees
+    .map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employee.displayName)}</option>`)
+    .join('');
+
+  return `
+    <form class="action-form" method="post" action="/admin/guest-parking-requests">
+      <input type="hidden" name="requestDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Приглашающий</span>
+        <select name="hostUserId" required>
+          <option value="">Выберите сотрудника</option>
+          ${options}
+        </select>
+      </label>
+      <label>
+        <span>Гость</span>
+        <input type="text" name="guestName" placeholder="Фамилия Имя" required />
+      </label>
+      <label>
+        <span>Телефон гостя</span>
+        <input type="tel" name="guestPhone" placeholder="+7..." />
+      </label>
+      <label>
+        <span>Номер авто</span>
+        <input type="text" name="vehiclePlateNumber" placeholder="А000АА777" />
+      </label>
+      <label class="wide">
+        <span>Комментарий</span>
+        <input type="text" name="notes" placeholder="Например: встреча в 12:00" />
+      </label>
+      <button type="submit">Создать и назначить гостя</button>
+    </form>
+  `;
+}
+
+function renderGuestRequestsTable(model) {
+  const requests = model.guestRequests?.data?.requests || [];
+
+  if (!requests.length) {
+    return '<p class="empty">Гостевых заявок на выбранную дату пока нет.</p>';
+  }
+
+  const rows = requests
+    .map((request) => {
+      const canCancel = request.status !== 'canceled';
+      const place = request.assignedReservation?.parkingPlace;
+
+      return `
+        <tr>
+          <td>${escapeHtml(request.guestName)}</td>
+          <td>${request.guestPhone ? escapeHtml(request.guestPhone) : '—'}</td>
+          <td>${request.vehiclePlateNumber ? escapeHtml(request.vehiclePlateNumber) : '—'}</td>
+          <td>${escapeHtml(request.host.displayName)}</td>
+          <td><span class="tag ${request.status === 'canceled' ? 'reserved' : 'free'}">${escapeHtml(request.status)}</span></td>
+          <td>${place ? escapeHtml(`${place.code} · ${place.placeType}`) : '—'}</td>
+          <td>${request.notes ? escapeHtml(request.notes) : '—'}</td>
+          <td>
+            ${
+              canCancel
+                ? `<form method="post" action="/admin/guest-parking-requests/cancel">
+                    <input type="hidden" name="requestId" value="${escapeHtml(request.id)}" />
+                    <input type="hidden" name="requestDate" value="${escapeHtml(formatDate(request.requestDate))}" />
+                    <button class="button-secondary" type="submit">Отменить</button>
+                  </form>`
+                : '—'
+            }
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Гость</th>
+          <th>Телефон</th>
+          <th>Авто</th>
+          <th>Приглашающий</th>
+          <th>Статус</th>
+          <th>Место</th>
+          <th>Комментарий</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
 function renderDayDashboard(model) {
   const dashboard = model.dashboard?.data || {};
   const releasedPlaces = dashboard.releasedPlaces || [];
   const reservations = dashboard.reservations || [];
   const employeeRequests = model.employeeRequests?.data?.requests || [];
+  const guestRequests = model.guestRequests?.data?.requests || dashboard.guestRequests || [];
+  const guestReserve = dashboard.guestReserve || { minimum: 5, availablePlaces: 0, status: 'low' };
   const freeCount = releasedPlaces.filter((place) => !place.isReserved).length;
 
   const releaseRows = releasedPlaces.length
@@ -550,6 +646,14 @@ function renderDayDashboard(model) {
         <p class="label">Заявок сотрудников</p>
         <p class="value">${escapeHtml(employeeRequests.length)}</p>
       </article>
+      <article>
+        <p class="label">Гостевых заявок</p>
+        <p class="value">${escapeHtml(guestRequests.length)}</p>
+      </article>
+      <article>
+        <p class="label">Гостевой резерв</p>
+        <p class="value ${guestReserve.status === 'ok' ? 'status-ok' : 'status-error'}">${escapeHtml(`${guestReserve.availablePlaces}/${guestReserve.minimum}`)}</p>
+      </article>
     </div>
 
     <h3>Ручное назначение</h3>
@@ -562,6 +666,10 @@ function renderDayDashboard(model) {
     ${renderQueueProcessForm(model)}
     ${renderEmployeeRequestForm(model)}
     ${renderEmployeeRequestsTable(model)}
+
+    <h3>Гостевые заявки</h3>
+    ${renderGuestRequestForm(model)}
+    ${renderGuestRequestsTable(model)}
 
     <h3>Отданные места на день</h3>
     ${
@@ -1045,7 +1153,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
       const activeView = url.searchParams.get('view') === 'maps' ? 'maps' : 'dashboard';
-      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests] = await Promise.all([
+      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests, guestRequests] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
         fetchJson('/auth/bootstrap-status'),
@@ -1053,7 +1161,8 @@ const server = http.createServer(async (req, res) => {
         fetchJson('/admin/place-releases'),
         fetchJson(`/admin/employees?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
-        fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`)
+        fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`),
+        fetchJson(`/admin/guest-parking-requests?date=${encodeURIComponent(selectedDate)}`)
       ]);
       const notice =
         url.searchParams.get('released') === '1'
@@ -1068,6 +1177,10 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'ok', text: 'Заявка сотрудника добавлена в очередь.' }
           : url.searchParams.get('requestCanceled') === '1'
             ? { type: 'ok', text: 'Заявка сотрудника отменена.' }
+          : url.searchParams.get('guestCreated') === '1'
+            ? { type: 'ok', text: 'Гостевая заявка создана, место назначено.' }
+          : url.searchParams.get('guestCanceled') === '1'
+            ? { type: 'ok', text: 'Гостевая заявка отменена.' }
           : url.searchParams.get('employeeCreated') === '1'
             ? { type: 'ok', text: 'Сотрудник создан. Теперь его можно поставить в очередь.' }
           : url.searchParams.get('queueProcessed')
@@ -1090,6 +1203,7 @@ const server = http.createServer(async (req, res) => {
           employees,
           dashboard,
           employeeRequests,
+          guestRequests,
           selectedDate,
           activeView,
           notice
@@ -1242,6 +1356,50 @@ const server = http.createServer(async (req, res) => {
 
     if (result.ok) {
       res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&requestCanceled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests') {
+    const form = await readFormBody(req);
+    const payload = {
+      hostUserId: form.get('hostUserId'),
+      requestDate: form.get('requestDate'),
+      guestName: form.get('guestName'),
+      guestPhone: form.get('guestPhone'),
+      vehiclePlateNumber: form.get('vehiclePlateNumber'),
+      notes: form.get('notes')
+    };
+    const result = await postJson('/admin/guest-parking-requests', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate)}&guestCreated=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/cancel') {
+    const form = await readFormBody(req);
+    const payload = {
+      requestId: form.get('requestId')
+    };
+    const requestDate = form.get('requestDate') || todayIsoDate();
+    const result = await postJson('/admin/guest-parking-requests/cancel', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&guestCanceled=1` });
       res.end();
       return;
     }
