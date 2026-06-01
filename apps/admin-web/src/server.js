@@ -194,10 +194,12 @@ function renderMapsTab(model) {
             </div>
             <span class="tag">markup</span>
           </div>
-          <div class="map-editor" data-map-id="${escapeHtml(map.id)}">
-            <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" draggable="false" />
-            <div class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></div>
-            <div class="map-draft-zone" hidden></div>
+          <div class="map-scroll">
+            <div class="map-editor" data-map-id="${escapeHtml(map.id)}">
+              <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" draggable="false" />
+              <div class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></div>
+              <div class="map-draft-zone" hidden></div>
+            </div>
           </div>
         </article>
       `
@@ -224,6 +226,15 @@ function renderMapsTab(model) {
             <option value="blocked">Недоступное</option>
           </select>
         </label>
+        <label>
+          <span>Масштаб карты</span>
+          <select id="map-zoom-select">
+            <option value="100">100%</option>
+            <option value="150">150%</option>
+            <option value="200" selected>200%</option>
+            <option value="300">300%</option>
+          </select>
+        </label>
       </div>
       <p class="notice notice-ok" id="map-click-output">Overlay готов. Свободные зоны зеленые, занятые медовые, ротируемые красные.</p>
       <div class="maps-grid">${cards}</div>
@@ -236,6 +247,7 @@ function renderMapsTab(model) {
       const selectedDate = ${JSON.stringify(selectedDate)};
       const placeSelect = document.getElementById('map-place-select');
       const zoneTypeSelect = document.getElementById('map-zone-type');
+      const zoomSelect = document.getElementById('map-zoom-select');
       const output = document.getElementById('map-click-output');
       const maps = ${JSON.stringify(parkingMaps)};
       const places = ${JSON.stringify(places.map((place) => ({ id: place.id, code: place.code, title: place.title })))};
@@ -247,6 +259,14 @@ function renderMapsTab(model) {
         output.textContent = text;
         output.classList.toggle('notice-error', isError);
         output.classList.toggle('notice-ok', !isError);
+      }
+
+      function applyMapZoom() {
+        const zoom = Number(zoomSelect.value || 100);
+        for (const editor of document.querySelectorAll('.map-editor')) {
+          editor.style.width = zoom + '%';
+        }
+        setOutput('Масштаб карты: ' + zoom + '%. Если место мелкое, используйте 200-300% и горизонтальную прокрутку.');
       }
 
       function renderZone(layer, zone) {
@@ -531,6 +551,9 @@ function renderMapsTab(model) {
 
         await deleteZone(button.dataset.zoneId, button.dataset.mapId);
       });
+
+      zoomSelect.addEventListener('change', applyMapZoom);
+      applyMapZoom();
     </script>
   `;
 }
@@ -1420,7 +1443,7 @@ function renderPage(model) {
 
       .map-toolbar {
         display: grid;
-        grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px);
+        grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px) minmax(160px, 220px);
         gap: 14px;
         margin-bottom: 16px;
       }
@@ -1437,13 +1460,20 @@ function renderPage(model) {
         text-transform: uppercase;
       }
 
+      .map-scroll {
+        width: 100%;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fff;
+      }
+
       .map-editor {
         position: relative;
         width: 100%;
+        min-width: 100%;
         padding: 0;
         overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 16px;
         background: #fff;
         cursor: crosshair;
         touch-action: none;
