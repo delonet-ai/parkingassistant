@@ -109,13 +109,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      api:
+        condition: service_started
     environment:
       APP_ROLE: jobs
       NODE_ENV: ${NODE_ENV:-development}
       APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
+      API_BASE_URL: http://api:3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-parkingassistant}:${POSTGRES_PASSWORD:-parkingassistant}@postgres:5432/${POSTGRES_DB:-parkingassistant}
       JOBS_SCHEDULER_ENABLED: ${JOBS_SCHEDULER_ENABLED:-true}
+      JOB_PROCESS_QUEUE_TIME: ${JOB_PROCESS_QUEUE_TIME:-08:00}
+      JOB_FREEZE_NEXT_DAY_TIME: ${JOB_FREEZE_NEXT_DAY_TIME:-19:00}
+      JOB_LOCK_DEPARTURE_PLANS_TIME: ${JOB_LOCK_DEPARTURE_PLANS_TIME:-07:00}
     volumes:
       - /opt/git/parkingassistant/staging/logs:/app/storage/logs
       - /opt/git/parkingassistant/staging/backups:/app/storage/backups
-    command: ["/bin/sh", "-lc", "echo 'Jobs placeholder: replace with real scheduler command'; sleep infinity"]
+    command: ["npm", "run", "jobs:start"]

@@ -6,6 +6,7 @@
   "scripts": {
     "api:start": "node apps/api/src/server.js",
     "admin-web:start": "node apps/admin-web/src/server.js",
+    "jobs:start": "node apps/jobs/src/scheduler.js",
     "db:import:parking-catalog": "node scripts/import/parking-catalog.js",
     "db:import:permanent-assignments": "node scripts/import/permanent-assignments.js"
   },

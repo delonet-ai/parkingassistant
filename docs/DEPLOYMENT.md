@@ -102,7 +102,8 @@ Internet
 
 - separate long-running container
 - runs scheduled tasks
-- writes through backend domain/repository layer or dedicated internal application services
+- calls backend job endpoints in MVP
+- writes every run to `job_runs` and `audit_logs` through the backend
 
 #### `postgres`
 
@@ -131,13 +132,22 @@ Internet
 
 - отдельный контейнер `jobs`
 - cron-like scheduler внутри приложения
-- distributed lock в PostgreSQL для защиты от двойного запуска
+- backend job endpoints keep transactional locks and audit trail
+- default timezone: `Europe/Moscow`
+- default schedule: `07:00` lock departure editing, `08:00` process queue, `19:00` freeze next day
 
 Почему так:
 
 - проще локально и в production
 - не зависит от внешнего orchestrator cron
 - хорошо подходит для задач на `19:00`, `07:00` и начало дня
+
+Расписание можно менять через env:
+
+- `JOBS_SCHEDULER_ENABLED`
+- `JOB_LOCK_DEPARTURE_PLANS_TIME`
+- `JOB_PROCESS_QUEUE_TIME`
+- `JOB_FREEZE_NEXT_DAY_TIME`
 
 ## Networking
 
