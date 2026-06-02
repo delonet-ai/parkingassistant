@@ -797,6 +797,88 @@ function renderManualReservationForm(model) {
   `;
 }
 
+function renderLineOccupancyPanel(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const places = (model.places?.data?.places || []).filter((place) => place.lineGroup);
+  const employees = model.employees?.data?.employees || [];
+  const lineGroups = model.lineGroups?.data?.lineGroups || [];
+
+  const lineGroupOptions = lineGroups
+    .map((lineGroup) => `<option value="${escapeHtml(lineGroup.id)}">${escapeHtml(`${lineGroup.code} · ${lineGroup.name}`)}</option>`)
+    .join('');
+  const placeOptions = places
+    .map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(`${place.code} · ${place.title} · ${place.lineGroup.code}`)}</option>`)
+    .join('');
+  const employeeOptions = employees
+    .map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employee.displayName)}</option>`)
+    .join('');
+  const lineRows = lineGroups
+    .map(
+      (lineGroup) => `
+        <tr>
+          <td>${escapeHtml(lineGroup.code)}</td>
+          <td>${escapeHtml(lineGroup.name)}</td>
+          <td>${escapeHtml(lineGroup.capacity)}</td>
+          <td>${lineGroup.floorLabel ? escapeHtml(lineGroup.floorLabel) : '—'}</td>
+          <td>${(lineGroup.places || []).map((place) => escapeHtml(`${place.code} (${place.positionHint || '—'})`)).join(', ') || '—'}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  if (!lineGroups.length) {
+    return '<p class="empty">Линии пока не настроены. Примените миграцию line groups после импорта каталога.</p>';
+  }
+
+  return `
+    <form class="action-form" method="post" action="/admin/line-occupancy">
+      <input type="hidden" name="occupancyDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Линия</span>
+        <select name="lineGroupId" required>
+          <option value="">Выберите линию</option>
+          ${lineGroupOptions}
+        </select>
+      </label>
+      <label>
+        <span>Место</span>
+        <select name="parkingPlaceId" required>
+          <option value="">Выберите место линии</option>
+          ${placeOptions}
+        </select>
+      </label>
+      <label>
+        <span>Позиция</span>
+        <select name="position" required>
+          <option value="1">1 · первый</option>
+          <option value="2">2 · второй</option>
+          <option value="3">3 · третий</option>
+        </select>
+      </label>
+      <label>
+        <span>Сотрудник</span>
+        <select name="userId" required>
+          <option value="">Кто фактически стоит</option>
+          ${employeeOptions}
+        </select>
+      </label>
+      <button type="submit">Зафиксировать позицию</button>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>Линия</th>
+          <th>Название</th>
+          <th>Мест</th>
+          <th>Этаж</th>
+          <th>Места</th>
+        </tr>
+      </thead>
+      <tbody>${lineRows}</tbody>
+    </table>
+  `;
+}
+
 function renderEmployeeCreateForm(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
 
@@ -1178,6 +1260,9 @@ function renderDayDashboard(model) {
 
     <h3>Jobs и регламент</h3>
     ${renderJobsPanel(model)}
+
+    <h3>Multi-линии и фактические позиции</h3>
+    ${renderLineOccupancyPanel(model)}
 
     <h3>Отданные места на день</h3>
     ${
@@ -1788,7 +1873,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
       const activeView = url.searchParams.get('view') === 'maps' ? 'maps' : 'dashboard';
-      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests, guestRequests, jobRuns] = await Promise.all([
+      const [health, db, bootstrap, places, releases, employees, dashboard, employeeRequests, guestRequests, jobRuns, lineGroups] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
         fetchJson('/auth/bootstrap-status'),
@@ -1798,7 +1883,8 @@ const server = http.createServer(async (req, res) => {
         fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/guest-parking-requests?date=${encodeURIComponent(selectedDate)}`),
-        fetchJson('/admin/jobs/runs?limit=8')
+        fetchJson('/admin/jobs/runs?limit=8'),
+        fetchJson('/admin/line-groups')
       ]);
       const notice =
         url.searchParams.get('released') === '1'
@@ -1826,6 +1912,8 @@ const server = http.createServer(async (req, res) => {
               }
           : url.searchParams.get('jobDone')
             ? { type: 'ok', text: `Job выполнен: ${url.searchParams.get('jobDone')}.` }
+          : url.searchParams.get('linePositionSet') === '1'
+            ? { type: 'ok', text: 'Фактическая позиция в линии сохранена.' }
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
@@ -1843,6 +1931,7 @@ const server = http.createServer(async (req, res) => {
           employeeRequests,
           guestRequests,
           jobRuns,
+          lineGroups,
           selectedDate,
           activeView,
           notice
@@ -1916,6 +2005,30 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/line-occupancy') {
+    const form = await readFormBody(req);
+    const payload = {
+      occupancyDate: form.get('occupancyDate'),
+      lineGroupId: form.get('lineGroupId'),
+      parkingPlaceId: form.get('parkingPlaceId'),
+      position: Number(form.get('position')),
+      subjectType: 'employee',
+      userId: form.get('userId')
+    };
+    const result = await postJson('/admin/line-occupancy', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.occupancyDate)}&linePositionSet=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.occupancyDate || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }

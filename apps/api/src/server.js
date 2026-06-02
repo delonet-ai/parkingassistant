@@ -709,6 +709,615 @@ async function handleAdminPlacesList() {
   }
 }
 
+function mapLineOccupancy(row) {
+  return {
+    id: row.occupancy_id,
+    occupancyDate: formatDateForSql(row.occupancy_date),
+    position: row.position,
+    subjectType: row.subject_type,
+    createdAt: row.occupancy_created_at,
+    updatedAt: row.occupancy_updated_at,
+    lineGroup: {
+      id: row.line_group_id,
+      code: row.line_group_code,
+      name: row.line_group_name,
+      capacity: row.line_group_capacity
+    },
+    parkingPlace: {
+      id: row.parking_place_id,
+      code: row.parking_place_code,
+      title: row.parking_place_title,
+      placeType: row.parking_place_type
+    },
+    user: row.user_id
+      ? {
+          id: row.user_id,
+          displayName: row.user_display_name,
+          department: row.user_department,
+          email: row.user_email,
+          phone: row.user_phone
+        }
+      : null,
+    guestParkingRequest: row.guest_parking_request_id
+      ? {
+          id: row.guest_parking_request_id,
+          guestName: row.guest_name,
+          guestPhone: row.guest_phone,
+          hostUserId: row.host_user_id,
+          hostDisplayName: row.host_display_name
+        }
+      : null,
+    reservation: row.reservation_id
+      ? {
+          id: row.reservation_id,
+          source: row.reservation_source
+        }
+      : null
+  };
+}
+
+async function handleAdminLineGroupsList() {
+  const groups = await queryMany(
+    `
+      select
+        lg.id,
+        lg.code,
+        lg.name,
+        lg.capacity,
+        lg.floor_label,
+        lg.notes,
+        coalesce(
+          jsonb_agg(
+            jsonb_build_object(
+              'id', pp.id,
+              'code', pp.code,
+              'title', pp.title,
+              'placeType', pp.place_type,
+              'positionHint', pp.line_position_hint
+            )
+            order by pp.line_position_hint nulls last, pp.code
+          ) filter (where pp.id is not null),
+          '[]'::jsonb
+        ) as places
+      from line_groups lg
+      left join parking_places pp
+        on pp.line_group_id = lg.id
+        and pp.deleted_at is null
+      group by lg.id
+      order by lg.floor_label nulls last, lg.code
+    `
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      lineGroups: groups.map((group) => ({
+        id: group.id,
+        code: group.code,
+        name: group.name,
+        capacity: group.capacity,
+        floorLabel: group.floor_label,
+        notes: group.notes,
+        places: group.places || []
+      }))
+    }
+  };
+}
+
+async function getLineOccupancyRows(lineGroupId, occupancyDate) {
+  return queryMany(
+    `
+      select
+        lo.id as occupancy_id,
+        lo.occupancy_date::text as occupancy_date,
+        lo.position,
+        lo.subject_type,
+        lo.created_at as occupancy_created_at,
+        lo.updated_at as occupancy_updated_at,
+        lg.id as line_group_id,
+        lg.code as line_group_code,
+        lg.name as line_group_name,
+        lg.capacity as line_group_capacity,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.place_type as parking_place_type,
+        u.id as user_id,
+        u.display_name as user_display_name,
+        u.department as user_department,
+        u.email as user_email,
+        u.phone as user_phone,
+        gpr.id as guest_parking_request_id,
+        gpr.guest_name,
+        gpr.guest_phone,
+        gpr.host_user_id,
+        host.display_name as host_display_name,
+        r.id as reservation_id,
+        r.source as reservation_source
+      from line_occupancy lo
+      join line_groups lg on lg.id = lo.line_group_id
+      join parking_places pp on pp.id = lo.parking_place_id
+      left join users u on u.id = lo.user_id
+      left join guest_parking_requests gpr on gpr.id = lo.guest_parking_request_id
+      left join users host on host.id = gpr.host_user_id
+      left join reservations r on r.id = lo.reservation_id
+      where lo.line_group_id = $1
+        and lo.occupancy_date = $2::date
+      order by lo.position
+    `,
+    [lineGroupId, occupancyDate]
+  );
+}
+
+async function handleAdminLineGroupOccupancy(lineGroupId, searchParams) {
+  const occupancyDate = searchParams.get('date') || currentDateInTimezone(appTimezone);
+
+  if (!lineGroupId || !isIsoDate(occupancyDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'line group id and date=YYYY-MM-DD are required'
+      }
+    };
+  }
+
+  const lineGroup = await queryOne('select id, code, name, capacity, floor_label from line_groups where id = $1', [lineGroupId]);
+
+  if (!lineGroup) {
+    return {
+      statusCode: 404,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Line group not found'
+      }
+    };
+  }
+
+  const rows = await getLineOccupancyRows(lineGroupId, occupancyDate);
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date: occupancyDate,
+      lineGroup: {
+        id: lineGroup.id,
+        code: lineGroup.code,
+        name: lineGroup.name,
+        capacity: lineGroup.capacity,
+        floorLabel: lineGroup.floor_label
+      },
+      occupancy: rows.map(mapLineOccupancy)
+    }
+  };
+}
+
+async function handleLineOccupancySet(req, actorService = 'admin-web') {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const occupancyDate = body.occupancyDate || body.date;
+  const lineGroupId = body.lineGroupId;
+  const parkingPlaceId = body.parkingPlaceId;
+  const position = Number(body.position);
+  const subjectType = body.subjectType || 'employee';
+  const userId = body.userId || null;
+  const guestParkingRequestId = body.guestParkingRequestId || null;
+
+  if (!isIsoDate(occupancyDate) || !lineGroupId || !parkingPlaceId || !Number.isInteger(position) || position < 1 || position > 3) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'occupancyDate, lineGroupId, parkingPlaceId and position 1..3 are required'
+      }
+    };
+  }
+
+  if ((subjectType === 'employee' && !userId) || (subjectType === 'guest' && !guestParkingRequestId) || !['employee', 'guest'].includes(subjectType)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'employee occupancy requires userId; guest occupancy requires guestParkingRequestId'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`line_occupancy:${occupancyDate}:${lineGroupId}`]);
+
+    const placeResult = await client.query(
+      `
+        select
+          pp.id,
+          pp.code,
+          pp.title,
+          pp.line_group_id,
+          lg.capacity
+        from parking_places pp
+        join line_groups lg on lg.id = pp.line_group_id
+        where pp.id = $1
+          and pp.line_group_id = $2
+          and pp.deleted_at is null
+        for update of pp
+      `,
+      [parkingPlaceId, lineGroupId]
+    );
+    const place = placeResult.rows[0];
+
+    if (!place) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Parking place is not attached to the selected line group'
+        }
+      };
+    }
+
+    if (position > place.capacity) {
+      await client.query('rollback');
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: `Position ${position} exceeds line capacity ${place.capacity}`
+        }
+      };
+    }
+
+    const reservationResult = await client.query(
+      `
+        select id, user_id, guest_parking_request_id, source
+        from reservations
+        where parking_place_id = $1
+          and reservation_date = $2::date
+          and status = 'active'
+        limit 1
+      `,
+      [parkingPlaceId, occupancyDate]
+    );
+    const reservation = reservationResult.rows[0] || null;
+
+    if (reservation && subjectType === 'employee' && reservation.user_id && reservation.user_id !== userId) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Active reservation on this place belongs to another user'
+        }
+      };
+    }
+
+    if (reservation && subjectType === 'guest' && reservation.guest_parking_request_id && reservation.guest_parking_request_id !== guestParkingRequestId) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Active reservation on this place belongs to another guest request'
+        }
+      };
+    }
+
+    await client.query(
+      `
+        delete from line_occupancy
+        where occupancy_date = $1::date
+          and (
+            ($2 = 'employee' and subject_type = 'employee' and user_id = $3)
+            or
+            ($2 = 'guest' and subject_type = 'guest' and guest_parking_request_id = $4)
+          )
+      `,
+      [occupancyDate, subjectType, userId, guestParkingRequestId]
+    );
+
+    const occupancyResult = await client.query(
+      `
+        insert into line_occupancy (
+          occupancy_date,
+          line_group_id,
+          parking_place_id,
+          position,
+          subject_type,
+          user_id,
+          guest_parking_request_id,
+          reservation_id
+        )
+        values ($1::date, $2, $3, $4, $5, $6, $7, $8)
+        returning id
+      `,
+      [
+        occupancyDate,
+        lineGroupId,
+        parkingPlaceId,
+        position,
+        subjectType,
+        userId,
+        guestParkingRequestId,
+        reservation?.id || body.reservationId || null
+      ]
+    );
+    const occupancyId = occupancyResult.rows[0].id;
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('line_occupancy', $1, 'line_position_set', $2, $3::jsonb)
+      `,
+      [
+        occupancyId,
+        actorService,
+        JSON.stringify({
+          occupancyDate,
+          lineGroupId,
+          parkingPlaceId,
+          parkingPlaceCode: place.code,
+          position,
+          subjectType,
+          userId,
+          guestParkingRequestId,
+          reservationId: reservation?.id || body.reservationId || null
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    const rows = await getLineOccupancyRows(lineGroupId, occupancyDate);
+    const occupancy = rows.find((row) => row.occupancy_id === occupancyId);
+
+    return {
+      statusCode: 201,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        occupancy: occupancy ? mapLineOccupancy(occupancy) : { id: occupancyId }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    if (error.code === '23505') {
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Line position or parking place is already occupied for this date'
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function handleBotBlockingContacts(searchParams) {
+  const requesterUserId = searchParams.get('requesterUserId') || searchParams.get('userId');
+  const occupancyDate = searchParams.get('date') || currentDateInTimezone(appTimezone);
+
+  if (!requesterUserId || !isIsoDate(occupancyDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'requesterUserId and date=YYYY-MM-DD are required'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    const requesterResult = await client.query(
+      `
+        select
+          lo.id,
+          lo.line_group_id,
+          lo.position,
+          lg.code as line_group_code,
+          lg.name as line_group_name
+        from line_occupancy lo
+        join line_groups lg on lg.id = lo.line_group_id
+        where lo.occupancy_date = $1::date
+          and lo.subject_type = 'employee'
+          and lo.user_id = $2
+        limit 1
+      `,
+      [occupancyDate, requesterUserId]
+    );
+    const requester = requesterResult.rows[0];
+
+    if (!requester) {
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Requester line occupancy was not found for this date'
+        }
+      };
+    }
+
+    const blockers = await client.query(
+      `
+        select
+          lo.id as occupancy_id,
+          lo.position,
+          lo.subject_type,
+          u.id as user_id,
+          u.display_name as user_display_name,
+          u.department as user_department,
+          u.email as user_email,
+          u.phone as user_phone,
+          gpr.id as guest_parking_request_id,
+          gpr.guest_name,
+          gpr.host_user_id,
+          host.display_name as host_display_name
+        from line_occupancy lo
+        left join users u on u.id = lo.user_id
+        left join guest_parking_requests gpr on gpr.id = lo.guest_parking_request_id
+        left join users host on host.id = gpr.host_user_id
+        where lo.occupancy_date = $1::date
+          and lo.line_group_id = $2
+          and lo.position < $3
+        order by lo.position desc
+      `,
+      [occupancyDate, requester.line_group_id, requester.position]
+    );
+
+    if (!blockers.rows.length) {
+      await client.query(
+        `
+          insert into contact_access_logs (
+            requester_user_id,
+            occupancy_date,
+            line_group_id,
+            resolution,
+            metadata
+          )
+          values ($1, $2::date, $3, 'no_blockers', $4::jsonb)
+        `,
+        [
+          requesterUserId,
+          occupancyDate,
+          requester.line_group_id,
+          JSON.stringify({
+            requesterPosition: requester.position
+          })
+        ]
+      );
+    }
+
+    const contacts = [];
+
+    for (const blocker of blockers.rows) {
+      const resolution = blocker.subject_type === 'guest' ? 'guest_contact_via_admin' : 'employee_contact_shown';
+
+      await client.query(
+        `
+          insert into contact_access_logs (
+            requester_user_id,
+            occupancy_date,
+            line_group_id,
+            target_user_id,
+            target_guest_parking_request_id,
+            resolution,
+            metadata
+          )
+          values ($1, $2::date, $3, $4, $5, $6, $7::jsonb)
+        `,
+        [
+          requesterUserId,
+          occupancyDate,
+          requester.line_group_id,
+          blocker.user_id,
+          blocker.guest_parking_request_id,
+          resolution,
+          JSON.stringify({
+            requesterPosition: requester.position,
+            blockerPosition: blocker.position,
+            blockerSubjectType: blocker.subject_type
+          })
+        ]
+      );
+
+      contacts.push(
+        blocker.subject_type === 'guest'
+          ? {
+              position: blocker.position,
+              subjectType: 'guest',
+              guestName: blocker.guest_name,
+              message: 'Впереди стоит гость. В экстренном случае напишите администратору парковки.',
+              host: blocker.host_user_id
+                ? {
+                    id: blocker.host_user_id,
+                    displayName: blocker.host_display_name
+                  }
+                : null
+            }
+          : {
+              position: blocker.position,
+              subjectType: 'employee',
+              user: {
+                id: blocker.user_id,
+                displayName: blocker.user_display_name,
+                department: blocker.user_department,
+                email: blocker.user_email,
+                phone: blocker.user_phone
+              }
+            }
+      );
+    }
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        date: occupancyDate,
+        lineGroup: {
+          id: requester.line_group_id,
+          code: requester.line_group_code,
+          name: requester.line_group_name
+        },
+        requesterPosition: requester.position,
+        contacts
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function ensureParkingPlaceMap(mapCode, mapTitle, floorLabel, filePath) {
   return queryOne(
     `
@@ -4535,6 +5144,61 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/line-groups') {
+    try {
+      const result = await handleAdminLineGroupsList();
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
+  const lineGroupOccupancyMatch = url.pathname.match(/^\/admin\/line-groups\/([^/]+)\/occupancy$/);
+  if (req.method === 'GET' && lineGroupOccupancyMatch) {
+    try {
+      const result = await handleAdminLineGroupOccupancy(lineGroupOccupancyMatch[1], url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/line-occupancy') {
+    const result = await handleLineOccupancySet(req, 'admin-web');
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && (url.pathname === '/bot/line/position' || url.pathname === '/bot/line-occupancy')) {
+    const result = await handleLineOccupancySet(req, 'bot');
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/bot/line/blocking-contacts') {
+    try {
+      const result = await handleBotBlockingContacts(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
     try {
       const result = await handleAdminMapZonesList(url.searchParams);
@@ -4741,6 +5405,11 @@ const server = http.createServer(async (req, res) => {
         '/admin/users',
         '/admin/employees',
         '/admin/places',
+        '/admin/line-groups',
+        '/admin/line-groups/:id/occupancy',
+        '/admin/line-occupancy',
+        '/bot/line/position',
+        '/bot/line/blocking-contacts',
         '/admin/map-zones',
         '/admin/dashboard',
         '/admin/availability',
