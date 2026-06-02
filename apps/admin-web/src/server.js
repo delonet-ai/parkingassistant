@@ -14,13 +14,17 @@ const parkingMaps = [
     id: 'g3',
     title: 'G3',
     description: 'Underground parking level G3',
-    filename: 'parking-g3.png'
+    filename: 'parking-g3.png',
+    width: 2105,
+    height: 1490
   },
   {
     id: 'g4',
     title: 'G4',
     description: 'Underground parking level G4',
-    filename: 'parking-g4.png'
+    filename: 'parking-g4.png',
+    width: 2105,
+    height: 1490
   }
 ];
 
@@ -194,12 +198,21 @@ function renderMapsTab(model) {
             </div>
             <span class="tag">markup</span>
           </div>
-          <div class="map-scroll">
-            <div class="map-editor" data-map-id="${escapeHtml(map.id)}">
-              <img src="/maps/${escapeHtml(map.filename)}" alt="Карта парковки ${escapeHtml(map.title)}" loading="lazy" draggable="false" />
-              <div class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></div>
-              <div class="map-draft-zone" hidden></div>
-            </div>
+          <div class="map-workspace">
+            <svg
+              class="map-svg"
+              data-map-id="${escapeHtml(map.id)}"
+              data-map-width="${escapeHtml(map.width)}"
+              data-map-height="${escapeHtml(map.height)}"
+              viewBox="0 0 ${escapeHtml(map.width)} ${escapeHtml(map.height)}"
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-label="Карта парковки ${escapeHtml(map.title)}"
+            >
+              <image href="/maps/${escapeHtml(map.filename)}" x="0" y="0" width="${escapeHtml(map.width)}" height="${escapeHtml(map.height)}" preserveAspectRatio="none"></image>
+              <g class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></g>
+              <rect class="map-draft-zone" hidden x="0" y="0" width="0" height="0"></rect>
+            </svg>
           </div>
         </article>
       `
@@ -209,7 +222,7 @@ function renderMapsTab(model) {
   return `
     <section class="card">
       <h2 class="section-title">Parking Maps</h2>
-      <p class="section-copy">Режим разметки: выберите место, затем протяните прямоугольник поверх красной или оранжевой зоны. Координаты сохраняются в долях картинки, поэтому overlay не ломается на разных экранах.</p>
+      <p class="section-copy">Режим разметки: выберите место, затем протяните прямоугольник поверх красной или оранжевой зоны. Карта и overlay теперь живут в одном SVG viewBox, поэтому зоны не съезжают при изменении размера окна.</p>
       <div class="map-toolbar">
         <label>
           <span>Место для разметки</span>
@@ -226,17 +239,8 @@ function renderMapsTab(model) {
             <option value="blocked">Недоступное</option>
           </select>
         </label>
-        <label>
-          <span>Масштаб карты</span>
-          <select id="map-zoom-select">
-            <option value="100">100%</option>
-            <option value="150">150%</option>
-            <option value="200" selected>200%</option>
-            <option value="300">300%</option>
-          </select>
-        </label>
       </div>
-      <p class="notice notice-ok" id="map-click-output">Overlay готов. Свободные зоны зеленые, занятые медовые, ротируемые красные.</p>
+      <p class="notice notice-ok" id="map-click-output">SVG overlay готов. Свободные зоны зеленые, занятые медовые, ротируемые красные.</p>
       <div class="maps-grid">${cards}</div>
       <h3>Размеченные места</h3>
       <div id="map-zones-list">
@@ -247,13 +251,14 @@ function renderMapsTab(model) {
       const selectedDate = ${JSON.stringify(selectedDate)};
       const placeSelect = document.getElementById('map-place-select');
       const zoneTypeSelect = document.getElementById('map-zone-type');
-      const zoomSelect = document.getElementById('map-zoom-select');
       const output = document.getElementById('map-click-output');
       const maps = ${JSON.stringify(parkingMaps)};
+      const mapConfigs = new Map(maps.map((map) => [map.id, map]));
       const places = ${JSON.stringify(places.map((place) => ({ id: place.id, code: place.code, title: place.title })))};
       const placesById = new Map(places.map((place) => [place.id, place]));
       const zonesByMap = new Map();
       const zonesList = document.getElementById('map-zones-list');
+      const SVG_NS = 'http://www.w3.org/2000/svg';
 
       function setOutput(text, isError = false) {
         output.textContent = text;
@@ -261,34 +266,63 @@ function renderMapsTab(model) {
         output.classList.toggle('notice-ok', !isError);
       }
 
-      function applyMapZoom() {
-        const zoom = Number(zoomSelect.value || 100);
-        for (const editor of document.querySelectorAll('.map-editor')) {
-          editor.style.width = zoom + '%';
-        }
-        setOutput('Масштаб карты: ' + zoom + '%. Если место мелкое, используйте 200-300% и горизонтальную прокрутку.');
+      function setSvgRectAttributes(rect, box) {
+        rect.setAttribute('x', box.x);
+        rect.setAttribute('y', box.y);
+        rect.setAttribute('width', box.width);
+        rect.setAttribute('height', box.height);
       }
 
-      function renderZone(layer, zone) {
+      function pixelBoxFromGeometry(mapConfig, geometry) {
+        const mapWidth = Number(mapConfig?.width || 1);
+        const mapHeight = Number(mapConfig?.height || 1);
+        return {
+          x: Number(((geometry.x || 0) * mapWidth).toFixed(2)),
+          y: Number(((geometry.y || 0) * mapHeight).toFixed(2)),
+          width: Number(((geometry.width || 0) * mapWidth).toFixed(2)),
+          height: Number(((geometry.height || 0) * mapHeight).toFixed(2))
+        };
+      }
+
+      function renderZone(layer, zone, mapConfig) {
         const geometry = zone.geometry || {};
-        const element = document.createElement('button');
-        element.type = 'button';
-        element.className = 'map-zone map-zone-' + (zone.status || 'free');
-        element.style.left = (geometry.x * 100) + '%';
-        element.style.top = (geometry.y * 100) + '%';
-        element.style.width = (geometry.width * 100) + '%';
-        element.style.height = (geometry.height * 100) + '%';
-        element.textContent = zone.parkingPlace?.code || zone.zoneKey || '?';
-        element.title = [
+        const box = pixelBoxFromGeometry(mapConfig, geometry);
+        const group = document.createElementNS(SVG_NS, 'g');
+        group.classList.add('map-zone-group');
+        group.dataset.zoneId = zone.id;
+
+        const rect = document.createElementNS(SVG_NS, 'rect');
+        rect.classList.add('map-zone-rect', 'map-zone-' + (zone.status || 'free'));
+        setSvgRectAttributes(rect, box);
+
+        const title = document.createElementNS(SVG_NS, 'title');
+        const titleText = [
           zone.parkingPlace?.code || '',
           zone.status || 'free',
           zone.reservation?.userDisplayName || ''
         ].filter(Boolean).join(' · ');
-        element.addEventListener('click', (event) => {
+        title.textContent = titleText;
+
+        group.appendChild(title);
+        group.appendChild(rect);
+
+        const label = zone.parkingPlace?.code || zone.zoneKey || '?';
+        if (box.width >= 36 && box.height >= 18) {
+          const text = document.createElementNS(SVG_NS, 'text');
+          text.classList.add('map-zone-label');
+          text.setAttribute('x', box.x + box.width / 2);
+          text.setAttribute('y', box.y + box.height / 2);
+          text.setAttribute('text-anchor', 'middle');
+          text.setAttribute('dominant-baseline', 'middle');
+          text.textContent = label;
+          group.appendChild(text);
+        }
+
+        group.addEventListener('click', (event) => {
           event.stopPropagation();
-          setOutput(element.title);
+          setOutput(titleText || label);
         });
-        layer.appendChild(element);
+        layer.appendChild(group);
       }
 
       function zoneTypeLabel(zoneType) {
@@ -368,6 +402,7 @@ function renderMapsTab(model) {
       async function loadZones(card) {
         const mapId = card.dataset.mapId;
         const layer = card.querySelector('.map-zones-layer');
+        const mapConfig = mapConfigs.get(mapId);
         layer.innerHTML = '';
 
         const response = await fetch('/admin/map-zones?mapCode=' + encodeURIComponent(mapId) + '&date=' + encodeURIComponent(selectedDate));
@@ -380,7 +415,7 @@ function renderMapsTab(model) {
 
         zonesByMap.set(mapId, data.zones || []);
         for (const zone of data.zones || []) {
-          renderZone(layer, zone);
+          renderZone(layer, zone, mapConfig);
         }
         renderZonesList();
       }
@@ -460,69 +495,83 @@ function renderMapsTab(model) {
         await loadZones(card);
       }
 
-      function normalizedRect(editor, startEvent, currentEvent) {
-        const rect = editor.getBoundingClientRect();
-        const startX = Math.min(Math.max(startEvent.clientX - rect.left, 0), rect.width);
-        const startY = Math.min(Math.max(startEvent.clientY - rect.top, 0), rect.height);
-        const currentX = Math.min(Math.max(currentEvent.clientX - rect.left, 0), rect.width);
-        const currentY = Math.min(Math.max(currentEvent.clientY - rect.top, 0), rect.height);
+      function svgPoint(svg, event) {
+        const matrix = svg.getScreenCTM();
+        if (!matrix) {
+          return { x: 0, y: 0 };
+        }
+
+        const point = svg.createSVGPoint();
+        point.x = event.clientX;
+        point.y = event.clientY;
+        const transformed = point.matrixTransform(matrix.inverse());
+        const mapWidth = Number(svg.dataset.mapWidth || 1);
+        const mapHeight = Number(svg.dataset.mapHeight || 1);
+
+        return {
+          x: Math.min(Math.max(transformed.x, 0), mapWidth),
+          y: Math.min(Math.max(transformed.y, 0), mapHeight)
+        };
+      }
+
+      function normalizedRect(svg, startPoint, currentPoint) {
+        const mapWidth = Number(svg.dataset.mapWidth || 1);
+        const mapHeight = Number(svg.dataset.mapHeight || 1);
+        const startX = Math.min(Math.max(startPoint.x, 0), mapWidth);
+        const startY = Math.min(Math.max(startPoint.y, 0), mapHeight);
+        const currentX = Math.min(Math.max(currentPoint.x, 0), mapWidth);
+        const currentY = Math.min(Math.max(currentPoint.y, 0), mapHeight);
         const left = Math.min(startX, currentX);
         const top = Math.min(startY, currentY);
         const width = Math.abs(currentX - startX);
         const height = Math.abs(currentY - startY);
 
         return {
-          x: Number((left / rect.width).toFixed(6)),
-          y: Number((top / rect.height).toFixed(6)),
-          width: Number((width / rect.width).toFixed(6)),
-          height: Number((height / rect.height).toFixed(6))
+          x: Number((left / mapWidth).toFixed(6)),
+          y: Number((top / mapHeight).toFixed(6)),
+          width: Number((width / mapWidth).toFixed(6)),
+          height: Number((height / mapHeight).toFixed(6))
         };
       }
 
       for (const card of document.querySelectorAll('.map-card')) {
-        const editor = card.querySelector('.map-editor');
+        const svg = card.querySelector('.map-svg');
         const draft = card.querySelector('.map-draft-zone');
         let pointerStart = null;
 
         loadZones(card);
 
-        editor.addEventListener('pointerdown', (event) => {
-          if (event.target.closest('.map-zone')) {
+        svg.addEventListener('pointerdown', (event) => {
+          if (event.target.closest && event.target.closest('.map-zone-group')) {
             return;
           }
           event.preventDefault();
-          pointerStart = event;
+          pointerStart = svgPoint(svg, event);
           draft.hidden = false;
-          draft.style.left = '0';
-          draft.style.top = '0';
-          draft.style.width = '0';
-          draft.style.height = '0';
-          editor.setPointerCapture(event.pointerId);
+          setSvgRectAttributes(draft, { x: pointerStart.x, y: pointerStart.y, width: 0, height: 0 });
+          svg.setPointerCapture(event.pointerId);
         });
 
-        editor.addEventListener('pointermove', (event) => {
+        svg.addEventListener('pointermove', (event) => {
           if (!pointerStart) {
             return;
           }
-          const geometry = normalizedRect(editor, pointerStart, event);
-          draft.style.left = (geometry.x * 100) + '%';
-          draft.style.top = (geometry.y * 100) + '%';
-          draft.style.width = (geometry.width * 100) + '%';
-          draft.style.height = (geometry.height * 100) + '%';
+          const geometry = normalizedRect(svg, pointerStart, svgPoint(svg, event));
+          setSvgRectAttributes(draft, pixelBoxFromGeometry(mapConfigs.get(card.dataset.mapId), geometry));
         });
 
-        editor.addEventListener('pointerup', async (event) => {
+        svg.addEventListener('pointerup', async (event) => {
           if (!pointerStart) {
             return;
           }
-          const geometry = normalizedRect(editor, pointerStart, event);
+          const currentPoint = svgPoint(svg, event);
+          const geometry = normalizedRect(svg, pointerStart, currentPoint);
           pointerStart = null;
           draft.hidden = true;
 
           if (geometry.width < 0.001 || geometry.height < 0.001) {
-            const rect = editor.getBoundingClientRect();
-            const x = ((event.clientX - rect.left) / rect.width).toFixed(4);
-            const y = ((event.clientY - rect.top) / rect.height).toFixed(4);
+            const x = (currentPoint.x / Number(svg.dataset.mapWidth || 1)).toFixed(4);
+            const y = (currentPoint.y / Number(svg.dataset.mapHeight || 1)).toFixed(4);
             setOutput('Карта ' + card.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y + '. Для зоны протяните прямоугольник хотя бы на пару пикселей.');
             return;
           }
@@ -552,8 +601,7 @@ function renderMapsTab(model) {
         await deleteZone(button.dataset.zoneId, button.dataset.mapId);
       });
 
-      zoomSelect.addEventListener('change', applyMapZoom);
-      applyMapZoom();
+      setOutput('SVG overlay готов: зоны сохраняются в долях исходной картинки и не зависят от масштаба страницы.');
     </script>
   `;
 }
@@ -1443,7 +1491,7 @@ function renderPage(model) {
 
       .map-toolbar {
         display: grid;
-        grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px) minmax(160px, 220px);
+        grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px);
         gap: 14px;
         margin-bottom: 16px;
       }
@@ -1460,76 +1508,72 @@ function renderPage(model) {
         text-transform: uppercase;
       }
 
-      .map-scroll {
+      .map-workspace {
         width: 100%;
-        overflow: auto;
+        overflow: hidden;
         border: 1px solid var(--line);
         border-radius: 16px;
         background: #fff;
       }
 
-      .map-editor {
-        position: relative;
-        width: 100%;
-        min-width: 100%;
-        padding: 0;
-        overflow: hidden;
-        background: #fff;
-        cursor: crosshair;
-        touch-action: none;
-      }
-
-      .map-editor img {
+      .map-svg {
         display: block;
         width: 100%;
         height: auto;
+        background: #fff;
+        cursor: crosshair;
+        touch-action: none;
+        user-select: none;
+      }
+
+      .map-svg image {
         user-select: none;
         -webkit-user-drag: none;
       }
 
-      .map-zones-layer,
-      .map-draft-zone {
-        position: absolute;
-        inset: 0;
-      }
-
-      .map-zone,
-      .map-draft-zone {
-        position: absolute;
-        border: 1px solid rgba(31, 111, 120, 0.88);
-        border-radius: 5px;
-        background: rgba(47, 104, 70, 0.22);
-      }
-
-      .map-zone {
-        display: grid;
-        place-items: center;
-        padding: 0;
-        color: #111;
-        font: 700 11px/1.1 ui-sans-serif, system-ui, sans-serif;
-        text-shadow: 0 1px 0 rgba(255,255,255,0.75);
+      .map-zone-group {
         cursor: pointer;
       }
 
+      .map-zone-rect {
+        fill: rgba(47, 104, 70, 0.22);
+        stroke: rgba(31, 111, 120, 0.88);
+        stroke-width: 2;
+        vector-effect: non-scaling-stroke;
+      }
+
       .map-zone-occupied {
-        border-color: rgba(159, 58, 42, 0.92);
-        background: rgba(234, 216, 196, 0.52);
+        fill: rgba(234, 216, 196, 0.52);
+        stroke: rgba(159, 58, 42, 0.92);
       }
 
       .map-zone-rotatable {
-        border-color: rgba(170, 33, 34, 0.92);
-        background: rgba(170, 33, 34, 0.28);
+        fill: rgba(170, 33, 34, 0.28);
+        stroke: rgba(170, 33, 34, 0.92);
       }
 
       .map-zone-blocked {
-        border-color: rgba(31, 35, 40, 0.76);
-        background: rgba(31, 35, 40, 0.26);
+        fill: rgba(31, 35, 40, 0.26);
+        stroke: rgba(31, 35, 40, 0.76);
+      }
+
+      .map-zone-label {
+        fill: #111;
+        font: 700 22px/1 ui-sans-serif, system-ui, sans-serif;
+        paint-order: stroke;
+        pointer-events: none;
+        stroke: rgba(255, 255, 255, 0.88);
+        stroke-linejoin: round;
+        stroke-width: 5;
       }
 
       .map-draft-zone {
+        fill: rgba(31, 111, 120, 0.18);
         pointer-events: none;
-        border-style: dashed;
-        background: rgba(31, 111, 120, 0.18);
+        stroke: rgba(31, 111, 120, 0.88);
+        stroke-dasharray: 12 8;
+        stroke-width: 3;
+        vector-effect: non-scaling-stroke;
       }
 
       .empty {
