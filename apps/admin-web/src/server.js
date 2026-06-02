@@ -223,6 +223,10 @@ function renderMapsTab(model) {
     <section class="card">
       <h2 class="section-title">Parking Maps</h2>
       <p class="section-copy">Режим разметки: выберите место, затем протяните прямоугольник поверх красной или оранжевой зоны. Карта и overlay теперь живут в одном SVG viewBox, поэтому зоны не съезжают при изменении размера окна.</p>
+      <label class="map-edit-toggle">
+        <input id="map-edit-mode" type="checkbox" />
+        <span>Редактирование мест</span>
+      </label>
       <div class="map-toolbar">
         <label>
           <span>Место для разметки</span>
@@ -249,6 +253,7 @@ function renderMapsTab(model) {
     </section>
     <script>
       const selectedDate = ${JSON.stringify(selectedDate)};
+      const editModeToggle = document.getElementById('map-edit-mode');
       const placeSelect = document.getElementById('map-place-select');
       const zoneTypeSelect = document.getElementById('map-zone-type');
       const output = document.getElementById('map-click-output');
@@ -264,6 +269,27 @@ function renderMapsTab(model) {
         output.textContent = text;
         output.classList.toggle('notice-error', isError);
         output.classList.toggle('notice-ok', !isError);
+      }
+
+      function isEditMode() {
+        return editModeToggle.checked;
+      }
+
+      function syncEditMode() {
+        const editing = isEditMode();
+        document.body.classList.toggle('map-editing-enabled', editing);
+        placeSelect.disabled = !editing;
+        zoneTypeSelect.disabled = !editing;
+
+        for (const control of zonesList.querySelectorAll('.map-zone-type-select, .map-zone-delete')) {
+          control.disabled = !editing;
+        }
+
+        setOutput(
+          editing
+            ? 'Редактирование включено: выберите место и протяните прямоугольник по карте.'
+            : 'Режим просмотра: можно нажимать на места и смотреть статус, разметка и удаление выключены.'
+        );
       }
 
       function setSvgRectAttributes(rect, box) {
@@ -342,6 +368,7 @@ function renderMapsTab(model) {
 
         if (!zones.length) {
           zonesList.innerHTML = '<p class="empty">Размеченных мест пока нет. Выберите место сверху и протяните прямоугольник по карте.</p>';
+          syncEditMode();
           return;
         }
 
@@ -397,6 +424,7 @@ function renderMapsTab(model) {
             <tbody>\${rows}</tbody>
           </table>
         \`;
+        syncEditMode();
       }
 
       async function loadZones(card) {
@@ -545,6 +573,9 @@ function renderMapsTab(model) {
           if (event.target.closest && event.target.closest('.map-zone-group')) {
             return;
           }
+          if (!isEditMode()) {
+            return;
+          }
           event.preventDefault();
           pointerStart = svgPoint(svg, event);
           draft.hidden = false;
@@ -584,6 +615,11 @@ function renderMapsTab(model) {
         if (!event.target.classList.contains('map-zone-type-select')) {
           return;
         }
+        if (!isEditMode()) {
+          event.preventDefault();
+          syncEditMode();
+          return;
+        }
 
         await updateZoneType(event.target.dataset.zoneId, event.target.value, event.target.dataset.mapId);
       });
@@ -591,6 +627,10 @@ function renderMapsTab(model) {
       zonesList.addEventListener('click', async (event) => {
         const button = event.target.closest('.map-zone-delete');
         if (!button) {
+          return;
+        }
+        if (!isEditMode()) {
+          setOutput('Включите "Редактирование мест", чтобы удалять зоны с карты.');
           return;
         }
 
@@ -601,7 +641,8 @@ function renderMapsTab(model) {
         await deleteZone(button.dataset.zoneId, button.dataset.mapId);
       });
 
-      setOutput('SVG overlay готов: зоны сохраняются в долях исходной картинки и не зависят от масштаба страницы.');
+      editModeToggle.addEventListener('change', syncEditMode);
+      syncEditMode();
     </script>
   `;
 }
@@ -1489,6 +1530,29 @@ function renderPage(model) {
         color: var(--muted);
       }
 
+      .map-edit-toggle {
+        display: inline-flex;
+        width: auto;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 16px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fff;
+        cursor: pointer;
+      }
+
+      .map-edit-toggle input {
+        width: 18px;
+        min-height: 18px;
+      }
+
+      .map-edit-toggle span {
+        color: var(--text);
+        font-size: 15px;
+      }
+
       .map-toolbar {
         display: grid;
         grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px);
@@ -1521,9 +1585,13 @@ function renderPage(model) {
         width: 100%;
         height: auto;
         background: #fff;
-        cursor: crosshair;
+        cursor: default;
         touch-action: none;
         user-select: none;
+      }
+
+      .map-editing-enabled .map-svg {
+        cursor: crosshair;
       }
 
       .map-svg image {
