@@ -107,11 +107,25 @@ function helpText() {
   return [
     'Доступные команды:',
     'статус',
+    'отдать завтра',
+    'отдать YYYY-MM-DD',
+    'отдать YYYY-MM-DD YYYY-MM-DD',
+    'отдачи',
+    'отменить отдачу RELEASE_ID',
+    'парковка завтра',
+    'парковка YYYY-MM-DD',
+    'заявка',
+    'отменить заявку',
+    'отменить заявку REQUEST_ID',
     'выезд HH:MM',
     'выезд YYYY-MM-DD HH:MM',
     'контакты',
     'контакты YYYY-MM-DD'
   ].join('\n');
+}
+
+function formatDate(value) {
+  return String(value || '').slice(0, 10);
 }
 
 function formatContacts(contacts) {
@@ -130,6 +144,32 @@ function formatContacts(contacts) {
       return `Позиция ${contact.position}: ${contact.user.displayName}${phone}${email}`;
     })
     .join('\n');
+}
+
+function formatRelease(release) {
+  return `${release.id.slice(0, 8)}: ${formatDate(release.dateFrom)}-${formatDate(release.dateTo)} · ${release.parkingPlace.code}`;
+}
+
+function formatRequest(request) {
+  const queue = request.queueEntry?.position ? ` · очередь #${request.queueEntry.position}` : '';
+  const place = request.assignedReservation?.parkingPlaceCode ? ` · место ${request.assignedReservation.parkingPlaceCode}` : '';
+  return `${request.id.slice(0, 8)}: ${formatDate(request.requestDate)} · ${request.status}${queue}${place}`;
+}
+
+async function listEmployeeReleases(employee, dateFrom, dateTo) {
+  const data = await fetchJson(
+    `/admin/place-releases?dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`
+  );
+  return (data.releases || []).filter((release) => release.user.id === employee.id);
+}
+
+async function listEmployeeRequests(employee, date) {
+  const data = await fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(date)}`);
+  return (data.requests || []).filter((request) => request.user.id === employee.id);
+}
+
+function findByShortId(items, shortId) {
+  return items.find((item) => item.id === shortId || item.id.startsWith(shortId));
 }
 
 async function handleCommand({ messengerUserId, text }) {
@@ -157,9 +197,89 @@ async function handleCommand({ messengerUserId, text }) {
 
   if (normalized === 'статус') {
     const permanent = employee.permanentPlace ? `Постоянное место: ${employee.permanentPlace.code}` : 'Постоянного места нет';
+    const requests = await listEmployeeRequests(employee, tomorrow);
+    const currentRequest = requests.find((request) => ['active', 'queued', 'assigned'].includes(request.status));
+    const requestLine = currentRequest ? `Заявка на завтра: ${formatRequest(currentRequest)}` : 'Заявки на завтра нет';
+
     return {
-      text: `${employee.displayName}\n${permanent}`
+      text: `${employee.displayName}\n${permanent}\n${requestLine}`
     };
+  }
+
+  const releaseMatch = normalized.match(/^отдать(?:\s+(завтра|\d{4}-\d{2}-\d{2}))?(?:\s+(\d{4}-\d{2}-\d{2}))?$/);
+  if (releaseMatch) {
+    if (!employee.permanentPlace) {
+      return { text: 'У вас нет постоянного места, отдавать нечего.' };
+    }
+
+    const dateFrom = releaseMatch[1] === 'завтра' || !releaseMatch[1] ? tomorrow : releaseMatch[1];
+    const dateTo = releaseMatch[2] || dateFrom;
+    const result = await postJson('/admin/place-releases', {
+      parkingPlaceId: employee.permanentPlace.id,
+      dateFrom,
+      dateTo,
+      notes: 'Создано через бот'
+    });
+
+    return {
+      text: `Место ${result.release.parkingPlace.code} отдано: ${formatDate(result.release.dateFrom)}-${formatDate(result.release.dateTo)}. ID: ${result.release.id.slice(0, 8)}`
+    };
+  }
+
+  if (normalized === 'отдачи') {
+    const releases = await listEmployeeReleases(employee, today, addDaysToIsoDate(today, 30));
+    return {
+      text: releases.length ? releases.map(formatRelease).join('\n') : 'Активных отдач на ближайшие 30 дней нет.'
+    };
+  }
+
+  const cancelReleaseMatch = normalized.match(/^отменить отдачу\s+([0-9a-f-]{8,36})$/);
+  if (cancelReleaseMatch) {
+    const releases = await listEmployeeReleases(employee, today, addDaysToIsoDate(today, 60));
+    const release = findByShortId(releases, cancelReleaseMatch[1]);
+
+    if (!release) {
+      return { text: 'Отдача с таким ID не найдена среди ваших активных отдач.' };
+    }
+
+    await postJson('/admin/place-releases/cancel', { releaseId: release.id });
+    return { text: `Отдача ${release.id.slice(0, 8)} отменена.` };
+  }
+
+  const parkingRequestMatch = normalized.match(/^парковка(?:\s+(завтра|\d{4}-\d{2}-\d{2}))?$/);
+  if (parkingRequestMatch) {
+    const requestDate = parkingRequestMatch[1] === 'завтра' || !parkingRequestMatch[1] ? tomorrow : parkingRequestMatch[1];
+    const result = await postJson('/admin/employee-parking-requests', {
+      userId: employee.id,
+      requestDate,
+      notes: 'Создано через бот'
+    });
+
+    return {
+      text: `Заявка создана: ${formatRequest(result.request)}`
+    };
+  }
+
+  if (normalized === 'заявка') {
+    const requests = await listEmployeeRequests(employee, tomorrow);
+    const activeRequests = requests.filter((request) => ['active', 'queued', 'assigned'].includes(request.status));
+    return {
+      text: activeRequests.length ? activeRequests.map(formatRequest).join('\n') : 'Активной заявки на завтра нет.'
+    };
+  }
+
+  const cancelRequestMatch = normalized.match(/^отменить заявку(?:\s+([0-9a-f-]{8,36}))?$/);
+  if (cancelRequestMatch) {
+    const requests = await listEmployeeRequests(employee, tomorrow);
+    const activeRequests = requests.filter((request) => ['active', 'queued'].includes(request.status));
+    const request = cancelRequestMatch[1] ? findByShortId(activeRequests, cancelRequestMatch[1]) : activeRequests[0];
+
+    if (!request) {
+      return { text: 'Активная заявка на завтра не найдена или уже назначена.' };
+    }
+
+    await postJson('/admin/employee-parking-requests/cancel', { requestId: request.id });
+    return { text: `Заявка ${request.id.slice(0, 8)} отменена.` };
   }
 
   const departureMatch = normalized.match(/^выезд\s+(?:(\d{4}-\d{2}-\d{2})\s+)?(\d{2}:\d{2})$/);
