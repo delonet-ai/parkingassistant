@@ -96,7 +96,7 @@ services:
       - "${BOT_ADAPTER_PORT:-3200}:3200"
     volumes:
       - /opt/git/parkingassistant/staging/logs:/app/storage/logs
-    command: ["/bin/sh", "-lc", "echo 'Bot Adapter placeholder: replace with real start command'; sleep infinity"]
+    command: ["npm", "run", "bot-adapter:start"]
 
   jobs:
     build:
