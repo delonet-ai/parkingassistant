@@ -67,10 +67,27 @@ function currentDateInTimezone(timeZone = appTimezone) {
   }).format(new Date());
 }
 
+function currentTimeInTimezone(timeZone = appTimezone) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).format(new Date());
+}
+
 function addDaysToIsoDate(date, days) {
   const [year, month, day] = date.split('-').map(Number);
   const nextDate = new Date(Date.UTC(year, month - 1, day + days));
   return nextDate.toISOString().slice(0, 10);
+}
+
+function isValidTime(value) {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function isEarlyDeparture(value) {
+  return isValidTime(value) && value < '18:00';
 }
 
 async function countAvailableReleasedPlaces(client, date) {
@@ -993,6 +1010,8 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
       };
     }
 
+    const warnings = await calculateAssignmentWarnings(client, requestDate, place.parking_place_id);
+
     const reservationResult = await client.query(
       `
         select id, user_id, guest_parking_request_id, source
@@ -1311,6 +1330,448 @@ async function handleBotBlockingContacts(searchParams) {
         },
         requesterPosition: requester.position,
         contacts
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function calculateAssignmentWarnings(client, reservationDate, parkingPlaceId) {
+  const placeResult = await client.query(
+    `
+      select
+        pp.id,
+        pp.code,
+        pp.line_group_id,
+        coalesce(pp.line_position_hint, 1) as line_position_hint
+      from parking_places pp
+      where pp.id = $1
+    `,
+    [parkingPlaceId]
+  );
+  const place = placeResult.rows[0];
+
+  if (!place?.line_group_id) {
+    return [];
+  }
+
+  const riskResult = await client.query(
+    `
+      select
+        dp.id as departure_plan_id,
+        dp.departure_time::text as departure_time,
+        lo.position,
+        u.id as user_id,
+        u.display_name,
+        pp.code as parking_place_code,
+        lg.code as line_group_code
+      from departure_plans dp
+      join line_occupancy lo
+        on lo.user_id = dp.user_id
+        and lo.subject_type = 'employee'
+        and lo.occupancy_date = dp.plan_date
+      join users u on u.id = dp.user_id
+      join parking_places pp on pp.id = lo.parking_place_id
+      join line_groups lg on lg.id = lo.line_group_id
+      where dp.plan_date = $1::date
+        and dp.is_early = true
+        and lo.line_group_id = $2
+        and lo.position > $3
+      order by lo.position
+    `,
+    [reservationDate, place.line_group_id, place.line_position_hint]
+  );
+
+  return riskResult.rows.map((risk) => ({
+    type: 'early_departure_blocking_risk',
+    message: `Назначение на место ${place.code} может перекрыть ранний выезд ${risk.display_name} в ${risk.departure_time.slice(0, 5)}.`,
+    lineGroupCode: risk.line_group_code,
+    assignedParkingPlaceCode: place.code,
+    affectedUser: {
+      id: risk.user_id,
+      displayName: risk.display_name
+    },
+    affectedParkingPlaceCode: risk.parking_place_code,
+    affectedPosition: risk.position,
+    departureTime: risk.departure_time.slice(0, 5)
+  }));
+}
+
+async function getDeparturePlansForDate(date) {
+  const rows = await queryMany(
+    `
+      select
+        dp.id,
+        dp.plan_date::text as plan_date,
+        dp.departure_time::text as departure_time,
+        dp.is_early,
+        dp.created_at,
+        dp.updated_at,
+        u.id as user_id,
+        u.display_name,
+        u.department,
+        lo.position,
+        lg.id as line_group_id,
+        lg.code as line_group_code,
+        lg.name as line_group_name,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title
+      from departure_plans dp
+      join users u on u.id = dp.user_id
+      left join line_occupancy lo
+        on lo.user_id = dp.user_id
+        and lo.subject_type = 'employee'
+        and lo.occupancy_date = dp.plan_date
+      left join line_groups lg on lg.id = lo.line_group_id
+      left join parking_places pp on pp.id = lo.parking_place_id
+      where dp.plan_date = $1::date
+      order by dp.is_early desc, dp.departure_time, u.display_name
+    `,
+    [date]
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    planDate: row.plan_date,
+    departureTime: row.departure_time.slice(0, 5),
+    isEarly: row.is_early,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    user: {
+      id: row.user_id,
+      displayName: row.display_name,
+      department: row.department
+    },
+    lineOccupancy: row.line_group_id
+      ? {
+          position: row.position,
+          lineGroup: {
+            id: row.line_group_id,
+            code: row.line_group_code,
+            name: row.line_group_name
+          },
+          parkingPlace: {
+            id: row.parking_place_id,
+            code: row.parking_place_code,
+            title: row.parking_place_title
+          }
+        }
+      : null
+  }));
+}
+
+async function getConflictsForDate(date) {
+  const rows = await queryMany(
+    `
+      select
+        dp.id as departure_plan_id,
+        dp.departure_time::text as departure_time,
+        early_lo.position as early_position,
+        early_user.id as early_user_id,
+        early_user.display_name as early_user_display_name,
+        early_place.code as early_place_code,
+        blocker_lo.position as blocker_position,
+        blocker_lo.subject_type as blocker_subject_type,
+        blocker_user.id as blocker_user_id,
+        blocker_user.display_name as blocker_user_display_name,
+        gpr.id as blocker_guest_request_id,
+        gpr.guest_name as blocker_guest_name,
+        blocker_place.code as blocker_place_code,
+        lg.id as line_group_id,
+        lg.code as line_group_code,
+        lg.name as line_group_name
+      from departure_plans dp
+      join line_occupancy early_lo
+        on early_lo.user_id = dp.user_id
+        and early_lo.subject_type = 'employee'
+        and early_lo.occupancy_date = dp.plan_date
+      join users early_user on early_user.id = dp.user_id
+      join parking_places early_place on early_place.id = early_lo.parking_place_id
+      join line_groups lg on lg.id = early_lo.line_group_id
+      join line_occupancy blocker_lo
+        on blocker_lo.occupancy_date = dp.plan_date
+        and blocker_lo.line_group_id = early_lo.line_group_id
+        and blocker_lo.position < early_lo.position
+      join parking_places blocker_place on blocker_place.id = blocker_lo.parking_place_id
+      left join users blocker_user on blocker_user.id = blocker_lo.user_id
+      left join guest_parking_requests gpr on gpr.id = blocker_lo.guest_parking_request_id
+      where dp.plan_date = $1::date
+        and dp.is_early = true
+      order by lg.code, early_lo.position, blocker_lo.position
+    `,
+    [date]
+  );
+
+  return rows.map((row) => ({
+    type: row.blocker_subject_type === 'guest' ? 'guest_blocks_early_departure' : 'employee_blocks_early_departure',
+    severity: row.blocker_subject_type === 'guest' ? 'warning' : 'info',
+    lineGroup: {
+      id: row.line_group_id,
+      code: row.line_group_code,
+      name: row.line_group_name
+    },
+    earlyDeparture: {
+      departurePlanId: row.departure_plan_id,
+      departureTime: row.departure_time.slice(0, 5),
+      position: row.early_position,
+      parkingPlaceCode: row.early_place_code,
+      user: {
+        id: row.early_user_id,
+        displayName: row.early_user_display_name
+      }
+    },
+    blocker: {
+      position: row.blocker_position,
+      subjectType: row.blocker_subject_type,
+      parkingPlaceCode: row.blocker_place_code,
+      user: row.blocker_user_id
+        ? {
+            id: row.blocker_user_id,
+            displayName: row.blocker_user_display_name
+          }
+        : null,
+      guestParkingRequest: row.blocker_guest_request_id
+        ? {
+            id: row.blocker_guest_request_id,
+            guestName: row.blocker_guest_name
+          }
+        : null
+    }
+  }));
+}
+
+async function handleDeparturePlansList(searchParams) {
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date,
+      departurePlans: await getDeparturePlansForDate(date)
+    }
+  };
+}
+
+async function handleConflictsList(searchParams) {
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date,
+      conflicts: await getConflictsForDate(date)
+    }
+  };
+}
+
+async function handleDeparturePlanUpsert(req, actorService = 'bot') {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const userId = body.userId;
+  const planDate = body.planDate || body.date;
+  const departureTime = typeof body.departureTime === 'string' ? body.departureTime.slice(0, 5) : '';
+
+  if (!userId || !isIsoDate(planDate) || !isValidTime(departureTime)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'userId, planDate and departureTime HH:MM are required'
+      }
+    };
+  }
+
+  if (planDate === currentDateInTimezone(appTimezone) && currentTimeInTimezone(appTimezone) >= '07:00') {
+    return {
+      statusCode: 409,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Departure time for the current day can be edited only before 07:00',
+        timezone: appTimezone
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const userResult = await client.query(
+      `
+        select id, display_name
+        from users
+        where id = $1
+          and kind = 'employee'
+          and deleted_at is null
+      `,
+      [userId]
+    );
+    const user = userResult.rows[0];
+
+    if (!user) {
+      await client.query('rollback');
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Employee not found'
+        }
+      };
+    }
+
+    const multiAccessResult = await client.query(
+      `
+        select pp.id
+        from parking_places pp
+        left join permanent_assignments pa
+          on pa.parking_place_id = pp.id
+          and pa.user_id = $1
+          and pa.valid_during @> $2::date
+        left join reservations r
+          on r.parking_place_id = pp.id
+          and r.user_id = $1
+          and r.reservation_date = $2::date
+          and r.status = 'active'
+        where pp.line_group_id is not null
+          and (pa.id is not null or r.id is not null)
+        limit 1
+      `,
+      [userId, planDate]
+    );
+
+    if (!multiAccessResult.rows[0]) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Departure time can be set only for users with a multi-line place or multi-line reservation on this date'
+        }
+      };
+    }
+
+    const planResult = await client.query(
+      `
+        insert into departure_plans (
+          user_id,
+          plan_date,
+          departure_time,
+          is_early,
+          created_by_user_id
+        )
+        values ($1, $2::date, $3::time, $4, $1)
+        on conflict (user_id, plan_date) do update
+          set departure_time = excluded.departure_time,
+              is_early = excluded.is_early,
+              updated_at = now()
+        returning id, user_id, plan_date::text as plan_date, departure_time::text as departure_time, is_early, created_at, updated_at
+      `,
+      [userId, planDate, departureTime, isEarlyDeparture(departureTime)]
+    );
+    const plan = planResult.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_user_id,
+          actor_service,
+          metadata
+        )
+        values ('departure_plan', $1, 'departure_plan_upserted', $2, $3, $4::jsonb)
+      `,
+      [
+        plan.id,
+        userId,
+        actorService,
+        JSON.stringify({
+          userId,
+          userDisplayName: user.display_name,
+          planDate,
+          departureTime,
+          isEarly: plan.is_early
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        departurePlan: {
+          id: plan.id,
+          planDate: plan.plan_date,
+          departureTime: plan.departure_time.slice(0, 5),
+          isEarly: plan.is_early,
+          createdAt: plan.created_at,
+          updatedAt: plan.updated_at,
+          user: {
+            id: userId,
+            displayName: user.display_name
+          }
+        }
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
       }
     };
   } finally {
@@ -2907,6 +3368,8 @@ async function handleAdminGuestParkingRequestCreate(req) {
       };
     }
 
+    const warnings = await calculateAssignmentWarnings(client, requestDate, place.parking_place_id);
+
     const { firstName, lastName } = splitDisplayName(guestName);
     const guestResult = await client.query(
       `
@@ -3043,7 +3506,8 @@ async function handleAdminGuestParkingRequestCreate(req) {
           reservationId: reservation.id,
           parkingPlaceId: place.parking_place_id,
           parkingPlaceCode: place.parking_place_code,
-          requestDate
+          requestDate,
+          warnings
         })
       ]
     );
@@ -3085,7 +3549,8 @@ async function handleAdminGuestParkingRequestCreate(req) {
               placeType: place.place_type
             }
           }
-        }
+        },
+        warnings
       }
     };
   } catch (error) {
@@ -3352,7 +3817,8 @@ async function handleAdminGuestParkingRequestAssign(req) {
           reservationId: reservation.id,
           parkingPlaceId: place.parking_place_id,
           parkingPlaceCode: place.parking_place_code,
-          requestDate
+          requestDate,
+          warnings
         })
       ]
     );
@@ -3381,7 +3847,8 @@ async function handleAdminGuestParkingRequestAssign(req) {
               placeType: place.place_type
             }
           }
-        }
+        },
+        warnings
       }
     };
   } catch (error) {
@@ -4319,6 +4786,8 @@ async function handleAdminManualReservationCreate(req) {
       };
     }
 
+    const warnings = await calculateAssignmentWarnings(client, reservationDate, parkingPlaceId);
+
     const reservationResult = await client.query(
       `
         insert into reservations (
@@ -4402,7 +4871,8 @@ async function handleAdminManualReservationCreate(req) {
           userDisplayName: employee.display_name,
           parkingPlaceId,
           parkingPlaceCode: releasedPlace.parking_place_code,
-          reservationDate
+          reservationDate,
+          warnings
         })
       ]
     );
@@ -4428,7 +4898,8 @@ async function handleAdminManualReservationCreate(req) {
             id: parkingPlaceId,
             code: releasedPlace.parking_place_code
           }
-        }
+        },
+        warnings
       }
     };
   } catch (error) {
@@ -5199,6 +5670,40 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/departure-plans') {
+    try {
+      const result = await handleDeparturePlansList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/conflicts') {
+    try {
+      const result = await handleConflictsList(url.searchParams);
+      sendJson(res, result.statusCode, result.payload);
+    } catch (error) {
+      sendJson(res, 500, {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && (url.pathname === '/bot/departure-plans' || url.pathname === '/admin/departure-plans')) {
+    const result = await handleDeparturePlanUpsert(req, url.pathname.startsWith('/bot/') ? 'bot' : 'admin-web');
+    sendJson(res, result.statusCode, result.payload);
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
     try {
       const result = await handleAdminMapZonesList(url.searchParams);
@@ -5410,6 +5915,9 @@ const server = http.createServer(async (req, res) => {
         '/admin/line-occupancy',
         '/bot/line/position',
         '/bot/line/blocking-contacts',
+        '/bot/departure-plans',
+        '/admin/departure-plans',
+        '/admin/conflicts',
         '/admin/map-zones',
         '/admin/dashboard',
         '/admin/availability',
