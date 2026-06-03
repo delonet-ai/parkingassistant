@@ -118,23 +118,45 @@ function formatDate(value) {
   return String(value).slice(0, 10);
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return '—';
+  }
+
+  return new Date(value).toLocaleString('ru-RU');
+}
+
+function renderJsonPreview(value) {
+  if (!value || (typeof value === 'object' && !Object.keys(value).length)) {
+    return '—';
+  }
+
+  return `<code>${escapeHtml(JSON.stringify(value))}</code>`;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function renderTabs(activeView, selectedDate) {
   const dashboardHref = `/?date=${encodeURIComponent(selectedDate)}`;
+  const catalogHref = `/?view=catalog&date=${encodeURIComponent(selectedDate)}`;
+  const linesHref = `/?view=lines&date=${encodeURIComponent(selectedDate)}`;
+  const auditHref = `/?view=audit&date=${encodeURIComponent(selectedDate)}`;
   const mapsHref = `/?view=maps&date=${encodeURIComponent(selectedDate)}`;
 
   return `
     <nav class="tabs" aria-label="Admin sections">
       <a class="${activeView === 'dashboard' ? 'active' : ''}" href="${dashboardHref}">Операции</a>
+      <a class="${activeView === 'catalog' ? 'active' : ''}" href="${catalogHref}">Справочники</a>
+      <a class="${activeView === 'lines' ? 'active' : ''}" href="${linesHref}">Линии</a>
+      <a class="${activeView === 'audit' ? 'active' : ''}" href="${auditHref}">Журнал</a>
       <a class="${activeView === 'maps' ? 'active' : ''}" href="${mapsHref}">Карты</a>
     </nav>
   `;
 }
 
-function renderPlacesTable(places) {
+function renderPlacesTable(places, selectedDate = todayIsoDate()) {
   if (!places.length) {
     return '<p class="empty">Места пока не загружены в каталог.</p>';
   }
@@ -158,6 +180,7 @@ function renderPlacesTable(places) {
           <td>${place.permanentOwner ? escapeHtml(place.permanentOwner.displayName) : '—'}</td>
           <td>${place.permanentOwner?.department ? escapeHtml(place.permanentOwner.department) : '—'}</td>
           <td>${place.guestPriorityRank == null ? '—' : escapeHtml(place.guestPriorityRank)}</td>
+          <td><a href="/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeId=${encodeURIComponent(place.id)}">История</a></td>
         </tr>
       `;
     })
@@ -173,6 +196,49 @@ function renderPlacesTable(places) {
           <th>Владелец</th>
           <th>Дирекция</th>
           <th>Guest priority</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderEmployeesTable(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const employees = model.employees?.data?.employees || [];
+
+  if (!employees.length) {
+    return '<p class="empty">Сотрудников пока нет.</p>';
+  }
+
+  const rows = employees
+    .map(
+      (employee) => `
+        <tr>
+          <td>${escapeHtml(employee.displayName)}</td>
+          <td>${employee.department ? escapeHtml(employee.department) : '—'}</td>
+          <td>${employee.email ? escapeHtml(employee.email) : '—'}</td>
+          <td>${employee.phone ? escapeHtml(employee.phone) : '—'}</td>
+          <td>${employee.permanentPlace ? escapeHtml(employee.permanentPlace.code) : '—'}</td>
+          <td>${employee.yandexMessengerUserId ? escapeHtml(employee.yandexMessengerUserId) : '—'}</td>
+          <td><a href="/?view=catalog&date=${encodeURIComponent(selectedDate)}&employeeId=${encodeURIComponent(employee.id)}">История</a></td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Сотрудник</th>
+          <th>Дирекция</th>
+          <th>Email</th>
+          <th>Телефон</th>
+          <th>Постоянное место</th>
+          <th>Messenger ID</th>
+          <th>Действия</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -316,6 +382,7 @@ function renderMapsTab(model) {
         const group = document.createElementNS(SVG_NS, 'g');
         group.classList.add('map-zone-group');
         group.dataset.zoneId = zone.id;
+        group.dataset.placeId = zone.parkingPlace?.id || '';
 
         const rect = document.createElementNS(SVG_NS, 'rect');
         rect.classList.add('map-zone-rect', 'map-zone-' + (zone.status || 'free'));
@@ -346,6 +413,10 @@ function renderMapsTab(model) {
 
         group.addEventListener('click', (event) => {
           event.stopPropagation();
+          if (!isEditMode() && zone.parkingPlace?.id) {
+            window.location.href = '/?view=catalog&date=' + encodeURIComponent(selectedDate) + '&placeId=' + encodeURIComponent(zone.parkingPlace.id);
+            return;
+          }
           setOutput(titleText || label);
         });
         layer.appendChild(group);
@@ -879,6 +950,56 @@ function renderLineOccupancyPanel(model) {
   `;
 }
 
+function renderLineOccupancyTable(model) {
+  const occupancy = model.lineOccupancy?.data?.occupancy || [];
+
+  if (!occupancy.length) {
+    return '<p class="empty">На выбранную дату позиции в линиях еще не зафиксированы.</p>';
+  }
+
+  const rows = occupancy
+    .map((item) => {
+      const subject =
+        item.subjectType === 'guest'
+          ? `Гость: ${item.guestParkingRequest?.guestName || '—'}`
+          : `Сотрудник: ${item.user?.displayName || '—'}`;
+      const contacts =
+        item.subjectType === 'guest'
+          ? `Администратор / приглашающий: ${item.guestParkingRequest?.hostDisplayName || '—'}`
+          : [item.user?.phone, item.user?.email].filter(Boolean).join(' · ') || 'контакты не указаны';
+
+      return `
+        <tr>
+          <td>${escapeHtml(item.lineGroup.code)}</td>
+          <td>${escapeHtml(item.position)}</td>
+          <td>${escapeHtml(item.parkingPlace.code)}</td>
+          <td>${escapeHtml(subject)}</td>
+          <td>${escapeHtml(item.subjectType)}</td>
+          <td>${escapeHtml(contacts)}</td>
+          <td>${item.reservation ? escapeHtml(item.reservation.source) : '—'}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Линия</th>
+          <th>Позиция</th>
+          <th>Место</th>
+          <th>Кто стоит</th>
+          <th>Тип</th>
+          <th>Контакт/маршрут</th>
+          <th>Источник</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
 function renderDepartureAndConflictsPanel(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const employees = model.employees?.data?.employees || [];
@@ -1159,6 +1280,7 @@ function renderGuestRequestsTable(model) {
   const rows = requests
     .map((request) => {
       const canCancel = request.status !== 'canceled';
+      const canAssign = !request.assignedReservation && ['active', 'queued'].includes(request.status);
       const place = request.assignedReservation?.parkingPlace;
 
       return `
@@ -1171,6 +1293,15 @@ function renderGuestRequestsTable(model) {
           <td>${place ? escapeHtml(`${place.code} · ${place.placeType}`) : '—'}</td>
           <td>${request.notes ? escapeHtml(request.notes) : '—'}</td>
           <td>
+            ${
+              canAssign
+                ? `<form method="post" action="/admin/guest-parking-requests/assign">
+                    <input type="hidden" name="requestId" value="${escapeHtml(request.id)}" />
+                    <input type="hidden" name="requestDate" value="${escapeHtml(formatDate(request.requestDate))}" />
+                    <button type="submit">Назначить</button>
+                  </form>`
+                : ''
+            }
             ${
               canCancel
                 ? `<form method="post" action="/admin/guest-parking-requests/cancel">
@@ -1400,6 +1531,656 @@ function renderDayDashboard(model) {
   `;
 }
 
+function renderAuditLogsTable(auditLogs) {
+  if (!auditLogs.length) {
+    return '<p class="empty">Записей журнала по выбранным фильтрам нет.</p>';
+  }
+
+  const rows = auditLogs
+    .map((log) => {
+      const actor = log.actorUser?.displayName || log.actorAuthUser?.login || log.actorService || 'system';
+
+      return `
+        <tr>
+          <td>${escapeHtml(formatDateTime(log.occurredAt))}</td>
+          <td>${escapeHtml(log.entityType)}</td>
+          <td>${log.entityId ? escapeHtml(log.entityId) : '—'}</td>
+          <td>${escapeHtml(log.action)}</td>
+          <td>${escapeHtml(actor)}</td>
+          <td>${renderJsonPreview(log.metadata)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Время</th>
+          <th>Сущность</th>
+          <th>ID</th>
+          <th>Действие</th>
+          <th>Актор</th>
+          <th>Metadata</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderContactAccessLogsTable(logs) {
+  if (!logs.length) {
+    return '<p class="empty">Запросов контактов по выбранной дате нет.</p>';
+  }
+
+  const rows = logs
+    .map((log) => {
+      const target = log.targetUser
+        ? `${log.targetUser.displayName} · ${log.targetUser.phone || 'телефон не указан'}`
+        : log.targetGuestParkingRequest
+          ? `Гость: ${log.targetGuestParkingRequest.guestName}; контакт через администратора`
+          : '—';
+
+      return `
+        <tr>
+          <td>${escapeHtml(formatDateTime(log.createdAt))}</td>
+          <td>${escapeHtml(log.requester.displayName)}</td>
+          <td>${log.lineGroup ? escapeHtml(log.lineGroup.code) : '—'}</td>
+          <td>${escapeHtml(target)}</td>
+          <td>${escapeHtml(log.resolution)}</td>
+          <td>${renderJsonPreview(log.metadata)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Время</th>
+          <th>Кто запросил</th>
+          <th>Линия</th>
+          <th>Цель</th>
+          <th>Результат</th>
+          <th>Metadata</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderAuditTab(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const auditLogs = model.auditLogs?.data?.auditLogs || [];
+  const contactAccessLogs = model.contactAccessLogs?.data?.contactAccessLogs || [];
+
+  return `
+    <section class="card">
+      <h2 class="section-title">Audit Log</h2>
+      <p class="section-copy">Фильтр по дате, сущности и действию. Пустые поля не применяются.</p>
+      <form class="action-form" method="get" action="/">
+        <input type="hidden" name="view" value="audit" />
+        <label>
+          <span>Дата</span>
+          <input type="date" name="date" value="${escapeHtml(selectedDate)}" required />
+        </label>
+        <label>
+          <span>Сущность</span>
+          <input name="entityType" value="${escapeHtml(model.auditFilters?.entityType || '')}" placeholder="reservation, user..." />
+        </label>
+        <label>
+          <span>Действие</span>
+          <input name="action" value="${escapeHtml(model.auditFilters?.action || '')}" placeholder="created, canceled..." />
+        </label>
+        <button type="submit">Показать</button>
+      </form>
+      ${renderAuditLogsTable(auditLogs)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Contact Access Logs</h2>
+      <p class="section-copy">Все запросы контактов тех, кто стоит впереди в multi-линии.</p>
+      ${renderContactAccessLogsTable(contactAccessLogs)}
+    </section>
+  `;
+}
+
+function renderPlaceHistoryCard(model) {
+  const details = model.placeHistory?.data;
+
+  if (!details?.place) {
+    return '<p class="empty">Выберите место из таблицы ниже, чтобы посмотреть историю.</p>';
+  }
+
+  const history = details.history || {};
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const assignmentRows = (history.permanentAssignments || [])
+    .map(
+      (assignment) => `
+        <tr>
+          <td>${escapeHtml(`${assignment.dateFrom} — ${assignment.dateTo || '∞'}`)}</td>
+          <td>${escapeHtml(assignment.user.displayName)}</td>
+          <td>${assignment.user.department ? escapeHtml(assignment.user.department) : '—'}</td>
+          <td>${assignment.notes ? escapeHtml(assignment.notes) : '—'}</td>
+          <td>
+            <form method="post" action="/admin/permanent-assignments/end">
+              <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+              <input type="hidden" name="assignmentId" value="${escapeHtml(assignment.id)}" />
+              <input type="date" name="dateTo" value="${escapeHtml(selectedDate)}" required />
+              <button class="button-secondary" type="submit">Завершить</button>
+            </form>
+          </td>
+        </tr>
+      `
+    )
+    .join('');
+  const releaseRows = (history.releases || [])
+    .map(
+      (release) => `
+        <tr>
+          <td>${escapeHtml(`${release.dateFrom} — ${release.dateTo}`)}</td>
+          <td>${escapeHtml(release.user.displayName)}</td>
+          <td><span class="tag ${release.status === 'active' ? 'free' : 'reserved'}">${escapeHtml(release.status)}</span></td>
+          <td>${escapeHtml(formatDateTime(release.createdAt))}</td>
+          <td>${release.canceledAt ? escapeHtml(formatDateTime(release.canceledAt)) : '—'}</td>
+        </tr>
+      `
+    )
+    .join('');
+  const reservationRows = (history.reservations || [])
+    .map(
+      (reservation) => `
+        <tr>
+          <td>${escapeHtml(reservation.reservationDate)}</td>
+          <td>${reservation.user ? escapeHtml(reservation.user.displayName) : escapeHtml(reservation.guestParkingRequest?.guestName || '—')}</td>
+          <td>${escapeHtml(reservation.source)}</td>
+          <td><span class="tag ${reservation.status === 'active' ? 'free' : 'reserved'}">${escapeHtml(reservation.status)}</span></td>
+          <td>${reservation.reason ? escapeHtml(reservation.reason) : '—'}</td>
+        </tr>
+      `
+    )
+    .join('');
+  const movementRows = (history.movements || [])
+    .map(
+      (movement) => `
+        <tr>
+          <td>${escapeHtml(movement.movementDate)}</td>
+          <td>${escapeHtml(movement.userDisplayName || movement.guestName || '—')}</td>
+          <td>${escapeHtml(movement.movementType)}</td>
+          <td>${escapeHtml(`${movement.fromPlaceCode || '—'} → ${movement.toPlaceCode}`)}</td>
+          <td>${escapeHtml(movement.reason)}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <div class="history-head">
+      <div>
+        <h3>${escapeHtml(details.place.code)} · ${escapeHtml(details.place.title)}</h3>
+        <p class="section-copy">${escapeHtml(details.place.floorLabel || 'без этажа')} · ${escapeHtml(details.place.placeType)} · ${details.place.isActive ? 'active' : 'inactive'}</p>
+      </div>
+      <a href="/?view=catalog&date=${encodeURIComponent(model.selectedDate || todayIsoDate())}">Сбросить выбор</a>
+    </div>
+
+    <h4>Постоянные закрепления</h4>
+    ${
+      assignmentRows
+        ? `<table><thead><tr><th>Период</th><th>Сотрудник</th><th>Дирекция</th><th>Комментарий</th><th>Действие</th></tr></thead><tbody>${assignmentRows}</tbody></table>`
+        : '<p class="empty">Закреплений по месту нет.</p>'
+    }
+
+    <h4>Отдачи места</h4>
+    ${
+      releaseRows
+        ? `<table><thead><tr><th>Период</th><th>Владелец</th><th>Статус</th><th>Создано</th><th>Отменено</th></tr></thead><tbody>${releaseRows}</tbody></table>`
+        : '<p class="empty">Отдач места нет.</p>'
+    }
+
+    <h4>Назначения</h4>
+    ${
+      reservationRows
+        ? `<table><thead><tr><th>Дата</th><th>Кому</th><th>Источник</th><th>Статус</th><th>Причина</th></tr></thead><tbody>${reservationRows}</tbody></table>`
+        : '<p class="empty">Назначений нет.</p>'
+    }
+
+    <h4>Перемещения</h4>
+    ${
+      movementRows
+        ? `<table><thead><tr><th>Дата</th><th>Кто</th><th>Тип</th><th>Маршрут</th><th>Причина</th></tr></thead><tbody>${movementRows}</tbody></table>`
+        : '<p class="empty">Перемещений нет.</p>'
+    }
+
+    <h4>Audit по месту</h4>
+    ${renderAuditLogsTable(history.auditLogs || [])}
+  `;
+}
+
+function renderEmployeeHistoryCard(model) {
+  const details = model.employeeHistory?.data;
+
+  if (!details?.employee) {
+    return '<p class="empty">Выберите сотрудника из таблицы ниже, чтобы посмотреть историю.</p>';
+  }
+
+  const history = details.history || {};
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const assignmentRows = (history.permanentAssignments || [])
+    .map(
+      (assignment) => `
+        <tr>
+          <td>${escapeHtml(`${assignment.dateFrom} — ${assignment.dateTo}`)}</td>
+          <td>${escapeHtml(assignment.parkingPlace.code)}</td>
+          <td>${assignment.notes ? escapeHtml(assignment.notes) : '—'}</td>
+          <td>
+            <form method="post" action="/admin/permanent-assignments/end">
+              <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+              <input type="hidden" name="assignmentId" value="${escapeHtml(assignment.id)}" />
+              <input type="date" name="dateTo" value="${escapeHtml(selectedDate)}" required />
+              <button class="button-secondary" type="submit">Завершить</button>
+            </form>
+          </td>
+        </tr>
+      `
+    )
+    .join('');
+  const requestRows = (history.employeeRequests || [])
+    .map(
+      (request) => `
+        <tr>
+          <td>${escapeHtml(request.requestDate)}</td>
+          <td><span class="tag">${escapeHtml(request.status)}</span></td>
+          <td>${request.queueEntry ? escapeHtml(`#${request.queueEntry.position} · ${request.queueEntry.status}`) : '—'}</td>
+          <td>${request.parkingPlaceCode ? escapeHtml(request.parkingPlaceCode) : '—'}</td>
+        </tr>
+      `
+    )
+    .join('');
+  const reservationRows = (history.reservations || [])
+    .map(
+      (reservation) => `
+        <tr>
+          <td>${escapeHtml(reservation.reservationDate)}</td>
+          <td>${escapeHtml(reservation.parkingPlace.code)}</td>
+          <td>${escapeHtml(reservation.source)}</td>
+          <td><span class="tag">${escapeHtml(reservation.status)}</span></td>
+          <td>${reservation.reason ? escapeHtml(reservation.reason) : '—'}</td>
+        </tr>
+      `
+    )
+    .join('');
+  const lineRows = (history.lineOccupancy || [])
+    .map(
+      (occupancy) => `
+        <tr>
+          <td>${escapeHtml(occupancy.occupancyDate)}</td>
+          <td>${escapeHtml(occupancy.lineGroupCode)}</td>
+          <td>${escapeHtml(occupancy.parkingPlaceCode)}</td>
+          <td>${escapeHtml(occupancy.position)}</td>
+        </tr>
+      `
+    )
+    .join('');
+  const departureRows = (history.departurePlans || [])
+    .map(
+      (plan) => `
+        <tr>
+          <td>${escapeHtml(plan.planDate)}</td>
+          <td>${escapeHtml(plan.departureTime)}</td>
+          <td>${plan.isEarly ? '<span class="tag reserved">ранний</span>' : '<span class="tag free">обычный</span>'}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <div class="history-head">
+      <div>
+        <h3>${escapeHtml(details.employee.displayName)}</h3>
+        <p class="section-copy">${escapeHtml(details.employee.department || 'без дирекции')} · ${escapeHtml(details.employee.email || 'email не указан')} · ${escapeHtml(details.employee.phone || 'телефон не указан')}</p>
+      </div>
+      <a href="/?view=catalog&date=${encodeURIComponent(model.selectedDate || todayIsoDate())}">Сбросить выбор</a>
+    </div>
+
+    <h4>Постоянные закрепления</h4>
+    ${
+      assignmentRows
+        ? `<table><thead><tr><th>Период</th><th>Место</th><th>Комментарий</th><th>Действие</th></tr></thead><tbody>${assignmentRows}</tbody></table>`
+        : '<p class="empty">Закреплений нет.</p>'
+    }
+
+    <h4>Заявки и очередь</h4>
+    ${
+      requestRows
+        ? `<table><thead><tr><th>Дата</th><th>Статус</th><th>Очередь</th><th>Место</th></tr></thead><tbody>${requestRows}</tbody></table>`
+        : '<p class="empty">Заявок нет.</p>'
+    }
+
+    <h4>Назначения</h4>
+    ${
+      reservationRows
+        ? `<table><thead><tr><th>Дата</th><th>Место</th><th>Источник</th><th>Статус</th><th>Причина</th></tr></thead><tbody>${reservationRows}</tbody></table>`
+        : '<p class="empty">Назначений нет.</p>'
+    }
+
+    <h4>Позиции в линиях</h4>
+    ${
+      lineRows
+        ? `<table><thead><tr><th>Дата</th><th>Линия</th><th>Место</th><th>Позиция</th></tr></thead><tbody>${lineRows}</tbody></table>`
+        : '<p class="empty">Позиции не фиксировались.</p>'
+    }
+
+    <h4>Планы выезда</h4>
+    ${
+      departureRows
+        ? `<table><thead><tr><th>Дата</th><th>Время</th><th>Тип</th></tr></thead><tbody>${departureRows}</tbody></table>`
+        : '<p class="empty">Планов выезда нет.</p>'
+    }
+
+    <h4>Запросы контактов</h4>
+    ${renderContactAccessLogsTable(history.contactAccessLogs || [])}
+
+    <h4>Audit по сотруднику</h4>
+    ${renderAuditLogsTable(history.auditLogs || [])}
+  `;
+}
+
+function renderPlaceCreateForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const lineGroups = model.lineGroups?.data?.lineGroups || [];
+  const lineGroupOptions = lineGroups
+    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(`${group.code} · ${group.name}`)}</option>`)
+    .join('');
+
+  return `
+    <form class="action-form" method="post" action="/admin/places">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Код</span>
+        <input name="code" placeholder="4019" required />
+      </label>
+      <label>
+        <span>Название</span>
+        <input name="title" placeholder="4019(заднее)" required />
+      </label>
+      <label>
+        <span>Тип</span>
+        <select name="placeType" required>
+          <option value="single">single</option>
+          <option value="double">double</option>
+          <option value="triple">triple</option>
+        </select>
+      </label>
+      <label>
+        <span>Этаж</span>
+        <input name="floorLabel" placeholder="4" />
+      </label>
+      <label>
+        <span>Линия</span>
+        <select name="lineGroupId">
+          <option value="">Без линии</option>
+          ${lineGroupOptions}
+        </select>
+      </label>
+      <label>
+        <span>Позиция в линии</span>
+        <select name="linePositionHint">
+          <option value="">—</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </label>
+      <label>
+        <span>Guest priority</span>
+        <input type="number" min="1" max="99" name="guestPriorityRank" placeholder="1" />
+      </label>
+      <button type="submit">Создать место</button>
+    </form>
+  `;
+}
+
+function renderPlaceEditForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const place = model.placeHistory?.data?.place;
+
+  if (!place) {
+    return '<p class="empty">Выберите место из таблицы, чтобы редактировать карточку.</p>';
+  }
+
+  const fullPlace = (model.places?.data?.places || []).find((item) => item.id === place.id) || place;
+  const lineGroups = model.lineGroups?.data?.lineGroups || [];
+  const lineGroupOptions = lineGroups
+    .map((group) => {
+      const selected = fullPlace.lineGroup?.id === group.id ? ' selected' : '';
+      return `<option value="${escapeHtml(group.id)}"${selected}>${escapeHtml(`${group.code} · ${group.name}`)}</option>`;
+    })
+    .join('');
+
+  return `
+    <form class="action-form" method="post" action="/admin/places/update">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <input type="hidden" name="placeId" value="${escapeHtml(place.id)}" />
+      <label>
+        <span>Код</span>
+        <input name="code" value="${escapeHtml(fullPlace.code)}" required />
+      </label>
+      <label>
+        <span>Название</span>
+        <input name="title" value="${escapeHtml(fullPlace.title)}" required />
+      </label>
+      <label>
+        <span>Тип</span>
+        <select name="placeType" required>
+          ${['single', 'double', 'triple'].map((type) => `<option value="${type}"${fullPlace.placeType === type ? ' selected' : ''}>${type}</option>`).join('')}
+        </select>
+      </label>
+      <label>
+        <span>Этаж</span>
+        <input name="floorLabel" value="${escapeHtml(fullPlace.floorLabel || '')}" />
+      </label>
+      <label>
+        <span>Линия</span>
+        <select name="lineGroupId">
+          <option value="">Без линии</option>
+          ${lineGroupOptions}
+        </select>
+      </label>
+      <label>
+        <span>Позиция в линии</span>
+        <select name="linePositionHint">
+          <option value="">—</option>
+          ${[1, 2, 3].map((position) => `<option value="${position}"${Number(fullPlace.linePositionHint) === position ? ' selected' : ''}>${position}</option>`).join('')}
+        </select>
+      </label>
+      <label>
+        <span>Guest priority</span>
+        <input type="number" min="1" max="99" name="guestPriorityRank" value="${escapeHtml(fullPlace.guestPriorityRank || '')}" />
+      </label>
+      <label>
+        <span>Активно</span>
+        <select name="isActive">
+          <option value="true"${fullPlace.isActive ? ' selected' : ''}>Да</option>
+          <option value="false"${!fullPlace.isActive ? ' selected' : ''}>Нет</option>
+        </select>
+      </label>
+      <button type="submit">Сохранить место</button>
+    </form>
+    <form class="inline-action-form" method="post" action="/admin/places/disable">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <input type="hidden" name="placeId" value="${escapeHtml(place.id)}" />
+      <button class="button-secondary" type="submit">Отключить место</button>
+      <span>Мягко скрывает место из каталога.</span>
+    </form>
+  `;
+}
+
+function renderEmployeeEditForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const employee = model.employeeHistory?.data?.employee;
+
+  if (!employee) {
+    return '<p class="empty">Выберите сотрудника из таблицы, чтобы редактировать карточку.</p>';
+  }
+
+  return `
+    <form class="action-form" method="post" action="/admin/employees/update">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <input type="hidden" name="employeeId" value="${escapeHtml(employee.id)}" />
+      <label>
+        <span>ФИО</span>
+        <input name="displayName" value="${escapeHtml(employee.displayName)}" required />
+      </label>
+      <label>
+        <span>Дирекция</span>
+        <input name="department" value="${escapeHtml(employee.department || '')}" />
+      </label>
+      <label>
+        <span>Email</span>
+        <input type="email" name="email" value="${escapeHtml(employee.email || '')}" />
+      </label>
+      <label>
+        <span>Телефон</span>
+        <input name="phone" value="${escapeHtml(employee.phone || '')}" />
+      </label>
+      <label class="wide">
+        <span>Yandex Messenger ID</span>
+        <input name="yandexMessengerUserId" value="${escapeHtml(employee.yandexMessengerUserId || '')}" />
+      </label>
+      <label>
+        <span>Активен</span>
+        <select name="isActive">
+          <option value="true">Да</option>
+          <option value="false">Нет</option>
+        </select>
+      </label>
+      <button type="submit">Сохранить сотрудника</button>
+    </form>
+    <form class="inline-action-form" method="post" action="/admin/employees/disable">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <input type="hidden" name="employeeId" value="${escapeHtml(employee.id)}" />
+      <button class="button-secondary" type="submit">Отключить сотрудника</button>
+      <span>Мягко скрывает сотрудника из справочника.</span>
+    </form>
+  `;
+}
+
+function renderPermanentAssignmentForm(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const employees = model.employees?.data?.employees || [];
+  const places = model.places?.data?.places || [];
+  const employeeOptions = employees
+    .map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${employee.department ? ` · ${employee.department}` : ''}`)}</option>`)
+    .join('');
+  const placeOptions = places
+    .map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(`${place.code} · ${place.title}`)}</option>`)
+    .join('');
+
+  return `
+    <form class="action-form" method="post" action="/admin/permanent-assignments">
+      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Сотрудник</span>
+        <select name="userId" required>
+          <option value="">Выберите сотрудника</option>
+          ${employeeOptions}
+        </select>
+      </label>
+      <label>
+        <span>Место</span>
+        <select name="parkingPlaceId" required>
+          <option value="">Выберите место</option>
+          ${placeOptions}
+        </select>
+      </label>
+      <label>
+        <span>С даты</span>
+        <input type="date" name="dateFrom" value="${escapeHtml(selectedDate)}" required />
+      </label>
+      <label>
+        <span>По дату</span>
+        <input type="date" name="dateTo" />
+      </label>
+      <label class="wide">
+        <span>Комментарий</span>
+        <input name="notes" placeholder="Причина закрепления" />
+      </label>
+      <button type="submit">Создать закрепление</button>
+    </form>
+  `;
+}
+
+function renderCatalogTab(model) {
+  const places = model.places?.data?.places || [];
+
+  return `
+    <section class="card">
+      <h2 class="section-title">Создать место</h2>
+      ${renderPlaceCreateForm(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Постоянное закрепление</h2>
+      ${renderPermanentAssignmentForm(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">История места</h2>
+      ${renderPlaceHistoryCard(model)}
+      <h3>Редактировать место</h3>
+      ${renderPlaceEditForm(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">История сотрудника</h2>
+      ${renderEmployeeHistoryCard(model)}
+      <h3>Редактировать сотрудника</h3>
+      ${renderEmployeeEditForm(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Сотрудники</h2>
+      <p class="section-copy">Создание сотрудника остается в операционной вкладке; здесь справочник и переход в историю.</p>
+      ${renderEmployeesTable(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Места и закрепления</h2>
+      <p class="section-copy">Каталог мест, текущий владелец и переход в историю места.</p>
+      ${renderPlacesTable(places, model.selectedDate)}
+    </section>
+  `;
+}
+
+function renderLinesTab(model) {
+  return `
+    <section class="card">
+      <h2 class="section-title">Multi-линии и фактические позиции</h2>
+      <p class="section-copy">Фиксация позиции и структура линий на выбранную дату.</p>
+      ${renderLineOccupancyPanel(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Текущая занятость линий</h2>
+      ${renderLineOccupancyTable(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Время выезда и конфликты</h2>
+      ${renderDepartureAndConflictsPanel(model)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Запросы контактов</h2>
+      ${renderContactAccessLogsTable(model.contactAccessLogs?.data?.contactAccessLogs || [])}
+    </section>
+  `;
+}
+
 function renderPage(model) {
   const placesCount = Array.isArray(model.places?.data?.places) ? model.places.data.places.length : 0;
   const places = model.places?.data?.places || [];
@@ -1413,6 +2194,36 @@ function renderPage(model) {
   const notice = model.notice
     ? `<p class="notice ${model.notice.type === 'error' ? 'notice-error' : 'notice-ok'}">${escapeHtml(model.notice.text)}</p>`
     : '';
+
+  const mainContent =
+    activeView === 'maps'
+      ? renderMapsTab(model)
+      : activeView === 'catalog'
+        ? renderCatalogTab(model)
+        : activeView === 'lines'
+          ? renderLinesTab(model)
+          : activeView === 'audit'
+            ? renderAuditTab(model)
+            : `
+            <section class="card">
+              <h2 class="section-title">Day Dashboard</h2>
+              <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Здесь видны отданные места, свободный пул и ручные назначения.</p>
+              ${renderDateSelector(selectedDate)}
+              ${renderDayDashboard(model)}
+            </section>
+
+            <section class="card">
+              <h2 class="section-title">Place Releases</h2>
+              <p class="section-copy">Первая рабочая операция: администратор может отметить, что владелец отдал закрепленное место на дату или диапазон.</p>
+              ${renderReleaseForm(places, model)}
+              ${renderReleasesTable(releases)}
+            </section>
+
+            <section class="card">
+              <h2 class="section-title">Parking Places</h2>
+              ${renderPlacesTable(places, selectedDate)}
+            </section>
+          `;
 
   return `<!doctype html>
 <html lang="ru">
@@ -1831,6 +2642,22 @@ function renderPage(model) {
         color: var(--muted);
       }
 
+      .history-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+      }
+
+      code {
+        display: block;
+        max-width: 420px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+
       @media (max-width: 760px) {
         .action-form,
         .date-form,
@@ -1869,30 +2696,7 @@ function renderPage(model) {
         </article>
       </section>
 
-      ${
-        activeView === 'maps'
-          ? renderMapsTab(model)
-          : `
-            <section class="card">
-              <h2 class="section-title">Day Dashboard</h2>
-              <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Здесь видны отданные места, свободный пул и ручные назначения.</p>
-              ${renderDateSelector(selectedDate)}
-              ${renderDayDashboard(model)}
-            </section>
-
-            <section class="card">
-              <h2 class="section-title">Place Releases</h2>
-              <p class="section-copy">Первая рабочая операция: администратор может отметить, что владелец отдал закрепленное место на дату или диапазон.</p>
-              ${renderReleaseForm(places, model)}
-              ${renderReleasesTable(releases)}
-            </section>
-
-            <section class="card">
-              <h2 class="section-title">Parking Places</h2>
-              ${renderPlacesTable(places)}
-            </section>
-          `
-      }
+      ${mainContent}
     </main>
   </body>
 </html>`;
@@ -1969,7 +2773,22 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/') {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
-      const activeView = url.searchParams.get('view') === 'maps' ? 'maps' : 'dashboard';
+      const requestedView = url.searchParams.get('view') || 'dashboard';
+      const activeView = ['dashboard', 'catalog', 'lines', 'audit', 'maps'].includes(requestedView) ? requestedView : 'dashboard';
+      const placeId = url.searchParams.get('placeId');
+      const employeeId = url.searchParams.get('employeeId');
+      const auditEntityType = url.searchParams.get('entityType') || '';
+      const auditAction = url.searchParams.get('action') || '';
+      const auditParams = new URLSearchParams({
+        date: selectedDate,
+        limit: '120'
+      });
+      if (auditEntityType) {
+        auditParams.set('entityType', auditEntityType);
+      }
+      if (auditAction) {
+        auditParams.set('action', auditAction);
+      }
       const [
         health,
         db,
@@ -1982,8 +2801,13 @@ const server = http.createServer(async (req, res) => {
         guestRequests,
         jobRuns,
         lineGroups,
+        lineOccupancy,
         departurePlans,
-        conflicts
+        conflicts,
+        auditLogs,
+        contactAccessLogs,
+        placeHistory,
+        employeeHistory
       ] = await Promise.all([
         fetchJson('/health'),
         fetchJson('/health/db'),
@@ -1996,8 +2820,13 @@ const server = http.createServer(async (req, res) => {
         fetchJson(`/admin/guest-parking-requests?date=${encodeURIComponent(selectedDate)}`),
         fetchJson('/admin/jobs/runs?limit=8'),
         fetchJson('/admin/line-groups'),
+        fetchJson(`/admin/line-occupancy?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/departure-plans?date=${encodeURIComponent(selectedDate)}`),
-        fetchJson(`/admin/conflicts?date=${encodeURIComponent(selectedDate)}`)
+        fetchJson(`/admin/conflicts?date=${encodeURIComponent(selectedDate)}`),
+        fetchJson(`/admin/audit-logs?${auditParams.toString()}`),
+        fetchJson(`/admin/contact-access-logs?date=${encodeURIComponent(selectedDate)}&limit=120`),
+        placeId ? fetchJson(`/admin/places/${encodeURIComponent(placeId)}/history`) : Promise.resolve({ ok: true, status: 200, data: null }),
+        employeeId ? fetchJson(`/admin/employees/${encodeURIComponent(employeeId)}/history`) : Promise.resolve({ ok: true, status: 200, data: null })
       ]);
       const notice =
         url.searchParams.get('released') === '1'
@@ -2005,7 +2834,7 @@ const server = http.createServer(async (req, res) => {
           : url.searchParams.get('releaseCanceled') === '1'
             ? { type: 'ok', text: 'Отдача места отменена.' }
           : url.searchParams.get('reserved') === '1'
-            ? { type: 'ok', text: 'Ручное назначение создано.' }
+            ? { type: 'ok', text: `Ручное назначение создано.${url.searchParams.get('warning') ? ` Предупреждение: ${url.searchParams.get('warning')}` : ''}` }
           : url.searchParams.get('reservationCanceled') === '1'
             ? { type: 'ok', text: 'Назначение отменено.' }
           : url.searchParams.get('requested') === '1'
@@ -2016,8 +2845,24 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'ok', text: 'Гостевая заявка создана, место назначено.' }
           : url.searchParams.get('guestCanceled') === '1'
             ? { type: 'ok', text: 'Гостевая заявка отменена.' }
+          : url.searchParams.get('guestAssigned') === '1'
+            ? { type: 'ok', text: `Гостевое место назначено.${url.searchParams.get('warning') ? ` Предупреждение: ${url.searchParams.get('warning')}` : ''}` }
           : url.searchParams.get('employeeCreated') === '1'
             ? { type: 'ok', text: 'Сотрудник создан. Теперь его можно поставить в очередь.' }
+          : url.searchParams.get('employeeUpdated') === '1'
+            ? { type: 'ok', text: 'Сотрудник обновлен.' }
+          : url.searchParams.get('employeeDisabled') === '1'
+            ? { type: 'ok', text: 'Сотрудник отключен.' }
+          : url.searchParams.get('placeCreated') === '1'
+            ? { type: 'ok', text: 'Место создано.' }
+          : url.searchParams.get('placeUpdated') === '1'
+            ? { type: 'ok', text: 'Место обновлено.' }
+          : url.searchParams.get('placeDisabled') === '1'
+            ? { type: 'ok', text: 'Место отключено.' }
+          : url.searchParams.get('assignmentCreated') === '1'
+            ? { type: 'ok', text: 'Постоянное закрепление создано.' }
+          : url.searchParams.get('assignmentEnded') === '1'
+            ? { type: 'ok', text: 'Постоянное закрепление завершено.' }
           : url.searchParams.get('queueProcessed')
             ? {
                 type: 'ok',
@@ -2047,10 +2892,19 @@ const server = http.createServer(async (req, res) => {
           guestRequests,
           jobRuns,
           lineGroups,
+          lineOccupancy,
           departurePlans,
           conflicts,
+          auditLogs,
+          contactAccessLogs,
+          placeHistory,
+          employeeHistory,
           selectedDate,
           activeView,
+          auditFilters: {
+            entityType: auditEntityType,
+            action: auditAction
+          },
           notice
         })
       );
@@ -2060,6 +2914,174 @@ const server = http.createServer(async (req, res) => {
       res.end(`<h1>Admin Web Error</h1><pre>${escapeHtml(error.message)}</pre>`);
       return;
     }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/places') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const payload = {
+      code: form.get('code'),
+      title: form.get('title'),
+      floorLabel: form.get('floorLabel'),
+      placeType: form.get('placeType'),
+      lineGroupId: form.get('lineGroupId'),
+      linePositionHint: form.get('linePositionHint'),
+      guestPriorityRank: form.get('guestPriorityRank'),
+      isActive: true
+    };
+    const result = await postJson('/admin/places', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeCreated=1&placeId=${encodeURIComponent(result.data?.place?.id || '')}` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/places/update') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const placeId = form.get('placeId');
+    const payload = {
+      placeId,
+      code: form.get('code'),
+      title: form.get('title'),
+      floorLabel: form.get('floorLabel'),
+      placeType: form.get('placeType'),
+      lineGroupId: form.get('lineGroupId'),
+      linePositionHint: form.get('linePositionHint'),
+      guestPriorityRank: form.get('guestPriorityRank'),
+      isActive: form.get('isActive') !== 'false'
+    };
+    const result = await postJson('/admin/places/update', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeUpdated=1&placeId=${encodeURIComponent(placeId || '')}` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeId=${encodeURIComponent(placeId || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/places/disable') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const payload = {
+      placeId: form.get('placeId')
+    };
+    const result = await postJson('/admin/places/disable', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeDisabled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employees/update') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const employeeId = form.get('employeeId');
+    const payload = {
+      employeeId,
+      displayName: form.get('displayName'),
+      department: form.get('department'),
+      email: form.get('email'),
+      phone: form.get('phone'),
+      yandexMessengerUserId: form.get('yandexMessengerUserId'),
+      isActive: form.get('isActive') !== 'false'
+    };
+    const result = await postJson('/admin/employees/update', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&employeeUpdated=1&employeeId=${encodeURIComponent(employeeId || '')}` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&employeeId=${encodeURIComponent(employeeId || '')}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/employees/disable') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const payload = {
+      employeeId: form.get('employeeId')
+    };
+    const result = await postJson('/admin/employees/disable', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&employeeDisabled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const payload = {
+      userId: form.get('userId'),
+      parkingPlaceId: form.get('parkingPlaceId'),
+      dateFrom: form.get('dateFrom'),
+      dateTo: form.get('dateTo'),
+      notes: form.get('notes')
+    };
+    const result = await postJson('/admin/permanent-assignments', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&assignmentCreated=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&employeeId=${encodeURIComponent(payload.userId || '')}` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments/end') {
+    const form = await readFormBody(req);
+    const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const payload = {
+      assignmentId: form.get('assignmentId'),
+      dateTo: form.get('dateTo')
+    };
+    const result = await postJson('/admin/permanent-assignments/end', payload);
+
+    if (result.ok) {
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&assignmentEnded=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
   }
 
   if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
@@ -2115,7 +3137,9 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/reservations/manual', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate)}&reserved=1` });
+      const warnings = result.data?.warnings || [];
+      const warningText = warnings.length ? `&warning=${encodeURIComponent(warnings.map((warning) => warning.message || warning.type).join('; '))}` : '';
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate)}&reserved=1${warningText}` });
       res.end();
       return;
     }
@@ -2290,6 +3314,28 @@ const server = http.createServer(async (req, res) => {
 
     if (result.ok) {
       res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&guestCanceled=1` });
+      res.end();
+      return;
+    }
+
+    const message = result.data?.error || `API error ${result.status}`;
+    res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/assign') {
+    const form = await readFormBody(req);
+    const payload = {
+      requestId: form.get('requestId')
+    };
+    const requestDate = form.get('requestDate') || todayIsoDate();
+    const result = await postJson('/admin/guest-parking-requests/assign', payload);
+
+    if (result.ok) {
+      const warnings = result.data?.warnings || [];
+      const warningText = warnings.length ? `&warning=${encodeURIComponent(warnings.map((warning) => warning.message || warning.type).join('; '))}` : '';
+      res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&guestAssigned=1${warningText}` });
       res.end();
       return;
     }
