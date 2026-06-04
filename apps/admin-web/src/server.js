@@ -139,7 +139,8 @@ function todayIsoDate() {
 }
 
 function renderTabs(activeView, selectedDate) {
-  const dashboardHref = `/?date=${encodeURIComponent(selectedDate)}`;
+  const dayHref = `/?view=day&date=${encodeURIComponent(selectedDate)}`;
+  const requestsHref = `/?view=requests&date=${encodeURIComponent(selectedDate)}`;
   const catalogHref = `/?view=catalog&date=${encodeURIComponent(selectedDate)}`;
   const linesHref = `/?view=lines&date=${encodeURIComponent(selectedDate)}`;
   const auditHref = `/?view=audit&date=${encodeURIComponent(selectedDate)}`;
@@ -147,11 +148,12 @@ function renderTabs(activeView, selectedDate) {
 
   return `
     <nav class="tabs" aria-label="Admin sections">
-      <a class="${activeView === 'dashboard' ? 'active' : ''}" href="${dashboardHref}">Операции</a>
-      <a class="${activeView === 'catalog' ? 'active' : ''}" href="${catalogHref}">Справочники</a>
+      <a class="${activeView === 'day' ? 'active' : ''}" href="${dayHref}">День</a>
+      <a class="${activeView === 'requests' ? 'active' : ''}" href="${requestsHref}">Заявки</a>
       <a class="${activeView === 'lines' ? 'active' : ''}" href="${linesHref}">Линии</a>
+      <a class="${activeView === 'catalog' ? 'active' : ''}" href="${catalogHref}">Справочники</a>
       <a class="${activeView === 'audit' ? 'active' : ''}" href="${auditHref}">Журнал</a>
-      <a class="${activeView === 'maps' ? 'active' : ''}" href="${mapsHref}">Карты</a>
+      <a class="${activeView === 'maps' ? 'active' : ''}" href="${mapsHref}">Карта</a>
     </nav>
   `;
 }
@@ -246,7 +248,7 @@ function renderEmployeesTable(model) {
   `;
 }
 
-function renderMapsTab(model) {
+function renderMapEditorTab(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const places = model.places?.data?.places || [];
   const placeOptions = places
@@ -287,8 +289,12 @@ function renderMapsTab(model) {
 
   return `
     <section class="card">
-      <h2 class="section-title">Parking Maps</h2>
-      <p class="section-copy">Режим разметки: выберите место, затем протяните прямоугольник поверх красной или оранжевой зоны. Карта и overlay теперь живут в одном SVG viewBox, поэтому зоны не съезжают при изменении размера окна.</p>
+      <h2 class="section-title">Редактор карт</h2>
+      <p class="section-copy">Технический режим: разметка зон, изменение типа места на карте и удаление зон. Операционная работа по местам вынесена на вкладку “День”.</p>
+      <div class="map-upload-placeholder">
+        <p class="label">Подложки G3/G4/G5</p>
+        <p class="empty">Загрузка новых карт будет добавлена отдельным шагом. Текущие файлы берутся из storage /maps.</p>
+      </div>
       <label class="map-edit-toggle">
         <input id="map-edit-mode" type="checkbox" />
         <span>Редактирование мест</span>
@@ -718,6 +724,356 @@ function renderMapsTab(model) {
   `;
 }
 
+function getPlaceOperationalState(model, placeId) {
+  if (!placeId) {
+    return null;
+  }
+
+  const place = (model.places?.data?.places || []).find((item) => item.id === placeId);
+  if (!place) {
+    return null;
+  }
+
+  const dashboard = model.dashboard?.data || {};
+  const release = (dashboard.releasedPlaces || []).find((item) => item.parkingPlace.id === placeId) || null;
+  const reservation = (dashboard.reservations || []).find((item) => item.parkingPlace.id === placeId) || null;
+  const guestRequest = (dashboard.guestRequests || []).find((request) => request.assignedReservation?.parkingPlace?.id === placeId) || null;
+  const lineOccupancy = (model.lineOccupancy?.data?.occupancy || []).find((item) => item.parkingPlace.id === placeId) || null;
+  const status = reservation
+    ? reservation.source === 'guest'
+      ? 'guest'
+      : 'occupied'
+    : release
+      ? 'released'
+      : place.isActive
+        ? 'free'
+        : 'blocked';
+
+  return {
+    place,
+    release,
+    reservation,
+    guestRequest,
+    lineOccupancy,
+    status
+  };
+}
+
+function renderOperationalPlaceCard(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const selected = getPlaceOperationalState(model, model.selectedPlaceId);
+  const employees = model.employees?.data?.employees || [];
+
+  if (!selected) {
+    return `
+      <aside class="place-drawer card">
+        <h3>Место не выбрано</h3>
+        <p class="empty">Нажмите на размеченное место на карте, чтобы открыть операционную карточку.</p>
+      </aside>
+    `;
+  }
+
+  const { place, release, reservation, guestRequest, lineOccupancy, status } = selected;
+  const employeeOptions = employees
+    .map((employee) => {
+      const department = employee.department ? ` · ${employee.department}` : '';
+      const permanent = employee.permanentPlace ? ` · место ${employee.permanentPlace.code}` : ' · без места';
+      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}${permanent}`)}</option>`;
+    })
+    .join('');
+  const hostOptions = employees
+    .map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employee.displayName)}</option>`)
+    .join('');
+  const owner = place.permanentOwner;
+  const canRelease = Boolean(owner);
+  const canManualAssign = Boolean(release && !reservation);
+
+  return `
+    <aside class="place-drawer card">
+      <div class="history-head">
+        <div>
+          <h3>${escapeHtml(place.code)} · ${escapeHtml(place.title)}</h3>
+          <p class="section-copy">${escapeHtml(place.floorLabel || 'без этажа')} · ${escapeHtml(place.placeType)} · ${place.lineGroup ? escapeHtml(`линия ${place.lineGroup.code}`) : 'без линии'}</p>
+        </div>
+        <span class="tag map-zone-status-${escapeHtml(status)}">${escapeHtml(status)}</span>
+      </div>
+
+      <div class="mini-grid">
+        <article>
+          <p class="label">Владелец</p>
+          <p>${owner ? escapeHtml(owner.displayName) : '—'}</p>
+        </article>
+        <article>
+          <p class="label">Назначение</p>
+          <p>${reservation ? escapeHtml(`${reservation.source} · ${reservation.user?.displayName || guestRequest?.guestName || 'гость'}`) : '—'}</p>
+        </article>
+        <article>
+          <p class="label">Отдача</p>
+          <p>${release ? escapeHtml(`${release.owner.displayName}${release.releaseNotes ? ` · ${release.releaseNotes}` : ''}`) : '—'}</p>
+        </article>
+        <article>
+          <p class="label">Позиция</p>
+          <p>${lineOccupancy ? escapeHtml(`${lineOccupancy.lineGroup.code} · позиция ${lineOccupancy.position}`) : '—'}</p>
+        </article>
+      </div>
+
+      <h4>Операции по месту</h4>
+      ${
+        canRelease
+          ? `<form class="action-form compact-form" method="post" action="/admin/place-releases">
+              <input type="hidden" name="parkingPlaceId" value="${escapeHtml(place.id)}" />
+              <input type="hidden" name="dateFrom" value="${escapeHtml(selectedDate)}" />
+              <input type="hidden" name="dateTo" value="${escapeHtml(selectedDate)}" />
+              <label class="wide">
+                <span>Отдать место на день</span>
+                <input name="notes" placeholder="Комментарий" />
+              </label>
+              <button type="submit">Отдать на ${escapeHtml(selectedDate)}</button>
+            </form>`
+          : '<p class="empty">У места нет постоянного владельца, отдача недоступна.</p>'
+      }
+
+      ${
+        canManualAssign
+          ? `<form class="action-form compact-form" method="post" action="/admin/reservations/manual">
+              <input type="hidden" name="reservationDate" value="${escapeHtml(selectedDate)}" />
+              <input type="hidden" name="parkingPlaceId" value="${escapeHtml(place.id)}" />
+              <label>
+                <span>Назначить сотрудника</span>
+                <select name="userId" required>
+                  <option value="">Кому назначить</option>
+                  ${employeeOptions}
+                </select>
+              </label>
+              <label>
+                <span>Причина</span>
+                <input name="reason" placeholder="Ручное назначение с карты" />
+              </label>
+              <button type="submit">Назначить</button>
+            </form>`
+          : '<p class="empty">Ручное назначение доступно только для отданного и свободного места.</p>'
+      }
+
+      ${
+        reservation
+          ? `<form class="inline-action-form" method="post" action="/admin/reservations/cancel">
+              <input type="hidden" name="reservationId" value="${escapeHtml(reservation.id)}" />
+              <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+              <button class="button-secondary" type="submit">Отменить назначение</button>
+              <span>${escapeHtml(reservation.source)}</span>
+            </form>`
+          : ''
+      }
+
+      <details>
+        <summary>Создать гостевую заявку</summary>
+        <p class="empty">Место для гостя выбирается backend по приоритету single → double → triple и резерву.</p>
+        <form class="action-form compact-form" method="post" action="/admin/guest-parking-requests">
+          <input type="hidden" name="requestDate" value="${escapeHtml(selectedDate)}" />
+          <label>
+            <span>Приглашающий</span>
+            <select name="hostUserId" required>
+              <option value="">Выберите сотрудника</option>
+              ${hostOptions}
+            </select>
+          </label>
+          <label>
+            <span>Гость</span>
+            <input name="guestName" required />
+          </label>
+          <label>
+            <span>Телефон</span>
+            <input name="guestPhone" />
+          </label>
+          <label>
+            <span>Авто</span>
+            <input name="vehiclePlateNumber" />
+          </label>
+          <button type="submit">Создать гостя</button>
+        </form>
+      </details>
+
+      <p>
+        <a href="/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeId=${encodeURIComponent(place.id)}">Открыть историю места</a>
+      </p>
+    </aside>
+  `;
+}
+
+function renderOperationalMap(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
+  const mapOptions = parkingMaps
+    .map((map) => `<option value="${escapeHtml(map.id)}"${selectedMapCode === map.id ? ' selected' : ''}>${escapeHtml(map.title)}</option>`)
+    .join('');
+  const cards = parkingMaps
+    .map(
+      (map) => `
+        <article class="map-card operational-map-card${selectedMapCode === map.id ? ' active' : ''}" data-map-id="${escapeHtml(map.id)}" data-map-title="${escapeHtml(map.title)}">
+          <div class="map-card-head">
+            <div>
+              <h3>${escapeHtml(map.title)}</h3>
+              <p>${escapeHtml(map.description)}</p>
+            </div>
+            <span class="tag">операционный слой</span>
+          </div>
+          <div class="map-workspace">
+            <svg
+              class="map-svg operational-map-svg"
+              data-map-id="${escapeHtml(map.id)}"
+              data-map-width="${escapeHtml(map.width)}"
+              data-map-height="${escapeHtml(map.height)}"
+              viewBox="0 0 ${escapeHtml(map.width)} ${escapeHtml(map.height)}"
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-label="Операционная карта парковки ${escapeHtml(map.title)}"
+            >
+              <image href="/maps/${escapeHtml(map.filename)}" x="0" y="0" width="${escapeHtml(map.width)}" height="${escapeHtml(map.height)}" preserveAspectRatio="none"></image>
+              <g class="map-zones-layer" aria-label="Места ${escapeHtml(map.title)}"></g>
+            </svg>
+          </div>
+        </article>
+      `
+    )
+    .join('');
+
+  return `
+    <section class="card">
+      <div class="map-card-head">
+        <div>
+          <h2 class="section-title">Карта дня</h2>
+          <p class="section-copy">Операционный режим: просмотр статусов и действия по выбранному месту. Разметка и изменение зон здесь отключены.</p>
+        </div>
+        <form class="map-floor-form" method="get" action="/">
+          <input type="hidden" name="view" value="day" />
+          <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+          <label>
+            <span>Этаж</span>
+            <select name="mapCode" onchange="this.form.submit()">
+              ${mapOptions}
+            </select>
+          </label>
+        </form>
+      </div>
+      <div class="map-legend">
+        <span class="tag map-zone-status-free">free</span>
+        <span class="tag map-zone-status-released">released</span>
+        <span class="tag map-zone-status-occupied">occupied</span>
+        <span class="tag map-zone-status-guest">guest</span>
+        <span class="tag map-zone-status-rotatable">rotatable</span>
+        <span class="tag map-zone-status-blocked">blocked</span>
+      </div>
+      <div class="operational-layout">
+        <div class="maps-grid operational-maps-grid">${cards}</div>
+        ${renderOperationalPlaceCard(model)}
+      </div>
+    </section>
+    <script>
+      (() => {
+        const selectedDate = ${JSON.stringify(selectedDate)};
+        const selectedMapCode = ${JSON.stringify(selectedMapCode)};
+        const selectedPlaceId = ${JSON.stringify(model.selectedPlaceId || '')};
+        const releasedPlaceIds = new Set(${JSON.stringify((model.dashboard?.data?.releasedPlaces || []).map((item) => item.parkingPlace.id))});
+        const maps = ${JSON.stringify(parkingMaps)};
+        const mapConfigs = new Map(maps.map((map) => [map.id, map]));
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+
+        function pixelBoxFromGeometry(mapConfig, geometry) {
+          const mapWidth = Number(mapConfig?.width || 1);
+          const mapHeight = Number(mapConfig?.height || 1);
+          return {
+            x: Number(((geometry.x || 0) * mapWidth).toFixed(2)),
+            y: Number(((geometry.y || 0) * mapHeight).toFixed(2)),
+            width: Number(((geometry.width || 0) * mapWidth).toFixed(2)),
+            height: Number(((geometry.height || 0) * mapHeight).toFixed(2))
+          };
+        }
+
+        function setSvgRectAttributes(rect, box) {
+          rect.setAttribute('x', box.x);
+          rect.setAttribute('y', box.y);
+          rect.setAttribute('width', box.width);
+          rect.setAttribute('height', box.height);
+        }
+
+        function effectiveStatus(zone) {
+          if (zone.reservation?.source === 'guest') {
+            return 'guest';
+          }
+          if (!zone.reservation && zone.parkingPlace?.id && releasedPlaceIds.has(zone.parkingPlace.id) && zone.status === 'free') {
+            return 'released';
+          }
+          return zone.status || 'free';
+        }
+
+        function renderZone(layer, zone, mapConfig) {
+          const geometry = zone.geometry || {};
+          const box = pixelBoxFromGeometry(mapConfig, geometry);
+          const status = effectiveStatus(zone);
+          const group = document.createElementNS(SVG_NS, 'g');
+          group.classList.add('map-zone-group', 'operational-zone-group');
+          group.dataset.placeId = zone.parkingPlace?.id || '';
+
+          const rect = document.createElementNS(SVG_NS, 'rect');
+          rect.classList.add('map-zone-rect', 'map-zone-' + status);
+          if (zone.parkingPlace?.id === selectedPlaceId) {
+            rect.classList.add('map-zone-selected');
+          }
+          setSvgRectAttributes(rect, box);
+
+          const title = document.createElementNS(SVG_NS, 'title');
+          title.textContent = [zone.parkingPlace?.code, status, zone.reservation?.userDisplayName].filter(Boolean).join(' · ');
+          group.appendChild(title);
+          group.appendChild(rect);
+
+          const label = zone.parkingPlace?.code || zone.zoneKey || '?';
+          if (box.width >= 36 && box.height >= 18) {
+            const text = document.createElementNS(SVG_NS, 'text');
+            text.classList.add('map-zone-label');
+            text.setAttribute('x', box.x + box.width / 2);
+            text.setAttribute('y', box.y + box.height / 2);
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('dominant-baseline', 'middle');
+            text.textContent = label;
+            group.appendChild(text);
+          }
+
+          group.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (!zone.parkingPlace?.id) {
+              return;
+            }
+            window.location.href = '/?view=day&date=' + encodeURIComponent(selectedDate) + '&mapCode=' + encodeURIComponent(selectedMapCode) + '&placeId=' + encodeURIComponent(zone.parkingPlace.id);
+          });
+          layer.appendChild(group);
+        }
+
+        async function loadZones(card) {
+          const mapId = card.dataset.mapId;
+          const layer = card.querySelector('.map-zones-layer');
+          const mapConfig = mapConfigs.get(mapId);
+          layer.innerHTML = '';
+
+          const response = await fetch('/admin/map-zones?mapCode=' + encodeURIComponent(mapId) + '&date=' + encodeURIComponent(selectedDate));
+          const data = await response.json();
+          if (!response.ok) {
+            return;
+          }
+
+          for (const zone of data.zones || []) {
+            renderZone(layer, zone, mapConfig);
+          }
+        }
+
+        for (const card of document.querySelectorAll('.operational-map-card')) {
+          card.hidden = card.dataset.mapId !== selectedMapCode;
+          loadZones(card);
+        }
+      })();
+    </script>
+  `;
+}
+
 function renderReleaseForm(places, model) {
   const ownedPlaces = places.filter((place) => place.permanentOwner);
   const today = todayIsoDate();
@@ -760,9 +1116,11 @@ function renderReleaseForm(places, model) {
   `;
 }
 
-function renderDateSelector(selectedDate) {
+function renderDateSelector(selectedDate, view = 'day', extraHidden = '') {
   return `
     <form class="date-form" method="get" action="/">
+      <input type="hidden" name="view" value="${escapeHtml(view)}" />
+      ${extraHidden}
       <label>
         <span>Операционный день</span>
         <input type="date" name="date" value="${escapeHtml(selectedDate)}" required />
@@ -1396,10 +1754,6 @@ function renderDayDashboard(model) {
   const dashboard = model.dashboard?.data || {};
   const releasedPlaces = dashboard.releasedPlaces || [];
   const reservations = dashboard.reservations || [];
-  const employeeRequests = model.employeeRequests?.data?.requests || [];
-  const guestRequests = model.guestRequests?.data?.requests || dashboard.guestRequests || [];
-  const guestReserve = dashboard.guestReserve || { minimum: 5, availablePlaces: 0, status: 'low' };
-  const freeCount = releasedPlaces.filter((place) => !place.isReserved).length;
 
   const releaseRows = releasedPlaces.length
     ? releasedPlaces
@@ -1441,57 +1795,6 @@ function renderDayDashboard(model) {
     : '';
 
   return `
-    <div class="mini-grid">
-      <article>
-        <p class="label">Отдано мест</p>
-        <p class="value">${escapeHtml(releasedPlaces.length)}</p>
-      </article>
-      <article>
-        <p class="label">Доступно к назначению</p>
-        <p class="value">${escapeHtml(freeCount)}</p>
-      </article>
-      <article>
-        <p class="label">Активных назначений</p>
-        <p class="value">${escapeHtml(reservations.length)}</p>
-      </article>
-      <article>
-        <p class="label">Заявок сотрудников</p>
-        <p class="value">${escapeHtml(employeeRequests.length)}</p>
-      </article>
-      <article>
-        <p class="label">Гостевых заявок</p>
-        <p class="value">${escapeHtml(guestRequests.length)}</p>
-      </article>
-      <article>
-        <p class="label">Гостевой резерв</p>
-        <p class="value ${guestReserve.status === 'ok' ? 'status-ok' : 'status-error'}">${escapeHtml(`${guestReserve.availablePlaces}/${guestReserve.minimum}`)}</p>
-      </article>
-    </div>
-
-    <h3>Ручное назначение</h3>
-    ${renderManualReservationForm(model)}
-
-    <h3>Создать сотрудника без места</h3>
-    ${renderEmployeeCreateForm(model)}
-
-    <h3>Заявки сотрудников</h3>
-    ${renderQueueProcessForm(model)}
-    ${renderEmployeeRequestForm(model)}
-    ${renderEmployeeRequestsTable(model)}
-
-    <h3>Гостевые заявки</h3>
-    ${renderGuestRequestForm(model)}
-    ${renderGuestRequestsTable(model)}
-
-    <h3>Jobs и регламент</h3>
-    ${renderJobsPanel(model)}
-
-    <h3>Multi-линии и фактические позиции</h3>
-    ${renderLineOccupancyPanel(model)}
-
-    <h3>Время выезда и конфликты</h3>
-    ${renderDepartureAndConflictsPanel(model)}
-
     <h3>Отданные места на день</h3>
     ${
       releasedPlaces.length
@@ -1528,6 +1831,102 @@ function renderDayDashboard(model) {
           </table>`
         : '<p class="empty">На выбранную дату назначений пока нет.</p>'
     }
+  `;
+}
+
+function renderDayKpis(model) {
+  const dashboard = model.dashboard?.data || {};
+  const releasedPlaces = dashboard.releasedPlaces || [];
+  const reservations = dashboard.reservations || [];
+  const employeeRequests = model.employeeRequests?.data?.requests || [];
+  const guestRequests = model.guestRequests?.data?.requests || dashboard.guestRequests || [];
+  const guestReserve = dashboard.guestReserve || { minimum: 5, availablePlaces: 0, status: 'low' };
+  const freeCount = releasedPlaces.filter((place) => !place.isReserved).length;
+
+  return `
+    <div class="mini-grid">
+      <article>
+        <p class="label">Отдано мест</p>
+        <p class="value">${escapeHtml(releasedPlaces.length)}</p>
+      </article>
+      <article>
+        <p class="label">Доступно к назначению</p>
+        <p class="value">${escapeHtml(freeCount)}</p>
+      </article>
+      <article>
+        <p class="label">Активных назначений</p>
+        <p class="value">${escapeHtml(reservations.length)}</p>
+      </article>
+      <article>
+        <p class="label">Заявок сотрудников</p>
+        <p class="value">${escapeHtml(employeeRequests.length)}</p>
+      </article>
+      <article>
+        <p class="label">Гостевых заявок</p>
+        <p class="value">${escapeHtml(guestRequests.length)}</p>
+      </article>
+      <article>
+        <p class="label">Гостевой резерв</p>
+        <p class="value ${guestReserve.status === 'ok' ? 'status-ok' : 'status-error'}">${escapeHtml(`${guestReserve.availablePlaces}/${guestReserve.minimum}`)}</p>
+      </article>
+    </div>
+  `;
+}
+
+function renderDayPage(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+
+  return `
+    <section class="card">
+      <h2 class="section-title">День</h2>
+      <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Основная работа администратора: карта, статус мест и быстрые действия по выбранному месту.</p>
+      ${renderDateSelector(selectedDate, 'day', `<input type="hidden" name="mapCode" value="${escapeHtml(model.selectedMapCode || parkingMaps[0]?.id || 'g4')}" />`)}
+      ${renderDayKpis(model)}
+    </section>
+    ${renderOperationalMap(model)}
+    <section class="card">
+      <h2 class="section-title">Таблицы дня</h2>
+      ${renderDayDashboard(model)}
+    </section>
+  `;
+}
+
+function renderRequestsTab(model) {
+  const dashboard = model.dashboard?.data || {};
+  const guestReserve = dashboard.guestReserve || { minimum: 5, availablePlaces: 0, status: 'low' };
+
+  return `
+    <section class="card">
+      <h2 class="section-title">Заявки и очередь</h2>
+      <p class="section-copy">Сотрудники без места, гостевые заявки и ручная обработка очереди на выбранную дату.</p>
+      ${renderDateSelector(model.selectedDate || todayIsoDate(), 'requests')}
+      <div class="mini-grid">
+        <article>
+          <p class="label">Заявок сотрудников</p>
+          <p class="value">${escapeHtml((model.employeeRequests?.data?.requests || []).length)}</p>
+        </article>
+        <article>
+          <p class="label">Гостевых заявок</p>
+          <p class="value">${escapeHtml((model.guestRequests?.data?.requests || []).length)}</p>
+        </article>
+        <article>
+          <p class="label">Гостевой резерв</p>
+          <p class="value ${guestReserve.status === 'ok' ? 'status-ok' : 'status-error'}">${escapeHtml(`${guestReserve.availablePlaces}/${guestReserve.minimum}`)}</p>
+        </article>
+      </div>
+
+      <h3>Создать сотрудника без места</h3>
+      ${renderEmployeeCreateForm(model)}
+
+      <h3>Заявки сотрудников</h3>
+      ${renderQueueProcessForm(model)}
+      ${renderEmployeeRequestForm(model)}
+      ${renderEmployeeRequestsTable(model)}
+
+      <h3>Гостевые заявки</h3>
+      ${renderGuestRequestForm(model)}
+      ${renderGuestRequestsTable(model)}
+    </section>
   `;
 }
 
@@ -1645,6 +2044,12 @@ function renderAuditTab(model) {
       <h2 class="section-title">Contact Access Logs</h2>
       <p class="section-copy">Все запросы контактов тех, кто стоит впереди в multi-линии.</p>
       ${renderContactAccessLogsTable(contactAccessLogs)}
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Jobs и регламент</h2>
+      <p class="section-copy">Ручной запуск ежедневных регламентных задач и последние результаты.</p>
+      ${renderJobsPanel(model)}
     </section>
   `;
 }
@@ -2186,7 +2591,7 @@ function renderPage(model) {
   const places = model.places?.data?.places || [];
   const releases = model.releases?.data?.releases || [];
   const selectedDate = model.selectedDate || todayIsoDate();
-  const activeView = model.activeView || 'dashboard';
+  const activeView = model.activeView || 'day';
   const bootstrap = model.bootstrap?.data?.bootstrapUser;
   const bootstrapState = bootstrap
     ? `${bootstrap.login} (${bootstrap.authStatus})`
@@ -2197,33 +2602,16 @@ function renderPage(model) {
 
   const mainContent =
     activeView === 'maps'
-      ? renderMapsTab(model)
+      ? renderMapEditorTab(model)
+      : activeView === 'requests'
+        ? renderRequestsTab(model)
       : activeView === 'catalog'
         ? renderCatalogTab(model)
         : activeView === 'lines'
           ? renderLinesTab(model)
           : activeView === 'audit'
             ? renderAuditTab(model)
-            : `
-            <section class="card">
-              <h2 class="section-title">Day Dashboard</h2>
-              <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Здесь видны отданные места, свободный пул и ручные назначения.</p>
-              ${renderDateSelector(selectedDate)}
-              ${renderDayDashboard(model)}
-            </section>
-
-            <section class="card">
-              <h2 class="section-title">Place Releases</h2>
-              <p class="section-copy">Первая рабочая операция: администратор может отметить, что владелец отдал закрепленное место на дату или диапазон.</p>
-              ${renderReleaseForm(places, model)}
-              ${renderReleasesTable(releases)}
-            </section>
-
-            <section class="card">
-              <h2 class="section-title">Parking Places</h2>
-              ${renderPlacesTable(places, selectedDate)}
-            </section>
-          `;
+            : renderDayPage(model);
 
   return `<!doctype html>
 <html lang="ru">
@@ -2502,6 +2890,22 @@ function renderPage(model) {
         gap: 18px;
       }
 
+      .operational-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+        gap: 18px;
+        align-items: start;
+      }
+
+      .operational-maps-grid {
+        min-width: 0;
+      }
+
+      .place-drawer {
+        position: sticky;
+        top: 16px;
+      }
+
       .map-card {
         display: grid;
         gap: 12px;
@@ -2565,6 +2969,37 @@ function renderPage(model) {
         text-transform: uppercase;
       }
 
+      .map-floor-form {
+        min-width: 180px;
+      }
+
+      .map-floor-form label {
+        display: grid;
+        gap: 7px;
+      }
+
+      .map-floor-form span {
+        color: var(--muted);
+        font-size: 13px;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .map-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 14px;
+      }
+
+      .map-upload-placeholder {
+        margin: 0 0 16px;
+        padding: 14px;
+        border: 1px dashed var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.4);
+      }
+
       .map-workspace {
         width: 100%;
         overflow: hidden;
@@ -2608,6 +3043,16 @@ function renderPage(model) {
         stroke: rgba(159, 58, 42, 0.92);
       }
 
+      .map-zone-released {
+        fill: rgba(31, 111, 120, 0.22);
+        stroke: rgba(31, 111, 120, 0.92);
+      }
+
+      .map-zone-guest {
+        fill: rgba(223, 151, 71, 0.44);
+        stroke: rgba(159, 94, 22, 0.92);
+      }
+
       .map-zone-rotatable {
         fill: rgba(170, 33, 34, 0.28);
         stroke: rgba(170, 33, 34, 0.92);
@@ -2616,6 +3061,33 @@ function renderPage(model) {
       .map-zone-blocked {
         fill: rgba(31, 35, 40, 0.26);
         stroke: rgba(31, 35, 40, 0.76);
+      }
+
+      .map-zone-selected {
+        stroke: #000;
+        stroke-width: 5;
+      }
+
+      .map-zone-status-free {
+        background: #dcefd7;
+      }
+
+      .map-zone-status-released {
+        background: #d8eeef;
+      }
+
+      .map-zone-status-occupied,
+      .map-zone-status-guest {
+        background: #ead8c4;
+      }
+
+      .map-zone-status-rotatable {
+        background: #efc5bd;
+      }
+
+      .map-zone-status-blocked {
+        color: #fff;
+        background: #4b4f52;
       }
 
       .map-zone-label {
@@ -2649,6 +3121,10 @@ function renderPage(model) {
         align-items: start;
       }
 
+      .compact-form {
+        grid-template-columns: 1fr;
+      }
+
       code {
         display: block;
         max-width: 420px;
@@ -2662,10 +3138,15 @@ function renderPage(model) {
         .action-form,
         .date-form,
         .map-toolbar,
+        .operational-layout,
         .action-form label.wide {
           display: grid;
           grid-template-columns: 1fr;
           grid-column: auto;
+        }
+
+        .place-drawer {
+          position: static;
         }
       }
     </style>
@@ -2773,10 +3254,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/') {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
-      const requestedView = url.searchParams.get('view') || 'dashboard';
-      const activeView = ['dashboard', 'catalog', 'lines', 'audit', 'maps'].includes(requestedView) ? requestedView : 'dashboard';
+      const requestedView = url.searchParams.get('view') || 'day';
+      const normalizedView = requestedView === 'dashboard' ? 'day' : requestedView;
+      const activeView = ['day', 'requests', 'catalog', 'lines', 'audit', 'maps'].includes(normalizedView) ? normalizedView : 'day';
       const placeId = url.searchParams.get('placeId');
       const employeeId = url.searchParams.get('employeeId');
+      const requestedMapCode = url.searchParams.get('mapCode') || parkingMaps[0]?.id || 'g4';
+      const selectedMapCode = parkingMaps.some((map) => map.id === requestedMapCode) ? requestedMapCode : parkingMaps[0]?.id || 'g4';
       const auditEntityType = url.searchParams.get('entityType') || '';
       const auditAction = url.searchParams.get('action') || '';
       const auditParams = new URLSearchParams({
@@ -2878,9 +3362,7 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
 
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(
-        renderPage({
+      const pageHtml = renderPage({
           health,
           db,
           bootstrap,
@@ -2901,13 +3383,16 @@ const server = http.createServer(async (req, res) => {
           employeeHistory,
           selectedDate,
           activeView,
+          selectedPlaceId: placeId,
+          selectedMapCode,
           auditFilters: {
             entityType: auditEntityType,
             action: auditAction
           },
           notice
-        })
-      );
+        });
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(pageHtml);
       return;
     } catch (error) {
       res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
@@ -3095,13 +3580,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/place-releases', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.dateFrom)}&released=1` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.dateFrom)}&released=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.dateFrom || todayIsoDate())}&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3115,13 +3600,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/place-releases/cancel', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&releaseCanceled=1` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&releaseCanceled=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3139,13 +3624,13 @@ const server = http.createServer(async (req, res) => {
     if (result.ok) {
       const warnings = result.data?.warnings || [];
       const warningText = warnings.length ? `&warning=${encodeURIComponent(warnings.map((warning) => warning.message || warning.type).join('; '))}` : '';
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate)}&reserved=1${warningText}` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.reservationDate)}&reserved=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}${warningText}` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.reservationDate || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.reservationDate || '')}&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3163,13 +3648,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/line-occupancy', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.occupancyDate)}&linePositionSet=1` });
+      res.writeHead(303, { location: `/?view=lines&date=${encodeURIComponent(payload.occupancyDate)}&linePositionSet=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.occupancyDate || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=lines&date=${encodeURIComponent(payload.occupancyDate || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3184,13 +3669,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/departure-plans', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.planDate)}&departurePlanSet=1` });
+      res.writeHead(303, { location: `/?view=lines&date=${encodeURIComponent(payload.planDate)}&departurePlanSet=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.planDate || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=lines&date=${encodeURIComponent(payload.planDate || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3204,13 +3689,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/reservations/cancel', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&reservationCanceled=1` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&reservationCanceled=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3228,13 +3713,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/employees', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(selectedDate)}&employeeCreated=1` });
+      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(selectedDate)}&employeeCreated=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3249,13 +3734,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/employee-parking-requests', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate)}&requested=1` });
+      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(payload.requestDate)}&requested=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3269,13 +3754,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/employee-parking-requests/cancel', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&requestCanceled=1` });
+      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(requestDate)}&requestCanceled=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3293,13 +3778,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/guest-parking-requests', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate)}&guestCreated=1` });
+      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(payload.requestDate)}&guestCreated=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3313,13 +3798,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/guest-parking-requests/cancel', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&guestCanceled=1` });
+      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(requestDate)}&guestCanceled=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3335,13 +3820,13 @@ const server = http.createServer(async (req, res) => {
     if (result.ok) {
       const warnings = result.data?.warnings || [];
       const warningText = warnings.length ? `&warning=${encodeURIComponent(warnings.map((warning) => warning.message || warning.type).join('; '))}` : '';
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&guestAssigned=1${warningText}` });
+      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(requestDate)}&guestAssigned=1${warningText}` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(requestDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3355,14 +3840,14 @@ const server = http.createServer(async (req, res) => {
       const assigned = result.data?.assignedCount || 0;
       const skipped = result.data?.skippedCount || 0;
       res.writeHead(303, {
-        location: `/?date=${encodeURIComponent(date)}&queueProcessed=1&assigned=${encodeURIComponent(assigned)}&skipped=${encodeURIComponent(skipped)}`
+        location: `/?view=requests&date=${encodeURIComponent(date)}&queueProcessed=1&assigned=${encodeURIComponent(assigned)}&skipped=${encodeURIComponent(skipped)}`
       });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3373,13 +3858,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/jobs/process-queue', { date });
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&jobDone=process_queue` });
+      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=process_queue` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3390,13 +3875,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/jobs/freeze-next-day', { date });
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&jobDone=freeze_next_day` });
+      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=freeze_next_day` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3407,13 +3892,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/jobs/lock-departure-plans', { date });
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&jobDone=lock_departure_plans` });
+      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=lock_departure_plans` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
