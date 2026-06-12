@@ -1192,6 +1192,112 @@ async function handleAdminParkingPlaceDisable(req) {
   };
 }
 
+async function handleAdminPermanentAssignmentsList(searchParams) {
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
+  const status = searchParams.get('status') || 'all';
+
+  if (!isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  if (!['all', 'active', 'future', 'ended'].includes(status)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'status must be one of all, active, future, ended'
+      }
+    };
+  }
+
+  const rows = await queryMany(
+    `
+      with assignment_statuses as (
+        select
+          pa.id,
+          pa.user_id,
+          pa.parking_place_id,
+          lower(pa.valid_during)::text as date_from,
+          (upper(pa.valid_during) - interval '1 day')::date::text as date_to,
+          pa.notes,
+          pa.created_at,
+          pa.updated_at,
+          u.display_name as user_display_name,
+          u.department as user_department,
+          u.email as user_email,
+          u.phone as user_phone,
+          pp.code as parking_place_code,
+          pp.title as parking_place_title,
+          pp.floor_label as parking_place_floor_label,
+          pp.place_type as parking_place_type,
+          case
+            when pa.valid_during @> $1::date then 'active'
+            when lower(pa.valid_during) > $1::date then 'future'
+            else 'ended'
+          end as assignment_status
+        from permanent_assignments pa
+        join users u on u.id = pa.user_id
+        join parking_places pp on pp.id = pa.parking_place_id
+        where u.deleted_at is null
+          and pp.deleted_at is null
+      )
+      select *
+      from assignment_statuses
+      where ($2::text = 'all' or assignment_status = $2::text)
+      order by
+        case assignment_status
+          when 'active' then 1
+          when 'future' then 2
+          else 3
+        end,
+        date_from desc,
+        parking_place_code
+    `,
+    [date, status]
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date,
+      filterStatus: status,
+      permanentAssignments: rows.map((assignment) => ({
+        id: assignment.id,
+        dateFrom: assignment.date_from,
+        dateTo: assignment.date_to,
+        status: assignment.assignment_status,
+        notes: assignment.notes,
+        createdAt: assignment.created_at,
+        updatedAt: assignment.updated_at,
+        user: {
+          id: assignment.user_id,
+          displayName: assignment.user_display_name,
+          department: assignment.user_department,
+          email: assignment.user_email,
+          phone: assignment.user_phone
+        },
+        parkingPlace: {
+          id: assignment.parking_place_id,
+          code: assignment.parking_place_code,
+          title: assignment.parking_place_title,
+          floorLabel: assignment.parking_place_floor_label,
+          placeType: assignment.parking_place_type
+        }
+      }))
+    }
+  };
+}
+
 async function handleAdminPermanentAssignmentCreate(req) {
   let body;
 
@@ -5325,6 +5431,25 @@ async function handleAdminJobRunsList(searchParams) {
     `,
     [jobName || null, targetDate || null, limit]
   );
+  const latestSuccessfulRuns = await queryMany(
+    `
+      select distinct on (job_name)
+        id,
+        job_name,
+        target_date,
+        status,
+        started_at,
+        finished_at,
+        actor_service,
+        summary,
+        error
+      from job_runs
+      where status = 'success'
+        and ($1::text is null or job_name = $1)
+      order by job_name, finished_at desc nulls last, started_at desc
+    `,
+    [jobName || null]
+  );
 
   return {
     statusCode: 200,
@@ -5332,7 +5457,8 @@ async function handleAdminJobRunsList(searchParams) {
       status: 'ok',
       service: 'api',
       timezone: appTimezone,
-      runs: runs.map(mapJobRun)
+      runs: runs.map(mapJobRun),
+      latestSuccessfulRuns: latestSuccessfulRuns.map(mapJobRun)
     }
   };
 }
@@ -6275,6 +6401,7 @@ async function handleAdminAuditLogsList(searchParams) {
   const entityType = searchParams.get('entityType');
   const entityId = searchParams.get('entityId');
   const action = searchParams.get('action');
+  const actor = searchParams.get('actor');
   const limit = parsePositiveLimit(searchParams, 100, 300);
   const where = [];
   const params = [];
@@ -6307,6 +6434,16 @@ async function handleAdminAuditLogsList(searchParams) {
   if (action) {
     params.push(`%${action}%`);
     where.push(`al.action ilike $${params.length}`);
+  }
+
+  if (actor) {
+    params.push(`%${actor}%`);
+    where.push(`(
+      al.actor_service ilike $${params.length}
+      or actor_user.display_name ilike $${params.length}
+      or actor_auth.login ilike $${params.length}
+      or actor_auth.display_name ilike $${params.length}
+    )`);
   }
 
   params.push(limit);
@@ -7106,6 +7243,7 @@ const routeApiRequest = createApiRouter({
     handleAdminParkingPlaceUpdate,
     handleAdminPermanentAssignmentCreate,
     handleAdminPermanentAssignmentEnd,
+    handleAdminPermanentAssignmentsList,
     handleAdminPlaceHistory,
     handleAdminPlaceReleaseCancel,
     handleAdminPlaceReleaseCreate,

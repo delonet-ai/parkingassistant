@@ -732,6 +732,7 @@ function renderOperationalPlaceCard(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const selected = getPlaceOperationalState(model, model.selectedPlaceId);
   const employees = model.employees?.data?.employees || [];
+  const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
 
   if (!selected) {
     return `
@@ -793,6 +794,7 @@ function renderOperationalPlaceCard(model) {
               <input type="hidden" name="parkingPlaceId" value="${escapeHtml(place.id)}" />
               <input type="hidden" name="dateFrom" value="${escapeHtml(selectedDate)}" />
               <input type="hidden" name="dateTo" value="${escapeHtml(selectedDate)}" />
+              <input type="hidden" name="mapCode" value="${escapeHtml(selectedMapCode)}" />
               <label class="wide">
                 <span>Отдать место на день</span>
                 <input name="notes" placeholder="Комментарий" />
@@ -807,6 +809,7 @@ function renderOperationalPlaceCard(model) {
           ? `<form class="action-form compact-form" method="post" action="/admin/reservations/manual">
               <input type="hidden" name="reservationDate" value="${escapeHtml(selectedDate)}" />
               <input type="hidden" name="parkingPlaceId" value="${escapeHtml(place.id)}" />
+              <input type="hidden" name="mapCode" value="${escapeHtml(selectedMapCode)}" />
               <label>
                 <span>Назначить сотрудника</span>
                 <select name="userId" required>
@@ -828,6 +831,8 @@ function renderOperationalPlaceCard(model) {
           ? `<form class="inline-action-form" method="post" action="/admin/reservations/cancel">
               <input type="hidden" name="reservationId" value="${escapeHtml(reservation.id)}" />
               <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+              <input type="hidden" name="placeId" value="${escapeHtml(place.id)}" />
+              <input type="hidden" name="mapCode" value="${escapeHtml(selectedMapCode)}" />
               <button class="button-secondary" type="submit">Отменить назначение</button>
               <span>${escapeHtml(reservation.source)}</span>
             </form>`
@@ -839,6 +844,9 @@ function renderOperationalPlaceCard(model) {
         <p class="empty">Место для гостя выбирается backend по приоритету single → double → triple и резерву.</p>
         <form class="action-form compact-form" method="post" action="/admin/guest-parking-requests">
           <input type="hidden" name="requestDate" value="${escapeHtml(selectedDate)}" />
+          <input type="hidden" name="returnView" value="day" />
+          <input type="hidden" name="placeId" value="${escapeHtml(place.id)}" />
+          <input type="hidden" name="mapCode" value="${escapeHtml(selectedMapCode)}" />
           <label>
             <span>Приглашающий</span>
             <select name="hostUserId" required>
@@ -872,8 +880,29 @@ function renderOperationalPlaceCard(model) {
 function renderOperationalMap(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
+  const selectedStatusFilter = model.mapStatusFilter || '';
+  const selectedTypeFilter = model.mapTypeFilter || '';
   const mapOptions = parkingMaps
     .map((map) => `<option value="${escapeHtml(map.id)}"${selectedMapCode === map.id ? ' selected' : ''}>${escapeHtml(map.title)}</option>`)
+    .join('');
+  const statusOptions = [
+    ['', 'Все статусы'],
+    ['free', 'free'],
+    ['released', 'released'],
+    ['occupied', 'occupied'],
+    ['guest', 'guest'],
+    ['rotatable', 'rotatable'],
+    ['blocked', 'blocked']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${selectedStatusFilter === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+  const typeOptions = [
+    ['', 'Все типы'],
+    ['single', 'single'],
+    ['double', 'double'],
+    ['triple', 'triple']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${selectedTypeFilter === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
     .join('');
   const cards = parkingMaps
     .map(
@@ -916,10 +945,23 @@ function renderOperationalMap(model) {
         <form class="map-floor-form" method="get" action="/">
           <input type="hidden" name="view" value="day" />
           <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+          ${model.selectedPlaceId ? `<input type="hidden" name="placeId" value="${escapeHtml(model.selectedPlaceId)}" />` : ''}
           <label>
             <span>Этаж</span>
             <select name="mapCode" onchange="this.form.submit()">
               ${mapOptions}
+            </select>
+          </label>
+          <label>
+            <span>Статус</span>
+            <select name="status" onchange="this.form.submit()">
+              ${statusOptions}
+            </select>
+          </label>
+          <label>
+            <span>Тип</span>
+            <select name="type" onchange="this.form.submit()">
+              ${typeOptions}
             </select>
           </label>
         </form>
@@ -942,6 +984,8 @@ function renderOperationalMap(model) {
         const selectedDate = ${JSON.stringify(selectedDate)};
         const selectedMapCode = ${JSON.stringify(selectedMapCode)};
         const selectedPlaceId = ${JSON.stringify(model.selectedPlaceId || '')};
+        const selectedStatusFilter = ${JSON.stringify(selectedStatusFilter)};
+        const selectedTypeFilter = ${JSON.stringify(selectedTypeFilter)};
         const releasedPlaceIds = new Set(${JSON.stringify((model.dashboard?.data?.releasedPlaces || []).map((item) => item.parkingPlace.id))});
         const maps = ${JSON.stringify(parkingMaps)};
         const mapConfigs = new Map(maps.map((map) => [map.id, map]));
@@ -979,6 +1023,13 @@ function renderOperationalMap(model) {
           const geometry = zone.geometry || {};
           const box = pixelBoxFromGeometry(mapConfig, geometry);
           const status = effectiveStatus(zone);
+          const placeType = zone.parkingPlace?.placeType || '';
+          if (selectedStatusFilter && status !== selectedStatusFilter) {
+            return;
+          }
+          if (selectedTypeFilter && placeType !== selectedTypeFilter) {
+            return;
+          }
           const group = document.createElementNS(SVG_NS, 'g');
           group.classList.add('map-zone-group', 'operational-zone-group');
           group.dataset.placeId = zone.parkingPlace?.id || '';
@@ -1501,6 +1552,13 @@ function renderEmployeeRequestsTable(model) {
       const queuePosition = request.queueEntry?.position ? `#${request.queueEntry.position}` : '—';
       const queueStatus = request.queueEntry?.status || '—';
       const assignedPlace = request.assignedReservation?.parkingPlaceCode || '—';
+      const statusReason = request.assignedReservation
+        ? `Назначено место ${assignedPlace}`
+        : request.queueEntry
+          ? `Очередь ${queueStatus}${request.queueEntry.processedAt ? ` · обработано ${formatDateTime(request.queueEntry.processedAt)}` : ''}`
+          : request.status === 'canceled'
+            ? 'Заявка отменена'
+            : 'Ожидает обработки очереди';
       const cancelForm = canCancel
         ? `
           <form method="post" action="/admin/employee-parking-requests/cancel">
@@ -1519,6 +1577,7 @@ function renderEmployeeRequestsTable(model) {
           <td><span class="tag">${escapeHtml(request.status)}</span></td>
           <td>${escapeHtml(queueStatus)}</td>
           <td>${escapeHtml(assignedPlace)}</td>
+          <td>${escapeHtml(statusReason)}</td>
           <td>${request.notes ? escapeHtml(request.notes) : '—'}</td>
           <td>${cancelForm}</td>
         </tr>
@@ -1536,8 +1595,63 @@ function renderEmployeeRequestsTable(model) {
           <th>Заявка</th>
           <th>Статус очереди</th>
           <th>Место</th>
+          <th>Причина статуса</th>
           <th>Комментарий</th>
           <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function renderQueueTable(model) {
+  const requests = model.employeeRequests?.data?.requests || [];
+  const queueEntries = requests
+    .filter((request) => request.queueEntry)
+    .sort((left, right) => Number(left.queueEntry?.position || 0) - Number(right.queueEntry?.position || 0));
+
+  if (!queueEntries.length) {
+    return '<p class="empty">Очередь на выбранную дату пуста.</p>';
+  }
+
+  const rows = queueEntries
+    .map((request) => {
+      const queue = request.queueEntry;
+      const assignedPlace = request.assignedReservation?.parkingPlaceCode;
+      const reason = assignedPlace
+        ? `Назначено место ${assignedPlace}`
+        : queue.status === 'waiting'
+          ? 'Ожидает запуска обработки'
+          : queue.status === 'skipped'
+            ? 'Пропущено: место не найдено или сработал гостевой резерв'
+            : queue.status === 'canceled'
+              ? 'Заявка отменена'
+              : `Статус очереди: ${queue.status}`;
+
+      return `
+        <tr>
+          <td>#${escapeHtml(queue.position)}</td>
+          <td>${escapeHtml(request.user.displayName)}</td>
+          <td>${request.user.department ? escapeHtml(request.user.department) : '—'}</td>
+          <td><span class="tag">${escapeHtml(queue.status)}</span></td>
+          <td>${assignedPlace ? escapeHtml(assignedPlace) : '—'}</td>
+          <td>${escapeHtml(reason)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Позиция</th>
+          <th>Сотрудник</th>
+          <th>Дирекция</th>
+          <th>Статус</th>
+          <th>Место</th>
+          <th>Причина статуса</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -1609,6 +1723,13 @@ function renderGuestRequestsTable(model) {
       const canCancel = request.status !== 'canceled';
       const canAssign = !request.assignedReservation && ['active', 'queued'].includes(request.status);
       const place = request.assignedReservation?.parkingPlace;
+      const statusReason = place
+        ? `Назначено место ${place.code}`
+        : request.status === 'canceled'
+          ? 'Гостевая заявка отменена'
+          : request.status === 'active'
+            ? 'Ожидает назначения места'
+            : `Статус: ${request.status}`;
 
       return `
         <tr>
@@ -1618,6 +1739,7 @@ function renderGuestRequestsTable(model) {
           <td>${escapeHtml(request.host.displayName)}</td>
           <td><span class="tag ${request.status === 'canceled' ? 'reserved' : 'free'}">${escapeHtml(request.status)}</span></td>
           <td>${place ? escapeHtml(`${place.code} · ${place.placeType}`) : '—'}</td>
+          <td>${escapeHtml(statusReason)}</td>
           <td>${request.notes ? escapeHtml(request.notes) : '—'}</td>
           <td>
             ${
@@ -1654,6 +1776,7 @@ function renderGuestRequestsTable(model) {
           <th>Приглашающий</th>
           <th>Статус</th>
           <th>Место</th>
+          <th>Причина статуса</th>
           <th>Комментарий</th>
           <th>Действие</th>
         </tr>
@@ -1666,6 +1789,19 @@ function renderGuestRequestsTable(model) {
 function renderJobsPanel(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const runs = model.jobRuns?.data?.runs || [];
+  const latestSuccessfulRuns = model.jobRuns?.data?.latestSuccessfulRuns || [];
+  const latestRows = latestSuccessfulRuns
+    .map(
+      (run) => `
+        <tr>
+          <td>${escapeHtml(run.jobName)}</td>
+          <td>${run.targetDate ? escapeHtml(formatDate(run.targetDate)) : '—'}</td>
+          <td>${run.finishedAt ? escapeHtml(new Date(run.finishedAt).toLocaleString('ru-RU')) : '—'}</td>
+          <td>${renderJsonPreview(run.summary)}</td>
+        </tr>
+      `
+    )
+    .join('');
   const rows = runs
     .map(
       (run) => `
@@ -1699,6 +1835,23 @@ function renderJobsPanel(model) {
         <span>Закрыть окно редактирования выездов на дату</span>
       </form>
     </div>
+    <h4>Последний успешный запуск</h4>
+    ${
+      latestRows
+        ? `<table>
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Дата</th>
+                <th>Успешно завершен</th>
+                <th>Summary</th>
+              </tr>
+            </thead>
+            <tbody>${latestRows}</tbody>
+          </table>`
+        : '<p class="empty">Успешных запусков jobs пока нет.</p>'
+    }
+    <h4>Последние запуски</h4>
     ${
       rows
         ? `<table>
@@ -1844,12 +1997,18 @@ function renderDayKpis(model) {
 
 function renderDayPage(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
+  const daySelectorHidden = [
+    `<input type="hidden" name="mapCode" value="${escapeHtml(model.selectedMapCode || parkingMaps[0]?.id || 'g4')}" />`,
+    model.selectedPlaceId ? `<input type="hidden" name="placeId" value="${escapeHtml(model.selectedPlaceId)}" />` : '',
+    model.mapStatusFilter ? `<input type="hidden" name="status" value="${escapeHtml(model.mapStatusFilter)}" />` : '',
+    model.mapTypeFilter ? `<input type="hidden" name="type" value="${escapeHtml(model.mapTypeFilter)}" />` : ''
+  ].join('');
 
   return `
     <section class="card">
       <h2 class="section-title">День</h2>
       <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Основная работа администратора: карта, статус мест и быстрые действия по выбранному месту.</p>
-      ${renderDateSelector(selectedDate, 'day', `<input type="hidden" name="mapCode" value="${escapeHtml(model.selectedMapCode || parkingMaps[0]?.id || 'g4')}" />`)}
+      ${renderDateSelector(selectedDate, 'day', daySelectorHidden)}
       ${renderDayKpis(model)}
     </section>
     ${renderOperationalMap(model)}
@@ -1891,6 +2050,9 @@ function renderRequestsTab(model) {
       ${renderQueueProcessForm(model)}
       ${renderEmployeeRequestForm(model)}
       ${renderEmployeeRequestsTable(model)}
+
+      <h3>Очередь</h3>
+      ${renderQueueTable(model)}
 
       <h3>Гостевые заявки</h3>
       ${renderGuestRequestForm(model)}
@@ -2003,6 +2165,10 @@ function renderAuditTab(model) {
         <label>
           <span>Действие</span>
           <input name="action" value="${escapeHtml(model.auditFilters?.action || '')}" placeholder="created, canceled..." />
+        </label>
+        <label>
+          <span>Актор</span>
+          <input name="actor" value="${escapeHtml(model.auditFilters?.actor || '')}" placeholder="admin-web, login, ФИО..." />
         </label>
         <button type="submit">Показать</button>
       </form>
@@ -2488,6 +2654,85 @@ function renderPermanentAssignmentForm(model) {
   `;
 }
 
+function renderPermanentAssignmentsTable(model) {
+  const selectedDate = model.selectedDate || todayIsoDate();
+  const filterStatus = model.assignmentStatusFilter || 'all';
+  const assignments = model.permanentAssignments?.data?.permanentAssignments || [];
+  const statusOptions = [
+    ['all', 'Все'],
+    ['active', 'Активные'],
+    ['future', 'Будущие'],
+    ['ended', 'Завершенные']
+  ]
+    .map(([value, label]) => `<option value="${escapeHtml(value)}"${filterStatus === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
+    .join('');
+
+  const filterForm = `
+    <form class="date-form" method="get" action="/">
+      <input type="hidden" name="view" value="catalog" />
+      <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+      <label>
+        <span>Статус закрепления</span>
+        <select name="assignmentStatus" onchange="this.form.submit()">
+          ${statusOptions}
+        </select>
+      </label>
+      <button type="submit">Показать</button>
+    </form>
+  `;
+
+  if (!assignments.length) {
+    return `${filterForm}<p class="empty">Постоянных закреплений по выбранному фильтру нет.</p>`;
+  }
+
+  const rows = assignments
+    .map((assignment) => {
+      const canEnd = assignment.status !== 'ended';
+      const endForm = canEnd
+        ? `<form method="post" action="/admin/permanent-assignments/end">
+            <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
+            <input type="hidden" name="assignmentStatus" value="${escapeHtml(filterStatus)}" />
+            <input type="hidden" name="assignmentId" value="${escapeHtml(assignment.id)}" />
+            <input type="date" name="dateTo" value="${escapeHtml(selectedDate)}" required />
+            <button class="button-secondary" type="submit">Завершить</button>
+          </form>`
+        : '—';
+
+      return `
+        <tr>
+          <td><span class="tag ${assignment.status === 'active' ? 'free' : assignment.status === 'ended' ? 'reserved' : ''}">${escapeHtml(assignment.status)}</span></td>
+          <td>${escapeHtml(assignment.parkingPlace.code)}</td>
+          <td>${escapeHtml(assignment.parkingPlace.title)}</td>
+          <td>${escapeHtml(assignment.user.displayName)}</td>
+          <td>${assignment.user.department ? escapeHtml(assignment.user.department) : '—'}</td>
+          <td>${escapeHtml(`${assignment.dateFrom} — ${assignment.dateTo || '∞'}`)}</td>
+          <td>${assignment.notes ? escapeHtml(assignment.notes) : '—'}</td>
+          <td>${endForm}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  return `
+    ${filterForm}
+    <table>
+      <thead>
+        <tr>
+          <th>Статус</th>
+          <th>Место</th>
+          <th>Название</th>
+          <th>Сотрудник</th>
+          <th>Дирекция</th>
+          <th>Период</th>
+          <th>Комментарий</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
 function renderCatalogTab(model) {
   const places = model.places?.data?.places || [];
 
@@ -2500,6 +2745,8 @@ function renderCatalogTab(model) {
     <section class="card">
       <h2 class="section-title">Постоянное закрепление</h2>
       ${renderPermanentAssignmentForm(model)}
+      <h3>Текущие и будущие закрепления</h3>
+      ${renderPermanentAssignmentsTable(model)}
     </section>
 
     <section class="card">
@@ -2937,7 +3184,10 @@ function renderPage(model) {
       }
 
       .map-floor-form {
-        min-width: 180px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(120px, 1fr));
+        gap: 10px;
+        min-width: min(100%, 440px);
       }
 
       .map-floor-form label {
@@ -3105,6 +3355,7 @@ function renderPage(model) {
         .action-form,
         .date-form,
         .map-toolbar,
+        .map-floor-form,
         .operational-layout,
         .action-form label.wide {
           display: grid;
@@ -3228,8 +3479,15 @@ const server = http.createServer(async (req, res) => {
       const employeeId = url.searchParams.get('employeeId');
       const requestedMapCode = url.searchParams.get('mapCode') || parkingMaps[0]?.id || 'g4';
       const selectedMapCode = parkingMaps.some((map) => map.id === requestedMapCode) ? requestedMapCode : parkingMaps[0]?.id || 'g4';
+      const requestedStatusFilter = url.searchParams.get('status') || '';
+      const mapStatusFilter = ['free', 'released', 'occupied', 'guest', 'rotatable', 'blocked'].includes(requestedStatusFilter) ? requestedStatusFilter : '';
+      const requestedTypeFilter = url.searchParams.get('type') || '';
+      const mapTypeFilter = ['single', 'double', 'triple'].includes(requestedTypeFilter) ? requestedTypeFilter : '';
+      const requestedAssignmentStatus = url.searchParams.get('assignmentStatus') || 'all';
+      const assignmentStatusFilter = ['all', 'active', 'future', 'ended'].includes(requestedAssignmentStatus) ? requestedAssignmentStatus : 'all';
       const auditEntityType = url.searchParams.get('entityType') || '';
       const auditAction = url.searchParams.get('action') || '';
+      const auditActor = url.searchParams.get('actor') || '';
       const auditParams = new URLSearchParams({
         date: selectedDate,
         limit: '120'
@@ -3240,6 +3498,9 @@ const server = http.createServer(async (req, res) => {
       if (auditAction) {
         auditParams.set('action', auditAction);
       }
+      if (auditActor) {
+        auditParams.set('actor', auditActor);
+      }
       const [
         health,
         db,
@@ -3247,6 +3508,7 @@ const server = http.createServer(async (req, res) => {
         places,
         releases,
         employees,
+        permanentAssignments,
         dashboard,
         employeeRequests,
         guestRequests,
@@ -3266,6 +3528,7 @@ const server = http.createServer(async (req, res) => {
         fetchJson('/admin/places'),
         fetchJson('/admin/place-releases'),
         fetchJson(`/admin/employees?date=${encodeURIComponent(selectedDate)}`),
+        fetchJson(`/admin/permanent-assignments?date=${encodeURIComponent(selectedDate)}&status=${encodeURIComponent(assignmentStatusFilter)}`),
         fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/employee-parking-requests?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/guest-parking-requests?date=${encodeURIComponent(selectedDate)}`),
@@ -3293,7 +3556,7 @@ const server = http.createServer(async (req, res) => {
           : url.searchParams.get('requestCanceled') === '1'
             ? { type: 'ok', text: 'Заявка сотрудника отменена.' }
           : url.searchParams.get('guestCreated') === '1'
-            ? { type: 'ok', text: 'Гостевая заявка создана, место назначено.' }
+            ? { type: 'ok', text: `Гостевая заявка создана, место назначено.${url.searchParams.get('warning') ? ` Предупреждение: ${url.searchParams.get('warning')}` : ''}` }
           : url.searchParams.get('guestCanceled') === '1'
             ? { type: 'ok', text: 'Гостевая заявка отменена.' }
           : url.searchParams.get('guestAssigned') === '1'
@@ -3336,6 +3599,7 @@ const server = http.createServer(async (req, res) => {
           places,
           releases,
           employees,
+          permanentAssignments,
           dashboard,
           employeeRequests,
           guestRequests,
@@ -3352,9 +3616,13 @@ const server = http.createServer(async (req, res) => {
           activeView,
           selectedPlaceId: placeId,
           selectedMapCode,
+          mapStatusFilter,
+          mapTypeFilter,
+          assignmentStatusFilter,
           auditFilters: {
             entityType: auditEntityType,
-            action: auditAction
+            action: auditAction,
+            actor: auditActor
           },
           notice
         });
@@ -3518,6 +3786,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments/end') {
     const form = await readFormBody(req);
     const selectedDate = form.get('selectedDate') || todayIsoDate();
+    const assignmentStatus = form.get('assignmentStatus') || 'all';
     const payload = {
       assignmentId: form.get('assignmentId'),
       dateTo: form.get('dateTo')
@@ -3525,19 +3794,20 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/permanent-assignments/end', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&assignmentEnded=1` });
+      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&assignmentStatus=${encodeURIComponent(assignmentStatus)}&assignmentEnded=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&assignmentStatus=${encodeURIComponent(assignmentStatus)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
     const form = await readFormBody(req);
+    const mapCode = form.get('mapCode') || '';
     const payload = {
       parkingPlaceId: form.get('parkingPlaceId'),
       dateFrom: form.get('dateFrom'),
@@ -3547,13 +3817,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/place-releases', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.dateFrom)}&released=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.dateFrom)}&mapCode=${encodeURIComponent(mapCode)}&released=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.dateFrom || todayIsoDate())}&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.dateFrom || todayIsoDate())}&mapCode=${encodeURIComponent(mapCode)}&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3580,6 +3850,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
     const form = await readFormBody(req);
+    const mapCode = form.get('mapCode') || '';
     const payload = {
       userId: form.get('userId'),
       parkingPlaceId: form.get('parkingPlaceId'),
@@ -3591,13 +3862,13 @@ const server = http.createServer(async (req, res) => {
     if (result.ok) {
       const warnings = result.data?.warnings || [];
       const warningText = warnings.length ? `&warning=${encodeURIComponent(warnings.map((warning) => warning.message || warning.type).join('; '))}` : '';
-      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.reservationDate)}&reserved=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}${warningText}` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.reservationDate)}&mapCode=${encodeURIComponent(mapCode)}&reserved=1&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}${warningText}` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.reservationDate || '')}&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(payload.reservationDate || '')}&mapCode=${encodeURIComponent(mapCode)}&placeId=${encodeURIComponent(payload.parkingPlaceId || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3649,6 +3920,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/admin/reservations/cancel') {
     const form = await readFormBody(req);
+    const placeId = form.get('placeId') || '';
+    const mapCode = form.get('mapCode') || '';
     const payload = {
       reservationId: form.get('reservationId')
     };
@@ -3656,13 +3929,13 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/reservations/cancel', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&reservationCanceled=1` });
+      res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&mapCode=${encodeURIComponent(mapCode)}&placeId=${encodeURIComponent(placeId)}&reservationCanceled=1` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=day&date=${encodeURIComponent(date)}&mapCode=${encodeURIComponent(mapCode)}&placeId=${encodeURIComponent(placeId)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
@@ -3734,6 +4007,9 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests') {
     const form = await readFormBody(req);
+    const returnView = form.get('returnView') === 'day' ? 'day' : 'requests';
+    const returnPlaceId = form.get('placeId') || '';
+    const returnMapCode = form.get('mapCode') || '';
     const payload = {
       hostUserId: form.get('hostUserId'),
       requestDate: form.get('requestDate'),
@@ -3745,13 +4021,23 @@ const server = http.createServer(async (req, res) => {
     const result = await postJson('/admin/guest-parking-requests', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(payload.requestDate)}&guestCreated=1` });
+      const warnings = result.data?.warnings || [];
+      const warningText = warnings.length ? `&warning=${encodeURIComponent(warnings.map((warning) => warning.message || warning.type).join('; '))}` : '';
+      const location =
+        returnView === 'day'
+          ? `/?view=day&date=${encodeURIComponent(payload.requestDate)}&mapCode=${encodeURIComponent(returnMapCode)}&placeId=${encodeURIComponent(returnPlaceId)}&guestCreated=1${warningText}`
+          : `/?view=requests&date=${encodeURIComponent(payload.requestDate)}&guestCreated=1${warningText}`;
+      res.writeHead(303, { location });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=requests&date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}` });
+    const location =
+      returnView === 'day'
+        ? `/?view=day&date=${encodeURIComponent(payload.requestDate || '')}&mapCode=${encodeURIComponent(returnMapCode)}&placeId=${encodeURIComponent(returnPlaceId)}&error=${encodeURIComponent(message)}`
+        : `/?view=requests&date=${encodeURIComponent(payload.requestDate || '')}&error=${encodeURIComponent(message)}`;
+    res.writeHead(303, { location });
     res.end();
     return;
   }

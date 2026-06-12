@@ -134,6 +134,11 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/admin/permanent-assignments') {
+      await dispatchSafely(() => handlers.handleAdminPermanentAssignmentsList(url.searchParams), res);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments') {
       await dispatch(() => handlers.handleAdminPermanentAssignmentCreate(req), res);
       return;
