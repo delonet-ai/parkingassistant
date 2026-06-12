@@ -12,6 +12,7 @@ FROM base AS runtime
 
 COPY package.json /app/package.json
 COPY apps /app/apps
+COPY packages /app/packages
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["sh", "-lc", "echo 'Replace admin-web runtime command in docker-compose or Dockerfile' && sleep infinity"]
