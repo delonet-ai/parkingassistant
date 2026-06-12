@@ -877,6 +877,25 @@ function renderOperationalPlaceCard(model) {
   `;
 }
 
+async function buildOperationalPlaceCardModel({ selectedDate, selectedPlaceId, selectedMapCode }) {
+  const [places, employees, dashboard, lineOccupancy] = await Promise.all([
+    fetchJson('/admin/places'),
+    fetchJson(`/admin/employees?date=${encodeURIComponent(selectedDate)}`),
+    fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
+    fetchJson(`/admin/line-occupancy?date=${encodeURIComponent(selectedDate)}`)
+  ]);
+
+  return {
+    places,
+    employees,
+    dashboard,
+    lineOccupancy,
+    selectedDate,
+    selectedPlaceId,
+    selectedMapCode
+  };
+}
+
 function renderOperationalMap(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
@@ -983,7 +1002,7 @@ function renderOperationalMap(model) {
       (() => {
         const selectedDate = ${JSON.stringify(selectedDate)};
         const selectedMapCode = ${JSON.stringify(selectedMapCode)};
-        const selectedPlaceId = ${JSON.stringify(model.selectedPlaceId || '')};
+        let currentSelectedPlaceId = ${JSON.stringify(model.selectedPlaceId || '')};
         const selectedStatusFilter = ${JSON.stringify(selectedStatusFilter)};
         const selectedTypeFilter = ${JSON.stringify(selectedTypeFilter)};
         const releasedPlaceIds = new Set(${JSON.stringify((model.dashboard?.data?.releasedPlaces || []).map((item) => item.parkingPlace.id))});
@@ -1036,7 +1055,7 @@ function renderOperationalMap(model) {
 
           const rect = document.createElementNS(SVG_NS, 'rect');
           rect.classList.add('map-zone-rect', 'map-zone-' + status);
-          if (zone.parkingPlace?.id === selectedPlaceId) {
+          if (zone.parkingPlace?.id === currentSelectedPlaceId) {
             rect.classList.add('map-zone-selected');
           }
           setSvgRectAttributes(rect, box);
@@ -1063,9 +1082,71 @@ function renderOperationalMap(model) {
             if (!zone.parkingPlace?.id) {
               return;
             }
-            window.location.href = '/?view=day&date=' + encodeURIComponent(selectedDate) + '&mapCode=' + encodeURIComponent(selectedMapCode) + '&placeId=' + encodeURIComponent(zone.parkingPlace.id);
+            loadOperationalPlaceCard(zone.parkingPlace.id, true);
           });
           layer.appendChild(group);
+        }
+
+        function dayUrl(placeId) {
+          const params = new URLSearchParams({
+            view: 'day',
+            date: selectedDate,
+            mapCode: selectedMapCode
+          });
+
+          if (placeId) {
+            params.set('placeId', placeId);
+          }
+          if (selectedStatusFilter) {
+            params.set('status', selectedStatusFilter);
+          }
+          if (selectedTypeFilter) {
+            params.set('type', selectedTypeFilter);
+          }
+
+          return '/?' + params.toString();
+        }
+
+        function setSelectedZone(placeId) {
+          currentSelectedPlaceId = placeId || '';
+          for (const rect of document.querySelectorAll('.operational-zone-group .map-zone-rect')) {
+            const group = rect.closest('.operational-zone-group');
+            rect.classList.toggle('map-zone-selected', Boolean(group && group.dataset.placeId === currentSelectedPlaceId));
+          }
+        }
+
+        function replacePlaceCard(html) {
+          const currentCard = document.querySelector('.place-drawer');
+          if (currentCard) {
+            currentCard.outerHTML = html;
+          }
+        }
+
+        async function loadOperationalPlaceCard(placeId, shouldPushState) {
+          setSelectedZone(placeId);
+          const params = new URLSearchParams({
+            date: selectedDate,
+            mapCode: selectedMapCode
+          });
+
+          if (placeId) {
+            params.set('placeId', placeId);
+          }
+
+          const response = await fetch('/admin/operational-place-card?' + params.toString(), {
+            headers: { accept: 'application/json' }
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            replacePlaceCard('<aside class="place-drawer card"><h3>Место не выбрано</h3><p class="empty">Не удалось загрузить карточку места.</p></aside>');
+            return;
+          }
+
+          replacePlaceCard(data.html);
+          if (shouldPushState) {
+            window.history.pushState({ placeId: placeId || '' }, '', dayUrl(placeId));
+          }
         }
 
         async function loadZones(card) {
@@ -1089,6 +1170,12 @@ function renderOperationalMap(model) {
           card.hidden = card.dataset.mapId !== selectedMapCode;
           loadZones(card);
         }
+
+        window.addEventListener('popstate', () => {
+          const params = new URLSearchParams(window.location.search);
+          const placeId = params.get('placeId') || '';
+          loadOperationalPlaceCard(placeId, false);
+        });
       })();
     </script>
   `;
@@ -3467,6 +3554,37 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result.data));
     return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/operational-place-card') {
+    const selectedDate = url.searchParams.get('date') || todayIsoDate();
+    const selectedPlaceId = url.searchParams.get('placeId') || '';
+    const requestedMapCode = url.searchParams.get('mapCode') || parkingMaps[0]?.id || 'g4';
+    const selectedMapCode = parkingMaps.some((map) => map.id === requestedMapCode) ? requestedMapCode : parkingMaps[0]?.id || 'g4';
+
+    try {
+      const model = await buildOperationalPlaceCardModel({
+        selectedDate,
+        selectedPlaceId,
+        selectedMapCode
+      });
+      const html = renderOperationalPlaceCard(model);
+      const selected = getPlaceOperationalState(model, selectedPlaceId);
+
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          placeId: selected?.place?.id || null,
+          html
+        })
+      );
+      return;
+    } catch (error) {
+      res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ status: 'error', error: error.message }));
+      return;
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/') {
