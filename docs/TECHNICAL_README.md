@@ -191,7 +191,7 @@ Production storage mounts:
 
 - Portainer Git redeploy для M1 еще нужно проверить на OMV после push.
 - Для независимости от локального Mac нужен постоянный staging/test ландшафт на OMV с отдельными volumes, ports и smoke-командой после redeploy.
-- `npm audit --omit=dev` показывает `xlsx` high severity advisories, npm сообщает `No fix available`. Это риск import tooling; нужно либо принять ограничение для доверенных Excel-файлов, либо заменить библиотеку импорта.
+- `npm audit --omit=dev` показывает `xlsx` high severity advisories, npm сообщает `No fix available`. Риск принят для текущего offline import tooling: Excel-файлы считаются доверенными, import scripts не являются публичным web upload/runtime endpoint. Если импорт станет пользовательским или регулярным production-процессом, нужно заменить Excel dependency или вынести import tooling из основного runtime.
 
 ### Product Gaps
 
