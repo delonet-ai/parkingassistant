@@ -4,6 +4,8 @@
   "private": true,
   "description": "Parking Assistant monorepo",
   "scripts": {
+    "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js",
+    "smoke:m1": "node scripts/smoke/m1.js",
     "api:start": "node apps/api/src/server.js",
     "admin-web:start": "node apps/admin-web/src/server.js",
     "bot-adapter:start": "node apps/bot-adapter/src/server.js",

@@ -1,8 +1,14 @@
 'use strict';
 
 const http = require('node:http');
-const { URL } = require('node:url');
 const { Pool } = require('pg');
+const { addDaysToIsoDate, currentDateInTimezone, currentTimeInTimezone, formatDateForSql, isEarlyDeparture, isIsoDate, isValidTime } = require('../../../packages/shared/dates');
+const { normalizeApiErrorPayload } = require('../../../packages/shared/errors');
+const { readJsonBody, sendJson: writeJson } = require('../../../packages/shared/http');
+const { createDbRepository } = require('./repositories/db');
+const { createApiRouter } = require('./router');
+const { mapJobRun } = require('./serializers/job-runs');
+const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require('./services/availability');
 
 const port = Number(process.env.PORT || 3000);
 const startedAt = new Date().toISOString();
@@ -15,31 +21,11 @@ const pool = databaseUrl
     })
   : null;
 
-const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 const guestReserveMinimum = Number(process.env.GUEST_RESERVE_MINIMUM || 5);
+const dbRepository = createDbRepository(pool);
 
 function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
-}
-
-async function readJsonBody(req) {
-  const chunks = [];
-
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-
-  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
-  if (!rawBody) {
-    return {};
-  }
-
-  return JSON.parse(rawBody);
-}
-
-function isIsoDate(value) {
-  return typeof value === 'string' && isoDatePattern.test(value);
+  writeJson(res, statusCode, normalizeApiErrorPayload(payload, statusCode));
 }
 
 function splitDisplayName(displayName) {
@@ -52,113 +38,6 @@ function splitDisplayName(displayName) {
 
 function normalizeOptionalString(value) {
   return typeof value === 'string' ? value.trim() || null : null;
-}
-
-function formatDateForSql(value) {
-  if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
-  }
-
-  return String(value).slice(0, 10);
-}
-
-function currentDateInTimezone(timeZone = appTimezone) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date());
-}
-
-function currentTimeInTimezone(timeZone = appTimezone) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  }).format(new Date());
-}
-
-function addDaysToIsoDate(date, days) {
-  const [year, month, day] = date.split('-').map(Number);
-  const nextDate = new Date(Date.UTC(year, month - 1, day + days));
-  return nextDate.toISOString().slice(0, 10);
-}
-
-function isValidTime(value) {
-  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-}
-
-function isEarlyDeparture(value) {
-  return isValidTime(value) && value < '18:00';
-}
-
-async function countAvailableReleasedPlaces(client, date) {
-  const result = await client.query(
-    `
-      select count(*)::int as count
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-      left join reservations r
-        on r.parking_place_id = pp.id
-        and r.reservation_date = $1::date
-        and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-        and r.id is null
-    `,
-    [date]
-  );
-
-  return result.rows[0]?.count || 0;
-}
-
-async function calculateAvailabilitySnapshot(client, date) {
-  const result = await client.query(
-    `
-      select
-        count(*)::int as released_places,
-        count(*) filter (where r.id is null)::int as available_places,
-        count(*) filter (where r.id is null and pp.place_type in ('double', 'triple'))::int as before_19_employee_places,
-        greatest(count(*) filter (where r.id is null)::int - $2::int, 0)::int as after_19_employee_places,
-        count(*) filter (where r.id is null and pp.place_type = 'single')::int as available_single_places,
-        count(*) filter (where r.id is null and pp.place_type = 'double')::int as available_double_places,
-        count(*) filter (where r.id is null and pp.place_type = 'triple')::int as available_triple_places
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-      left join reservations r
-        on r.parking_place_id = pp.id
-        and r.reservation_date = $1::date
-        and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-    `,
-    [date, guestReserveMinimum]
-  );
-  const row = result.rows[0] || {};
-  const availablePlaces = row.available_places || 0;
-
-  return {
-    date,
-    timezone: appTimezone,
-    releasedPlaces: row.released_places || 0,
-    availablePlaces,
-    employeeAvailability: {
-      before19: row.before_19_employee_places || 0,
-      after19: row.after_19_employee_places || 0
-    },
-    guestReserve: {
-      minimum: guestReserveMinimum,
-      availablePlaces,
-      status: availablePlaces >= guestReserveMinimum ? 'ok' : 'low'
-    },
-    byType: {
-      single: row.available_single_places || 0,
-      double: row.available_double_places || 0,
-      triple: row.available_triple_places || 0
-    }
-  };
 }
 
 async function withJobRun(jobName, targetDate, runner) {
@@ -258,36 +137,12 @@ async function withJobRun(jobName, targetDate, runner) {
   }
 }
 
-function mapJobRun(run) {
-  return {
-    id: run.id,
-    jobName: run.job_name,
-    targetDate: run.target_date,
-    status: run.status,
-    startedAt: run.started_at,
-    finishedAt: run.finished_at,
-    actorService: run.actor_service,
-    summary: run.summary,
-    error: run.error
-  };
-}
-
 async function queryOne(text, params = []) {
-  if (!pool) {
-    throw new Error('DATABASE_URL is not configured');
-  }
-
-  const result = await pool.query(text, params);
-  return result.rows[0] || null;
+  return dbRepository.queryOne(text, params);
 }
 
 async function queryMany(text, params = []) {
-  if (!pool) {
-    throw new Error('DATABASE_URL is not configured');
-  }
-
-  const result = await pool.query(text, params);
-  return result.rows;
+  return dbRepository.queryMany(text, params);
 }
 
 async function handleDbHealth() {
@@ -3442,7 +3297,7 @@ async function handleAdminAvailability(searchParams) {
   const client = await pool.connect();
 
   try {
-    const availability = await calculateAvailabilitySnapshot(client, date);
+    const availability = await calculateAvailabilitySnapshot(client, date, { appTimezone, guestReserveMinimum });
 
     return {
       statusCode: 200,
@@ -5265,7 +5120,7 @@ async function handleAdminJobFreezeNextDay(req) {
       const client = await pool.connect();
 
       try {
-        const snapshot = await calculateAvailabilitySnapshot(client, targetDate);
+        const snapshot = await calculateAvailabilitySnapshot(client, targetDate, { appTimezone, guestReserveMinimum });
         const releaseResult = await client.query(
           `
             select
@@ -7216,509 +7071,62 @@ async function handleAdminEmployeeHistory(userId) {
   };
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-
-  if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, 200, {
-      status: 'ok',
-      service: 'api',
-      uptimeSeconds: Math.floor(process.uptime()),
-      startedAt,
-      timestamp: new Date().toISOString()
-    });
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/health/db') {
-    const result = await handleDbHealth();
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/auth/bootstrap-status') {
-    const result = await handleAuthBootstrapStatus();
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/users') {
-    const result = await handleAdminUsersList();
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/employees') {
-    const result = await handleAdminEmployeesList(url.searchParams);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  const employeeHistoryMatch = url.pathname.match(/^\/admin\/employees\/([^/]+)\/history$/);
-  if (req.method === 'GET' && employeeHistoryMatch) {
-    try {
-      const result = await handleAdminEmployeeHistory(employeeHistoryMatch[1]);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/employees') {
-    const result = await handleAdminEmployeeCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/employees/update') {
-    const result = await handleAdminEmployeeUpdate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/employees/disable') {
-    const result = await handleAdminEmployeeDisable(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/places') {
-    const result = await handleAdminPlacesList();
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/places') {
-    const result = await handleAdminParkingPlaceCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/places/update') {
-    const result = await handleAdminParkingPlaceUpdate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/places/disable') {
-    const result = await handleAdminParkingPlaceDisable(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments') {
-    const result = await handleAdminPermanentAssignmentCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments/end') {
-    const result = await handleAdminPermanentAssignmentEnd(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  const placeHistoryMatch = url.pathname.match(/^\/admin\/places\/([^/]+)\/history$/);
-  if (req.method === 'GET' && placeHistoryMatch) {
-    try {
-      const result = await handleAdminPlaceHistory(placeHistoryMatch[1]);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/audit-logs') {
-    try {
-      const result = await handleAdminAuditLogsList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/contact-access-logs') {
-    try {
-      const result = await handleAdminContactAccessLogsList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/line-groups') {
-    try {
-      const result = await handleAdminLineGroupsList();
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/line-occupancy') {
-    try {
-      const result = await handleAdminLineOccupancyList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  const lineGroupOccupancyMatch = url.pathname.match(/^\/admin\/line-groups\/([^/]+)\/occupancy$/);
-  if (req.method === 'GET' && lineGroupOccupancyMatch) {
-    try {
-      const result = await handleAdminLineGroupOccupancy(lineGroupOccupancyMatch[1], url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/line-occupancy') {
-    const result = await handleLineOccupancySet(req, 'admin-web');
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && (url.pathname === '/bot/line/position' || url.pathname === '/bot/line-occupancy')) {
-    const result = await handleLineOccupancySet(req, 'bot');
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/bot/line/blocking-contacts') {
-    try {
-      const result = await handleBotBlockingContacts(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/departure-plans') {
-    try {
-      const result = await handleDeparturePlansList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/conflicts') {
-    try {
-      const result = await handleConflictsList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && (url.pathname === '/bot/departure-plans' || url.pathname === '/admin/departure-plans')) {
-    const result = await handleDeparturePlanUpsert(req, url.pathname.startsWith('/bot/') ? 'bot' : 'admin-web');
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
-    try {
-      const result = await handleAdminMapZonesList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
-    const result = await handleAdminMapZoneSave(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/map-zones/update') {
-    const result = await handleAdminMapZoneUpdate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/map-zones/delete') {
-    const result = await handleAdminMapZoneDelete(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/dashboard') {
-    try {
-      const result = await handleAdminDashboard(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/availability') {
-    try {
-      const result = await handleAdminAvailability(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/place-releases') {
-    try {
-      const result = await handleAdminPlaceReleasesList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/employee-parking-requests') {
-    try {
-      const result = await handleAdminEmployeeParkingRequestsList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/guest-parking-requests') {
-    try {
-      const result = await handleAdminGuestParkingRequestsList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
-    const result = await handleAdminPlaceReleaseCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/place-releases/cancel') {
-    const result = await handleAdminPlaceReleaseCancel(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests') {
-    const result = await handleAdminEmployeeParkingRequestCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests/cancel') {
-    const result = await handleAdminEmployeeParkingRequestCancel(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests') {
-    const result = await handleAdminGuestParkingRequestCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/assign') {
-    const result = await handleAdminGuestParkingRequestAssign(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/cancel') {
-    const result = await handleAdminGuestParkingRequestCancel(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/queue/process') {
-    const result = await handleAdminQueueProcess(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/jobs/process-queue') {
-    const result = await handleAdminJobProcessQueue(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/jobs/freeze-next-day') {
-    const result = await handleAdminJobFreezeNextDay(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/jobs/lock-departure-plans') {
-    const result = await handleAdminJobLockDeparturePlans(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/admin/jobs/runs') {
-    try {
-      const result = await handleAdminJobRunsList(url.searchParams);
-      sendJson(res, result.statusCode, result.payload);
-    } catch (error) {
-      sendJson(res, 500, {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      });
-    }
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
-    const result = await handleAdminManualReservationCreate(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/reservations/cancel') {
-    const result = await handleAdminReservationCancel(req);
-    sendJson(res, result.statusCode, result.payload);
-    return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/') {
-    sendJson(res, 200, {
-      status: 'ok',
-      service: 'api',
-      message: 'Parking Assistant API is running',
-      endpoints: [
-        '/health',
-        '/health/db',
-        '/auth/bootstrap-status',
-        '/admin/users',
-        '/admin/employees',
-        '/admin/employees/update',
-        '/admin/employees/disable',
-        '/admin/employees/:id/history',
-        '/admin/places',
-        '/admin/places/update',
-        '/admin/places/disable',
-        '/admin/places/:id/history',
-        '/admin/permanent-assignments',
-        '/admin/permanent-assignments/end',
-        '/admin/audit-logs',
-        '/admin/contact-access-logs',
-        '/admin/line-groups',
-        '/admin/line-occupancy',
-        '/admin/line-groups/:id/occupancy',
-        '/admin/line-occupancy',
-        '/bot/line/position',
-        '/bot/line/blocking-contacts',
-        '/bot/departure-plans',
-        '/admin/departure-plans',
-        '/admin/conflicts',
-        '/admin/map-zones',
-        '/admin/dashboard',
-        '/admin/availability',
-        '/admin/place-releases',
-        '/admin/place-releases/cancel',
-        '/admin/employee-parking-requests',
-        '/admin/guest-parking-requests',
-        '/admin/guest-parking-requests/assign',
-        '/admin/queue/process',
-        '/admin/jobs/process-queue',
-        '/admin/jobs/freeze-next-day',
-        '/admin/jobs/lock-departure-plans',
-        '/admin/jobs/runs',
-        '/admin/reservations/manual',
-        '/admin/reservations/cancel'
-      ]
-    });
-    return;
-  }
-
-  sendJson(res, 404, {
-    status: 'error',
-    error: 'Not found'
-  });
+const routeApiRequest = createApiRouter({
+  handlers: {
+    handleAdminAuditLogsList,
+    handleAdminAvailability,
+    handleAdminContactAccessLogsList,
+    handleAdminDashboard,
+    handleAdminEmployeeCreate,
+    handleAdminEmployeeDisable,
+    handleAdminEmployeeHistory,
+    handleAdminEmployeeParkingRequestCancel,
+    handleAdminEmployeeParkingRequestCreate,
+    handleAdminEmployeeParkingRequestsList,
+    handleAdminEmployeesList,
+    handleAdminEmployeeUpdate,
+    handleAdminGuestParkingRequestAssign,
+    handleAdminGuestParkingRequestCancel,
+    handleAdminGuestParkingRequestCreate,
+    handleAdminGuestParkingRequestsList,
+    handleAdminJobFreezeNextDay,
+    handleAdminJobLockDeparturePlans,
+    handleAdminJobProcessQueue,
+    handleAdminJobRunsList,
+    handleAdminLineGroupOccupancy,
+    handleAdminLineGroupsList,
+    handleAdminLineOccupancyList,
+    handleAdminManualReservationCreate,
+    handleAdminMapZoneDelete,
+    handleAdminMapZoneSave,
+    handleAdminMapZonesList,
+    handleAdminMapZoneUpdate,
+    handleAdminParkingPlaceCreate,
+    handleAdminParkingPlaceDisable,
+    handleAdminParkingPlaceUpdate,
+    handleAdminPermanentAssignmentCreate,
+    handleAdminPermanentAssignmentEnd,
+    handleAdminPlaceHistory,
+    handleAdminPlaceReleaseCancel,
+    handleAdminPlaceReleaseCreate,
+    handleAdminPlaceReleasesList,
+    handleAdminPlacesList,
+    handleAdminQueueProcess,
+    handleAdminReservationCancel,
+    handleAdminUsersList,
+    handleAuthBootstrapStatus,
+    handleBotBlockingContacts,
+    handleConflictsList,
+    handleDbHealth,
+    handleDeparturePlansList,
+    handleDeparturePlanUpsert,
+    handleLineOccupancySet
+  },
+  sendJson,
+  startedAt
 });
+
+const server = http.createServer(routeApiRequest);
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`parkingassistant api listening on port ${port}`);

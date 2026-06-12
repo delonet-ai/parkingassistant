@@ -2,6 +2,19 @@
 
 Ниже стартовая декомпозиция задач по файлам и модулям. Это не финальная структура фреймворка, а рабочий blueprint, чтобы можно было быстро начать реализацию.
 
+## Current Stabilization Status
+
+M1 baseline начат:
+
+- `apps/api/src/router.js` содержит активный dispatch API routes.
+- `apps/api/src/repositories`, `apps/api/src/services`, `apps/api/src/serializers` содержат первый слой вынесенных модулей.
+- `packages/shared` содержит общие helpers для HTTP, дат, HTML escaping и API errors.
+- `apps/admin-web/src/render-modules.js` выделяет выбор render-модуля по вкладке.
+- `npm run check` выполняет acceptance `node --check` для JS entrypoints.
+- `npm run smoke:m1` поднимает локальные `api` и `admin-web` и проверяет health, root, 404 и error payload.
+
+Следующий cleanup после стабилизации: продолжить перенос крупных API handler-групп и admin-web render-функций в отдельные файлы без изменения URL и UI поведения.
+
 ## Предлагаемая структура репозитория
 
 ```text

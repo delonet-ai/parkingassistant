@@ -2,6 +2,8 @@
 
 Система управления офисной парковкой с `backend API`, `admin web UI` и `bot adapter` для `Yandex Messenger`.
 
+Актуальная техническая точка входа для разработки: [docs/TECHNICAL_README.md](docs/TECHNICAL_README.md).
+
 Проект нужен для управления:
 
 - постоянными парковочными местами
@@ -86,23 +88,24 @@
 
 Текущий runtime status:
 
-- `api` уже планируется как минимальный Node.js сервис с health endpoints
-- `admin-web`, `bot-adapter` и `jobs` пока остаются placeholder-контейнерами до следующего слоя реализации
+- `api` — рабочий backend API с parking operations, audit/history, jobs endpoints и выделенным router/module baseline.
+- `admin-web` — server-rendered admin UI поверх backend API, с вкладками `День`, `Заявки`, `Линии`, `Справочники`, `Журнал`, `Карта`.
+- `bot-adapter` — HTTP adapter для сотруднических сценариев и будущей интеграции с `Yandex Messenger`.
+- `jobs` — scheduler, вызывающий backend job endpoints по расписанию.
 
 Текущий API baseline:
 
-- `GET /`
-- `GET /health`
-- `GET /health/db`
-- `GET /auth/bootstrap-status`
-- `GET /admin/users`
-- `GET /admin/places`
+- health/bootstrap/catalog endpoints;
+- admin CRUD для сотрудников, мест и постоянных закреплений;
+- заявки сотрудников, гости, очередь, отдачи мест и ручные назначения;
+- line occupancy, departure plans, conflicts и contact access logs;
+- map zones, dashboard, audit logs и job runs.
 
 Текущий Admin Web baseline:
 
-- домашняя страница с агрегированным статусом backend
-- отображение bootstrap admin
-- отображение списка парковочных мест из `GET /admin/places`
+- ежедневный экран с KPI, операционной картой и карточкой места;
+- вкладки заявок, линий, справочников, журнала и технического редактора карты;
+- все операции выполняются через backend API, без дублирования бизнес-правил в UI.
 
 Текущий import baseline:
 

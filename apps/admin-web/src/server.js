@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { URL } = require('node:url');
+const { escapeHtml } = require('../../../packages/shared/html');
+const { readFormBody, readJsonBody } = require('../../../packages/shared/http');
+const { createRenderModules, renderActiveTab } = require('./render-modules');
 
 const port = Number(process.env.PORT || 3100);
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000';
@@ -32,15 +35,6 @@ const knownMapFiles = new Set(parkingMaps.map((map) => map.filename));
 
 function contentTypeForMap(filename) {
   return filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 async function fetchJson(pathname) {
@@ -83,31 +77,6 @@ async function postJson(pathname, payload) {
     status: response.status,
     data
   };
-}
-
-async function readJsonBody(req) {
-  const chunks = [];
-
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-
-  const rawBody = Buffer.concat(chunks).toString('utf8').trim();
-  if (!rawBody) {
-    return {};
-  }
-
-  return JSON.parse(rawBody);
-}
-
-async function readFormBody(req) {
-  const chunks = [];
-
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-
-  return new URLSearchParams(Buffer.concat(chunks).toString('utf8'));
 }
 
 function formatDate(value) {
@@ -2586,6 +2555,15 @@ function renderLinesTab(model) {
   `;
 }
 
+const renderModules = createRenderModules({
+  renderAuditTab,
+  renderCatalogTab,
+  renderDayPage,
+  renderLinesTab,
+  renderMapEditorTab,
+  renderRequestsTab
+});
+
 function renderPage(model) {
   const placesCount = Array.isArray(model.places?.data?.places) ? model.places.data.places.length : 0;
   const places = model.places?.data?.places || [];
@@ -2600,18 +2578,7 @@ function renderPage(model) {
     ? `<p class="notice ${model.notice.type === 'error' ? 'notice-error' : 'notice-ok'}">${escapeHtml(model.notice.text)}</p>`
     : '';
 
-  const mainContent =
-    activeView === 'maps'
-      ? renderMapEditorTab(model)
-      : activeView === 'requests'
-        ? renderRequestsTab(model)
-      : activeView === 'catalog'
-        ? renderCatalogTab(model)
-        : activeView === 'lines'
-          ? renderLinesTab(model)
-          : activeView === 'audit'
-            ? renderAuditTab(model)
-            : renderDayPage(model);
+  const mainContent = renderActiveTab(renderModules, activeView, model);
 
   return `<!doctype html>
 <html lang="ru">
