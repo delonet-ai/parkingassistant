@@ -29,6 +29,10 @@ const rootEndpoints = [
   '/admin/departure-plans',
   '/admin/conflicts',
   '/admin/map-zones',
+  '/admin/map-zones/update',
+  '/admin/map-zones/delete',
+  '/admin/map-diagnostics',
+  '/admin/map-backgrounds',
   '/admin/dashboard',
   '/admin/availability',
   '/admin/place-releases',
@@ -216,8 +220,18 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/admin/map-diagnostics') {
+      await dispatchSafely(() => handlers.handleAdminMapDiagnostics(url.searchParams), res);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
       await dispatch(() => handlers.handleAdminMapZoneSave(req), res);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/admin/map-backgrounds') {
+      await dispatch(() => handlers.handleAdminMapBackgroundUpdate(req), res);
       return;
     }
 

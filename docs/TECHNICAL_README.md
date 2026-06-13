@@ -195,7 +195,6 @@ Production storage mounts:
 ### Product Gaps
 
 - M2 UI операции в карточке места еще не доведены до полного дневного сценария без SQL.
-- Истории, audit filters, job operational status и map diagnostics остаются задачами M3/M4.
 - Интеграционные проверки бизнес-правил остаются задачей M5.
 
 ## Milestone Plan
@@ -255,16 +254,18 @@ Acceptance:
 
 Цель: сделать карты надежным техническим инструментом.
 
-- Завершить редактор зон во вкладке `Карта`.
-- Добавить диагностику: зона без места, место без зоны, неактивное место с активной зоной.
-- Реализовать загрузку и замену подложек по `G3/G4/G5`.
-- Сохранять version/checksum подложек.
+Status: completed and validated locally; pending OMV Portainer redeploy validation.
+
+- Завершить редактор зон во вкладке `Карта`: done for draw, update type and delete flows.
+- Добавить диагностику: зона без места, место без зоны, неактивное место с активной зоной: done.
+- Реализовать загрузку и замену подложек по `G3/G4/G5`: done.
+- Сохранять version/checksum подложек: done.
 
 Acceptance:
 
-- SVG-зоны не смещаются при изменении размера окна.
-- Геометрия редактируется только во вкладке `Карта`.
-- После замены подложки связи зон с местами сохраняются.
+- SVG-зоны не смещаются при изменении размера окна: done by normalized geometry and SVG viewBox overlay.
+- Геометрия редактируется только во вкладке `Карта`: done.
+- После замены подложки связи зон с местами сохраняются: done; background replacement updates only `parking_place_maps`.
 
 ### M5. Business Rules And Tests
 

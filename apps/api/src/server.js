@@ -2581,6 +2581,300 @@ async function ensureParkingPlaceMap(mapCode, mapTitle, floorLabel, filePath) {
   );
 }
 
+function mapParkingPlaceMap(row) {
+  return {
+    id: row.id,
+    code: row.code,
+    title: row.title,
+    floorLabel: row.floor_label,
+    fileType: row.file_type,
+    filePath: row.file_path,
+    sourceChecksum: row.source_checksum,
+    version: row.version,
+    isActive: row.is_active,
+    updatedAt: row.updated_at
+  };
+}
+
+async function handleAdminMapDiagnostics(searchParams) {
+  const mapCode = searchParams.get('mapCode');
+  const mapFilter = mapCode ? 'where ppm.code = $1' : '';
+  const values = mapCode ? [mapCode] : [];
+
+  const maps = await queryMany(
+    `
+      select
+        ppm.id,
+        ppm.code,
+        ppm.title,
+        ppm.floor_label,
+        ppm.file_type,
+        ppm.file_path,
+        ppm.source_checksum,
+        ppm.version,
+        ppm.is_active,
+        ppm.updated_at
+      from parking_place_maps ppm
+      ${mapFilter}
+      order by ppm.floor_label nulls last, ppm.code
+    `,
+    values
+  );
+
+  const zoneWithoutPlace = await queryMany(
+    `
+      select
+        ppm.code as map_code,
+        ppm.title as map_title,
+        z.id as zone_id,
+        z.zone_key,
+        z.geometry,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.deleted_at as parking_place_deleted_at
+      from parking_place_map_zones z
+      join parking_place_maps ppm on ppm.id = z.parking_place_map_id
+      left join parking_places pp on pp.id = z.parking_place_id
+      where ppm.is_active = true
+        and (pp.id is null or pp.deleted_at is not null)
+        ${mapCode ? 'and ppm.code = $1' : ''}
+      order by ppm.code, z.zone_key
+    `,
+    values
+  );
+
+  const inactivePlaceWithActiveZone = await queryMany(
+    `
+      select
+        ppm.code as map_code,
+        ppm.title as map_title,
+        z.id as zone_id,
+        z.zone_key,
+        z.geometry,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.is_active
+      from parking_place_map_zones z
+      join parking_place_maps ppm on ppm.id = z.parking_place_map_id
+      join parking_places pp on pp.id = z.parking_place_id
+      where ppm.is_active = true
+        and pp.deleted_at is null
+        and pp.is_active = false
+        ${mapCode ? 'and ppm.code = $1' : ''}
+      order by ppm.code, pp.code
+    `,
+    values
+  );
+
+  const placeWithoutZone = await queryMany(
+    `
+      select
+        ppm.code as map_code,
+        ppm.title as map_title,
+        pp.id as parking_place_id,
+        pp.code as parking_place_code,
+        pp.title as parking_place_title,
+        pp.floor_label,
+        pp.place_type
+      from parking_place_maps ppm
+      join parking_places pp
+        on pp.deleted_at is null
+        and pp.is_active = true
+        and (
+          pp.floor_label = ppm.floor_label
+          or pp.floor_label = regexp_replace(ppm.code, '^g', '', 'i')
+        )
+      left join parking_place_map_zones z
+        on z.parking_place_map_id = ppm.id
+        and z.parking_place_id = pp.id
+      where ppm.is_active = true
+        and z.id is null
+        ${mapCode ? 'and ppm.code = $1' : ''}
+      order by ppm.code, pp.code
+    `,
+    values
+  );
+
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      maps: maps.map(mapParkingPlaceMap),
+      diagnostics: {
+        zoneWithoutPlace: zoneWithoutPlace.map((item) => ({
+          mapCode: item.map_code,
+          mapTitle: item.map_title,
+          zoneId: item.zone_id,
+          zoneKey: item.zone_key,
+          geometry: item.geometry,
+          parkingPlace: item.parking_place_id
+            ? {
+                id: item.parking_place_id,
+                code: item.parking_place_code,
+                title: item.parking_place_title,
+                deletedAt: item.parking_place_deleted_at
+              }
+            : null
+        })),
+        placeWithoutZone: placeWithoutZone.map((item) => ({
+          mapCode: item.map_code,
+          mapTitle: item.map_title,
+          parkingPlace: {
+            id: item.parking_place_id,
+            code: item.parking_place_code,
+            title: item.parking_place_title,
+            floorLabel: item.floor_label,
+            placeType: item.place_type
+          }
+        })),
+        inactivePlaceWithActiveZone: inactivePlaceWithActiveZone.map((item) => ({
+          mapCode: item.map_code,
+          mapTitle: item.map_title,
+          zoneId: item.zone_id,
+          zoneKey: item.zone_key,
+          geometry: item.geometry,
+          parkingPlace: {
+            id: item.parking_place_id,
+            code: item.parking_place_code,
+            title: item.parking_place_title,
+            isActive: item.is_active
+          }
+        }))
+      }
+    }
+  };
+}
+
+async function handleAdminMapBackgroundUpdate(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const mapCode = typeof body.mapCode === 'string' ? body.mapCode.trim().toLowerCase() : '';
+  const mapTitle = typeof body.mapTitle === 'string' ? body.mapTitle.trim() : mapCode.toUpperCase();
+  const floorLabel = typeof body.floorLabel === 'string' ? body.floorLabel.trim() : mapCode.replace(/^g/i, '');
+  const filePath = typeof body.filePath === 'string' ? body.filePath.trim() : '';
+  const fileType = typeof body.fileType === 'string' ? body.fileType.trim().toLowerCase() : '';
+  const sourceChecksum = typeof body.sourceChecksum === 'string' ? body.sourceChecksum.trim() : '';
+
+  if (!mapCode || !filePath || !fileType || !sourceChecksum) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'mapCode, filePath, fileType and sourceChecksum are required'
+      }
+    };
+  }
+
+  if (!['pdf', 'svg', 'png', 'jpg', 'webp'].includes(fileType)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'fileType must be one of pdf, svg, png, jpg, webp'
+      }
+    };
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin');
+
+    const result = await client.query(
+      `
+        insert into parking_place_maps (
+          code,
+          title,
+          floor_label,
+          file_type,
+          file_path,
+          source_checksum,
+          version
+        )
+        values ($1, $2, $3, $4::map_file_type, $5, $6, 1)
+        on conflict (code)
+        do update set
+          title = excluded.title,
+          floor_label = excluded.floor_label,
+          file_type = excluded.file_type,
+          file_path = excluded.file_path,
+          source_checksum = excluded.source_checksum,
+          version = parking_place_maps.version + 1,
+          is_active = true,
+          updated_at = now()
+        returning id, code, title, floor_label, file_type, file_path, source_checksum, version, is_active, updated_at
+      `,
+      [mapCode, mapTitle || mapCode.toUpperCase(), floorLabel || mapCode.replace(/^g/i, ''), fileType, filePath, sourceChecksum]
+    );
+    const map = result.rows[0];
+
+    await client.query(
+      `
+        insert into audit_logs (
+          entity_type,
+          entity_id,
+          action,
+          actor_service,
+          metadata
+        )
+        values ('parking_place_map', $1, 'parking_place_map_background_replaced', 'admin-web', $2::jsonb)
+      `,
+      [
+        map.id,
+        JSON.stringify({
+          mapCode,
+          filePath,
+          fileType,
+          sourceChecksum,
+          version: map.version
+        })
+      ]
+    );
+
+    await client.query('commit');
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        map: mapParkingPlaceMap(map)
+      }
+    };
+  } catch (error) {
+    await client.query('rollback');
+
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminMapZonesList(searchParams) {
   const mapCode = searchParams.get('mapCode');
   const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
@@ -2609,7 +2903,7 @@ async function handleAdminMapZonesList(searchParams) {
 
   const map = await queryOne(
     `
-      select id, code, title, floor_label, file_type, file_path, version, is_active
+      select id, code, title, floor_label, file_type, file_path, source_checksum, version, is_active, updated_at
       from parking_place_maps
       where code = $1
         and is_active = true
@@ -2669,13 +2963,7 @@ async function handleAdminMapZonesList(searchParams) {
       date,
       map: {
         id: map.id,
-        code: map.code,
-        title: map.title,
-        floorLabel: map.floor_label,
-        fileType: map.file_type,
-        filePath: map.file_path,
-        version: map.version,
-        isActive: map.is_active
+        ...mapParkingPlaceMap(map)
       },
       zones: zones.map((zone) => ({
         id: zone.id,
@@ -7235,6 +7523,8 @@ const routeApiRequest = createApiRouter({
     handleAdminLineOccupancyList,
     handleAdminManualReservationCreate,
     handleAdminMapZoneDelete,
+    handleAdminMapBackgroundUpdate,
+    handleAdminMapDiagnostics,
     handleAdminMapZoneSave,
     handleAdminMapZonesList,
     handleAdminMapZoneUpdate,

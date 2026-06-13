@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -28,13 +29,30 @@ const parkingMaps = [
     filename: 'parking-g4.png',
     width: 2105,
     height: 1490
+  },
+  {
+    id: 'g5',
+    title: 'G5',
+    description: 'Underground parking level G5',
+    filename: 'parking-g5.png',
+    width: 2105,
+    height: 1490
   }
 ];
 
-const knownMapFiles = new Set(parkingMaps.map((map) => map.filename));
+const allowedMapExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg']);
 
 function contentTypeForMap(filename) {
-  return filename.endsWith('.png') ? 'image/png' : 'image/jpeg';
+  if (filename.endsWith('.svg')) {
+    return 'image/svg+xml';
+  }
+  if (filename.endsWith('.webp')) {
+    return 'image/webp';
+  }
+  if (filename.endsWith('.png')) {
+    return 'image/png';
+  }
+  return 'image/jpeg';
 }
 
 async function fetchJson(pathname) {
@@ -105,6 +123,93 @@ function renderJsonPreview(value) {
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function filenameFromMapFilePath(filePath, fallbackFilename) {
+  if (!filePath) {
+    return fallbackFilename;
+  }
+
+  return path.basename(String(filePath));
+}
+
+function configuredMaps(model = {}) {
+  const mapsByCode = new Map((model.mapDiagnostics?.data?.maps || []).map((map) => [map.code, map]));
+
+  return parkingMaps.map((fallback) => {
+    const metadata = mapsByCode.get(fallback.id) || null;
+    return {
+      ...fallback,
+      filename: filenameFromMapFilePath(metadata?.filePath, fallback.filename),
+      metadata
+    };
+  });
+}
+
+async function readRawBody(req, limitBytes = 15 * 1024 * 1024) {
+  const chunks = [];
+  let total = 0;
+
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > limitBytes) {
+      throw new Error('Request body is too large');
+    }
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function parseMultipartFormData(contentType, body) {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType || '');
+  const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
+
+  if (!boundary) {
+    throw new Error('Multipart boundary is missing');
+  }
+
+  const delimiter = `--${boundary}`;
+  const parts = body.toString('binary').split(delimiter).slice(1, -1);
+  const fields = new Map();
+  const files = new Map();
+
+  for (const rawPart of parts) {
+    const trimmed = rawPart.replace(/^\r\n/, '').replace(/\r\n$/, '');
+    const headerEnd = trimmed.indexOf('\r\n\r\n');
+    if (headerEnd === -1) {
+      continue;
+    }
+
+    const rawHeaders = trimmed.slice(0, headerEnd);
+    const rawContent = trimmed.slice(headerEnd + 4);
+    const headers = new Map(
+      rawHeaders.split('\r\n').map((line) => {
+        const separator = line.indexOf(':');
+        return [line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim()];
+      })
+    );
+    const disposition = headers.get('content-disposition') || '';
+    const name = /name="([^"]+)"/.exec(disposition)?.[1];
+    const filename = /filename="([^"]*)"/.exec(disposition)?.[1];
+
+    if (!name) {
+      continue;
+    }
+
+    const content = Buffer.from(rawContent, 'binary');
+    if (filename) {
+      files.set(name, {
+        filename,
+        contentType: headers.get('content-type') || 'application/octet-stream',
+        buffer: content
+      });
+    } else {
+      fields.set(name, content.toString('utf8'));
+    }
+  }
+
+  return { fields, files };
 }
 
 function renderTabs(activeView, selectedDate) {
@@ -220,18 +325,107 @@ function renderEmployeesTable(model) {
 function renderMapEditorTab(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const places = model.places?.data?.places || [];
+  const activeMaps = configuredMaps(model);
+  const diagnostics = model.mapDiagnostics?.data?.diagnostics || {};
   const placeOptions = places
     .map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(`${place.code} · ${place.title}`)}</option>`)
     .join('');
+  const uploadForms = activeMaps
+    .map((map) => {
+      const metadata = map.metadata;
+      const checksum = metadata?.sourceChecksum ? metadata.sourceChecksum.slice(0, 12) : '—';
+      const version = metadata?.version || 0;
+      const filePath = metadata?.filePath || `/maps/${map.filename}`;
 
-  const cards = parkingMaps
+      return `
+        <form class="map-upload-form" method="post" action="/admin/map-backgrounds" enctype="multipart/form-data">
+          <input type="hidden" name="mapCode" value="${escapeHtml(map.id)}" />
+          <input type="hidden" name="mapTitle" value="${escapeHtml(map.title)}" />
+          <input type="hidden" name="floorLabel" value="${escapeHtml(map.id.replace(/^g/, ''))}" />
+          <div>
+            <strong>${escapeHtml(map.title)}</strong>
+            <span class="muted">v${escapeHtml(version)} · ${escapeHtml(checksum)} · ${escapeHtml(filePath)}</span>
+          </div>
+          <label>
+            <span>Файл</span>
+            <input type="file" name="mapFile" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" required />
+          </label>
+          <button type="submit">Заменить</button>
+        </form>
+      `;
+    })
+    .join('');
+  const diagnosticGroups = [
+    {
+      title: 'Зона без места',
+      rows: diagnostics.zoneWithoutPlace || [],
+      render: (item) => `
+        <tr>
+          <td>${escapeHtml(item.mapCode || '—')}</td>
+          <td>${escapeHtml(item.zoneKey || item.zoneId || '—')}</td>
+          <td>${item.parkingPlace ? escapeHtml(`${item.parkingPlace.code} · удалено`) : 'нет связи'}</td>
+        </tr>
+      `
+    },
+    {
+      title: 'Место без зоны',
+      rows: diagnostics.placeWithoutZone || [],
+      render: (item) => `
+        <tr>
+          <td>${escapeHtml(item.mapCode || '—')}</td>
+          <td>${escapeHtml(item.parkingPlace?.code || '—')}</td>
+          <td>${escapeHtml(item.parkingPlace?.title || '—')}</td>
+        </tr>
+      `
+    },
+    {
+      title: 'Неактивное место с активной зоной',
+      rows: diagnostics.inactivePlaceWithActiveZone || [],
+      render: (item) => `
+        <tr>
+          <td>${escapeHtml(item.mapCode || '—')}</td>
+          <td>${escapeHtml(item.parkingPlace?.code || '—')}</td>
+          <td>${escapeHtml(item.zoneKey || '—')}</td>
+        </tr>
+      `
+    }
+  ];
+  const diagnosticHtml = diagnosticGroups
+    .map((group) => {
+      const rows = group.rows.map(group.render).join('');
+      return `
+        <article class="map-diagnostic">
+          <div class="map-card-head">
+            <h3>${escapeHtml(group.title)}</h3>
+            <span class="tag">${escapeHtml(group.rows.length)}</span>
+          </div>
+          ${
+            group.rows.length
+              ? `<table>
+                  <thead>
+                    <tr>
+                      <th>Карта</th>
+                      <th>Объект</th>
+                      <th>Детали</th>
+                    </tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>`
+              : '<p class="empty">Проблем не найдено.</p>'
+          }
+        </article>
+      `;
+    })
+    .join('');
+
+  const cards = activeMaps
     .map(
       (map) => `
         <article class="map-card" data-map-id="${escapeHtml(map.id)}" data-map-title="${escapeHtml(map.title)}" data-map-filename="${escapeHtml(map.filename)}">
           <div class="map-card-head">
             <div>
               <h3>${escapeHtml(map.title)}</h3>
-              <p>${escapeHtml(map.description)}</p>
+              <p>${escapeHtml(map.description)} · v${escapeHtml(map.metadata?.version || 0)} · ${escapeHtml(map.metadata?.sourceChecksum ? map.metadata.sourceChecksum.slice(0, 12) : 'checksum —')}</p>
             </div>
             <span class="tag">markup</span>
           </div>
@@ -260,10 +454,11 @@ function renderMapEditorTab(model) {
     <section class="card">
       <h2 class="section-title">Редактор карт</h2>
       <p class="section-copy">Технический режим: разметка зон, изменение типа места на карте и удаление зон. Операционная работа по местам вынесена на вкладку “День”.</p>
-      <div class="map-upload-placeholder">
+      <div class="map-upload-panel">
         <p class="label">Подложки G3/G4/G5</p>
-        <p class="empty">Загрузка новых карт будет добавлена отдельным шагом. Текущие файлы берутся из storage /maps.</p>
+        <div class="map-upload-grid">${uploadForms}</div>
       </div>
+      <div class="map-diagnostics">${diagnosticHtml}</div>
       <label class="map-edit-toggle">
         <input id="map-edit-mode" type="checkbox" />
         <span>Редактирование мест</span>
@@ -298,7 +493,7 @@ function renderMapEditorTab(model) {
       const placeSelect = document.getElementById('map-place-select');
       const zoneTypeSelect = document.getElementById('map-zone-type');
       const output = document.getElementById('map-click-output');
-      const maps = ${JSON.stringify(parkingMaps)};
+      const maps = ${JSON.stringify(activeMaps.map(({ metadata, ...map }) => map))};
       const mapConfigs = new Map(maps.map((map) => [map.id, map]));
       const places = ${JSON.stringify(places.map((place) => ({ id: place.id, code: place.code, title: place.title })))};
       const placesById = new Map(places.map((place) => [place.id, place]));
@@ -901,7 +1096,8 @@ function renderOperationalMap(model) {
   const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
   const selectedStatusFilter = model.mapStatusFilter || '';
   const selectedTypeFilter = model.mapTypeFilter || '';
-  const mapOptions = parkingMaps
+  const activeMaps = configuredMaps(model);
+  const mapOptions = activeMaps
     .map((map) => `<option value="${escapeHtml(map.id)}"${selectedMapCode === map.id ? ' selected' : ''}>${escapeHtml(map.title)}</option>`)
     .join('');
   const statusOptions = [
@@ -923,7 +1119,7 @@ function renderOperationalMap(model) {
   ]
     .map(([value, label]) => `<option value="${escapeHtml(value)}"${selectedTypeFilter === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
     .join('');
-  const cards = parkingMaps
+  const cards = activeMaps
     .map(
       (map) => `
         <article class="map-card operational-map-card${selectedMapCode === map.id ? ' active' : ''}" data-map-id="${escapeHtml(map.id)}" data-map-title="${escapeHtml(map.title)}">
@@ -1006,7 +1202,7 @@ function renderOperationalMap(model) {
         const selectedStatusFilter = ${JSON.stringify(selectedStatusFilter)};
         const selectedTypeFilter = ${JSON.stringify(selectedTypeFilter)};
         const releasedPlaceIds = new Set(${JSON.stringify((model.dashboard?.data?.releasedPlaces || []).map((item) => item.parkingPlace.id))});
-        const maps = ${JSON.stringify(parkingMaps)};
+        const maps = ${JSON.stringify(activeMaps.map(({ metadata, ...map }) => map))};
         const mapConfigs = new Map(maps.map((map) => [map.id, map]));
         const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -3296,12 +3492,47 @@ function renderPage(model) {
         margin: 0 0 14px;
       }
 
-      .map-upload-placeholder {
+      .map-upload-panel,
+      .map-diagnostic {
         margin: 0 0 16px;
         padding: 14px;
-        border: 1px dashed var(--line);
-        border-radius: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
         background: rgba(255, 255, 255, 0.4);
+      }
+
+      .map-upload-grid,
+      .map-diagnostics {
+        display: grid;
+        gap: 12px;
+      }
+
+      .map-upload-grid {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+
+      .map-upload-form {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .map-upload-form label {
+        display: grid;
+        gap: 6px;
+      }
+
+      .map-upload-form strong,
+      .map-upload-form .muted {
+        display: block;
+      }
+
+      .map-upload-form .muted {
+        margin-top: 4px;
+        overflow-wrap: anywhere;
       }
 
       .map-workspace {
@@ -3499,8 +3730,9 @@ const server = http.createServer(async (req, res) => {
 
   if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/maps/')) {
     const filename = path.basename(decodeURIComponent(url.pathname.replace('/maps/', '')));
+    const extension = path.extname(filename).toLowerCase();
 
-    if (!knownMapFiles.has(filename)) {
+    if (!allowedMapExtensions.has(extension) || !/^parking-g[345]\.(png|jpg|jpeg|webp|svg)$/i.test(filename)) {
       res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ status: 'error', error: 'Map not found' }));
       return;
@@ -3532,6 +3764,61 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result.data));
     return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/map-diagnostics') {
+    const result = await fetchJson(`/admin/map-diagnostics?${url.searchParams.toString()}`);
+    res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(result.data));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/map-backgrounds') {
+    try {
+      const body = await readRawBody(req);
+      const form = parseMultipartFormData(req.headers['content-type'] || '', body);
+      const mapCode = String(form.fields.get('mapCode') || '').trim().toLowerCase();
+      const mapConfig = parkingMaps.find((map) => map.id === mapCode);
+      const file = form.files.get('mapFile');
+
+      if (!mapConfig || !file || !file.buffer.length) {
+        throw new Error('Выберите карту G3/G4/G5 и файл подложки.');
+      }
+
+      const extension = path.extname(file.filename).toLowerCase();
+      if (!allowedMapExtensions.has(extension)) {
+        throw new Error('Поддерживаются только PNG, JPG, WEBP и SVG.');
+      }
+
+      fs.mkdirSync(mapStoragePath, { recursive: true });
+      const normalizedExtension = extension === '.jpeg' ? '.jpg' : extension;
+      const filename = `parking-${mapCode}${normalizedExtension}`;
+      const targetPath = path.join(mapStoragePath, filename);
+      fs.writeFileSync(targetPath, file.buffer);
+
+      const checksum = crypto.createHash('sha256').update(file.buffer).digest('hex');
+      const fileType = normalizedExtension.slice(1);
+      const result = await postJson('/admin/map-backgrounds', {
+        mapCode,
+        mapTitle: form.fields.get('mapTitle') || mapConfig.title,
+        floorLabel: form.fields.get('floorLabel') || mapCode.replace(/^g/, ''),
+        filePath: `/maps/${filename}`,
+        fileType,
+        sourceChecksum: checksum
+      });
+
+      if (!result.ok) {
+        throw new Error(result.data?.error || `API error ${result.status}`);
+      }
+
+      res.writeHead(303, { location: `/?view=maps&mapCode=${encodeURIComponent(mapCode)}&mapUploaded=1` });
+      res.end();
+      return;
+    } catch (error) {
+      res.writeHead(303, { location: `/?view=maps&error=${encodeURIComponent(error.message)}` });
+      res.end();
+      return;
+    }
   }
 
   if (
@@ -3637,6 +3924,7 @@ const server = http.createServer(async (req, res) => {
         conflicts,
         auditLogs,
         contactAccessLogs,
+        mapDiagnostics,
         placeHistory,
         employeeHistory
       ] = await Promise.all([
@@ -3657,6 +3945,7 @@ const server = http.createServer(async (req, res) => {
         fetchJson(`/admin/conflicts?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/audit-logs?${auditParams.toString()}`),
         fetchJson(`/admin/contact-access-logs?date=${encodeURIComponent(selectedDate)}&limit=120`),
+        fetchJson('/admin/map-diagnostics'),
         placeId ? fetchJson(`/admin/places/${encodeURIComponent(placeId)}/history`) : Promise.resolve({ ok: true, status: 200, data: null }),
         employeeId ? fetchJson(`/admin/employees/${encodeURIComponent(employeeId)}/history`) : Promise.resolve({ ok: true, status: 200, data: null })
       ]);
@@ -3702,6 +3991,8 @@ const server = http.createServer(async (req, res) => {
               }
           : url.searchParams.get('jobDone')
             ? { type: 'ok', text: `Job выполнен: ${url.searchParams.get('jobDone')}.` }
+          : url.searchParams.get('mapUploaded') === '1'
+            ? { type: 'ok', text: 'Подложка карты заменена, версия и checksum обновлены.' }
           : url.searchParams.get('linePositionSet') === '1'
             ? { type: 'ok', text: 'Фактическая позиция в линии сохранена.' }
           : url.searchParams.get('departurePlanSet') === '1'
@@ -3728,6 +4019,7 @@ const server = http.createServer(async (req, res) => {
           conflicts,
           auditLogs,
           contactAccessLogs,
+          mapDiagnostics,
           placeHistory,
           employeeHistory,
           selectedDate,
