@@ -254,7 +254,7 @@ Acceptance:
 
 Цель: сделать карты надежным техническим инструментом.
 
-Status: completed and validated locally; pending OMV Portainer redeploy validation.
+Status: completed and validated on OMV via Portainer Git redeploy on 2026-06-13.
 
 - Завершить редактор зон во вкладке `Карта`: done for draw, update type and delete flows.
 - Добавить диагностику: зона без места, место без зоны, неактивное место с активной зоной: done.
@@ -265,7 +265,7 @@ Acceptance:
 
 - SVG-зоны не смещаются при изменении размера окна: done by normalized geometry and SVG viewBox overlay.
 - Геометрия редактируется только во вкладке `Карта`: done.
-- После замены подложки связи зон с местами сохраняются: done; background replacement updates only `parking_place_maps`.
+- После замены подложки связи зон с местами сохраняются: done; validated by replacing the G4 background with the same file, updating version/checksum while keeping existing zones.
 
 ### M5. Business Rules And Tests
 
