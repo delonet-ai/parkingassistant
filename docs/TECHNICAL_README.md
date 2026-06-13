@@ -189,7 +189,6 @@ Production storage mounts:
 
 ### Runtime And Deployment
 
-- Portainer Git redeploy для M1 еще нужно проверить на OMV после push.
 - Для независимости от локального Mac нужен постоянный staging/test ландшафт на OMV с отдельными volumes, ports и smoke-командой после redeploy.
 - `npm audit --omit=dev` показывает `xlsx` high severity advisories, npm сообщает `No fix available`. Риск принят для текущего offline import tooling: Excel-файлы считаются доверенными, import scripts не являются публичным web upload/runtime endpoint. Если импорт станет пользовательским или регулярным production-процессом, нужно заменить Excel dependency или вынести import tooling из основного runtime.
 
@@ -205,7 +204,7 @@ Production storage mounts:
 
 Цель: подготовить код к безопасному расширению.
 
-Status: completed locally. Требуется отдельная проверка Portainer Git redeploy на OMV.
+Status: completed and validated on OMV via Portainer Git redeploy on 2026-06-13.
 
 - Разделить `apps/api/src/server.js` на router, repositories, services и serializers: done for first stabilization layer; handler extraction remains tracked as technical debt.
 - Разделить `apps/admin-web/src/server.js` на render modules по вкладкам: done for render module selection; full file extraction remains tracked as technical debt.
@@ -218,7 +217,7 @@ Acceptance:
 - URL и поведение существующих endpoints не меняются: validated by preserving handlers and adding `smoke:m1`.
 - `node --check` проходит для всех JS entrypoints: `npm run check`.
 - Локальный smoke проходит: `npm run smoke:m1`.
-- Деплой через Portainer Git redeploy работает без ручного копирования файлов: pending OMV validation after push.
+- Деплой через Portainer Git redeploy работает без ручного копирования файлов: validated on OMV on 2026-06-13. Portainer auto-update pulled Git, skipped pull for build-only services, rebuilt `api`, `admin-web`, `bot-adapter`, `jobs`, recreated the stack, and API/admin health checks passed.
 
 ### M2. Operational Admin UI
 
