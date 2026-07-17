@@ -1377,48 +1377,6 @@ function renderOperationalMap(model) {
   `;
 }
 
-function renderReleaseForm(places, model) {
-  const ownedPlaces = places.filter((place) => place.permanentOwner);
-  const today = todayIsoDate();
-  const selectedPlaceId = model.form?.parkingPlaceId || '';
-  const dateFrom = model.form?.dateFrom || today;
-  const dateTo = model.form?.dateTo || dateFrom;
-  const notes = model.form?.notes || '';
-
-  const options = ownedPlaces
-    .map((place) => {
-      const owner = place.permanentOwner.displayName;
-      const selected = place.id === selectedPlaceId ? ' selected' : '';
-      return `<option value="${escapeHtml(place.id)}"${selected}>${escapeHtml(`${place.code} · ${owner}`)}</option>`;
-    })
-    .join('');
-
-  return `
-    <form class="action-form" method="post" action="/admin/place-releases">
-      <label>
-        <span>Закрепленное место</span>
-        <select name="parkingPlaceId" required>
-          <option value="">Выберите место</option>
-          ${options}
-        </select>
-      </label>
-      <label>
-        <span>С даты</span>
-        <input type="date" name="dateFrom" value="${escapeHtml(dateFrom)}" required />
-      </label>
-      <label>
-        <span>По дату</span>
-        <input type="date" name="dateTo" value="${escapeHtml(dateTo)}" required />
-      </label>
-      <label class="wide">
-        <span>Комментарий</span>
-        <input type="text" name="notes" value="${escapeHtml(notes)}" placeholder="Например: отпуск, командировка, удаленка" />
-      </label>
-      <button type="submit">Отдать место</button>
-    </form>
-  `;
-}
-
 function renderDateSelector(selectedDate, view = 'day', extraHidden = '') {
   return `
     <form class="date-form" method="get" action="/">
@@ -1429,102 +1387,6 @@ function renderDateSelector(selectedDate, view = 'day', extraHidden = '') {
         <input type="date" name="date" value="${escapeHtml(selectedDate)}" required />
       </label>
       <button type="submit">Показать день</button>
-    </form>
-  `;
-}
-
-function renderReleasesTable(releases) {
-  if (!releases.length) {
-    return '<p class="empty">Активных отдач пока нет.</p>';
-  }
-
-  const rows = releases
-    .map((release) => {
-      const releaseDate = formatDate(release.dateFrom);
-      return `
-        <tr>
-          <td>${escapeHtml(releaseDate)}</td>
-          <td>${escapeHtml(formatDate(release.dateTo))}</td>
-          <td>${escapeHtml(release.parkingPlace.code)}</td>
-          <td>${escapeHtml(release.user.displayName)}</td>
-          <td>${release.user.department ? escapeHtml(release.user.department) : '—'}</td>
-          <td>${release.notes ? escapeHtml(release.notes) : '—'}</td>
-          <td>
-            <form method="post" action="/admin/place-releases/cancel">
-              <input type="hidden" name="releaseId" value="${escapeHtml(release.id)}" />
-              <input type="hidden" name="date" value="${escapeHtml(releaseDate)}" />
-              <button class="button-secondary" type="submit">Отменить</button>
-            </form>
-          </td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  return `
-    <table>
-      <thead>
-        <tr>
-          <th>С даты</th>
-          <th>По дату</th>
-          <th>Место</th>
-          <th>Владелец</th>
-          <th>Дирекция</th>
-          <th>Комментарий</th>
-          <th>Действие</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-}
-
-function renderManualReservationForm(model) {
-  const employees = model.employees?.data?.employees || [];
-  const dashboard = model.dashboard?.data || {};
-  const selectedDate = dashboard.date || model.selectedDate;
-  const availablePlaces = (dashboard.releasedPlaces || []).filter((place) => !place.isReserved);
-
-  if (!availablePlaces.length) {
-    return '<p class="empty">На выбранную дату пока нет свободных отданных мест для ручного назначения.</p>';
-  }
-
-  const placeOptions = availablePlaces
-    .map((item) => {
-      const label = `${item.parkingPlace.code} · владелец ${item.owner.displayName}`;
-      return `<option value="${escapeHtml(item.parkingPlace.id)}">${escapeHtml(label)}</option>`;
-    })
-    .join('');
-  const employeeOptions = employees
-    .map((employee) => {
-      const department = employee.department ? ` · ${employee.department}` : '';
-      const permanent = employee.permanentPlace ? ` · место ${employee.permanentPlace.code}` : ' · без места';
-      return `<option value="${escapeHtml(employee.id)}">${escapeHtml(`${employee.displayName}${department}${permanent}`)}</option>`;
-    })
-    .join('');
-
-  return `
-    <form class="action-form" method="post" action="/admin/reservations/manual">
-      <input type="hidden" name="reservationDate" value="${escapeHtml(selectedDate)}" />
-      <label>
-        <span>Отданное место</span>
-        <select name="parkingPlaceId" required>
-          <option value="">Выберите место</option>
-          ${placeOptions}
-        </select>
-      </label>
-      <label>
-        <span>Сотрудник</span>
-        <select name="userId" required>
-          <option value="">Кому назначить</option>
-          ${employeeOptions}
-        </select>
-      </label>
-      <label class="wide">
-        <span>Причина</span>
-        <input type="text" name="reason" placeholder="Например: ручное назначение администратором" />
-      </label>
-      <button type="submit">Назначить</button>
     </form>
   `;
 }
@@ -3096,8 +2958,6 @@ const renderModules = createRenderModules({
 
 function renderPage(model) {
   const placesCount = Array.isArray(model.places?.data?.places) ? model.places.data.places.length : 0;
-  const places = model.places?.data?.places || [];
-  const releases = model.releases?.data?.releases || [];
   const selectedDate = model.selectedDate || todayIsoDate();
   const activeView = model.activeView || 'day';
   const bootstrap = model.bootstrap?.data?.bootstrapUser;

@@ -1787,8 +1787,6 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
       };
     }
 
-    const warnings = await calculateAssignmentWarnings(client, requestDate, place.parking_place_id);
-
     const reservationResult = await client.query(
       `
         select id, user_id, guest_parking_request_id, source
@@ -2554,31 +2552,6 @@ async function handleDeparturePlanUpsert(req, actorService = 'bot') {
   } finally {
     client.release();
   }
-}
-
-async function ensureParkingPlaceMap(mapCode, mapTitle, floorLabel, filePath) {
-  return queryOne(
-    `
-      insert into parking_place_maps (
-        code,
-        title,
-        floor_label,
-        file_type,
-        file_path
-      )
-      values ($1, $2, $3, 'png', $4)
-      on conflict (code)
-      do update set
-        title = excluded.title,
-        floor_label = excluded.floor_label,
-        file_type = excluded.file_type,
-        file_path = excluded.file_path,
-        is_active = true,
-        updated_at = now()
-      returning id, code, title, floor_label, file_type, file_path, version, is_active
-    `,
-    [mapCode, mapTitle, floorLabel, filePath]
-  );
 }
 
 function mapParkingPlaceMap(row) {
@@ -4805,6 +4778,8 @@ async function handleAdminGuestParkingRequestAssign(req) {
       ]
     );
     const reservation = reservationResult.rows[0];
+
+    const warnings = await calculateAssignmentWarnings(client, requestDate, place.parking_place_id);
 
     await client.query(
       `

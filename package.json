@@ -5,6 +5,10 @@
   "description": "Parking Assistant monorepo",
   "scripts": {
     "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js",
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "smoke:m1": "node scripts/smoke/m1.js",
     "api:start": "node apps/api/src/server.js",
     "admin-web:start": "node apps/admin-web/src/server.js",
@@ -16,5 +20,10 @@
   "dependencies": {
     "pg": "^8.16.3",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^17.7.0"
   }
 }
