@@ -14,8 +14,8 @@ without needing a database. This runs only the pure-unit-test task from the MVP 
 ## Phase 0 — Test safety net
 
 ### Task 1: Characterization tests for pure business logic
-- [ ] Identify pure/near-pure logic in `apps/api/src/server.js` and `apps/api/src/services/availability.js` (19:00/07:00 cut-offs, 5-guest reserve math, conflict/early-departure calc, line-position ordering). Do not move code yet — just pin behavior.
-- [ ] Add `node:test` unit tests covering `packages/shared/http.js` and `packages/shared/html.js` (escaping), which currently have no tests.
-- [ ] Add `node:test` unit tests for at least one pure helper found in the api layer, asserting current behavior (happy path + boundary + invalid input).
-- [ ] Run `npm run check && npm run lint && npm test`; all green.
-- [ ] Mark completed.
+- [x] Identify pure/near-pure logic in `apps/api/src/server.js` and `apps/api/src/services/availability.js` (19:00/07:00 cut-offs, 5-guest reserve math, conflict/early-departure calc, line-position ordering). Do not move code yet — just pin behavior. (Identified: availability guest-reserve math + before/after-19 split live in SQL inside `calculateAvailabilitySnapshot`; early-departure logic already covered by `dates.test.js` `isEarlyDeparture`; pure JS helpers `splitDisplayName`/`normalizeOptionalString`/`parsePositiveLimit` are internal and unexported in `server.js`. No code moved.)
+- [x] Add `node:test` unit tests covering `packages/shared/http.js` and `packages/shared/html.js` (escaping), which currently have no tests. (Added `packages/shared/http.test.js` and `packages/shared/html.test.js`.)
+- [x] Add `node:test` unit tests for at least one pure helper found in the api layer, asserting current behavior (happy path + boundary + invalid input). (Added `apps/api/src/serializers/job-runs.test.js` for `mapJobRun`.)
+- [x] Run `npm run check && npm run lint && npm test`; all green. (29 tests pass, lint and check clean.)
+- [x] Mark completed.
