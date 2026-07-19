@@ -42,16 +42,14 @@ function isValidTime(value) {
   return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-function isEarlyDeparture(value) {
-  return isValidTime(value) && value < '18:00';
-}
+// The 18:00 early-departure cut-off is a business rule, not a date utility: it lives in
+// `packages/domain/scheduling.js` alongside the 07:00 edit lock.
 
 module.exports = {
   addDaysToIsoDate,
   currentDateInTimezone,
   currentTimeInTimezone,
   formatDateForSql,
-  isEarlyDeparture,
   isIsoDate,
   isValidTime
 };

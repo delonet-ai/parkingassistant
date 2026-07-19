@@ -8,7 +8,6 @@ const {
   currentDateInTimezone,
   currentTimeInTimezone,
   formatDateForSql,
-  isEarlyDeparture,
   isIsoDate,
   isValidTime
 } = require('./dates');
@@ -47,13 +46,8 @@ test('isValidTime accepts 24h HH:MM only', () => {
   assert.equal(isValidTime('noon'), false);
 });
 
-test('isEarlyDeparture is true only for valid times before 18:00', () => {
-  assert.equal(isEarlyDeparture('17:59'), true);
-  assert.equal(isEarlyDeparture('09:00'), true);
-  assert.equal(isEarlyDeparture('18:00'), false);
-  assert.equal(isEarlyDeparture('19:30'), false);
-  assert.equal(isEarlyDeparture('not-a-time'), false);
-});
+// The 18:00 early-departure cut-off moved to `packages/domain/scheduling.js` in Task 16
+// — it is a business rule, not a date utility. Its tests moved with it.
 
 // The 07:00 departure-edit lock (apps/api/src/server.js) and the 19:00 / 08:00 / 07:00
 // job triggers (apps/jobs/src/scheduler.js) all compare `currentTimeInTimezone()` output

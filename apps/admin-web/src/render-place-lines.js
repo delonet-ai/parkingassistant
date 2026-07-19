@@ -1,5 +1,6 @@
 'use strict';
 
+const { PLACE_ROLES, derivePlaceStatus } = require('../../../packages/domain/line-inventory');
 const { escapeHtml } = require('../../../packages/shared/html');
 
 /**
@@ -17,12 +18,15 @@ const { escapeHtml } = require('../../../packages/shared/html');
 
 // place_role is a first-class parking_places column since 005_place_inventory.sql.
 // 'rotatable' is the guest pool, 'blocked' takes a single slot out of service without
-// archiving the whole line.
-const PLACE_ROLE_OPTIONS = [
-  ['regular', 'Обычное'],
-  ['rotatable', 'Ротируемое/гостевое'],
-  ['blocked', 'Недоступное']
-];
+// archiving the whole line. The set of roles is the domain's; only the Russian labels
+// are this renderer's, so a role added to the domain cannot go missing from the select.
+const PLACE_ROLE_LABELS = {
+  regular: 'Обычное',
+  rotatable: 'Ротируемое/гостевое',
+  blocked: 'Недоступное'
+};
+
+const PLACE_ROLE_OPTIONS = PLACE_ROLES.map((role) => [role, PLACE_ROLE_LABELS[role] || role]);
 
 // Status is never conveyed by colour alone — every slot prints the word too, so the list
 // stays readable for colour-blind operators and in print.
@@ -48,33 +52,6 @@ const POSITION_LABELS = {
   2: ['перёд', 'зад'],
   3: ['перёд', 'середина', 'зад']
 };
-
-/**
- * Slot status in the precedence the API's `placeSlotStatus` uses:
- * occupied → guest → released → blocked → rotatable → free.
- *
- * The Day tab's element grid gets its statuses from the API, while the place drawer
- * derives its own from the dashboard payload. Both go through this function so a slot
- * reading «недоступно» can never open a card reading «свободно».
- *
- * @param {{ reservationSource?: string|null, hasReservation?: boolean, hasRelease?: boolean, placeRole?: string }} state
- * @returns {string} one of PLACE_STATUSES
- */
-function derivePlaceStatus({ reservationSource = null, hasReservation = false, hasRelease = false, placeRole = 'regular' } = {}) {
-  if (hasReservation) {
-    return reservationSource === 'guest' ? 'guest' : 'occupied';
-  }
-
-  if (hasRelease) {
-    return 'released';
-  }
-
-  if (placeRole === 'blocked' || placeRole === 'rotatable') {
-    return placeRole;
-  }
-
-  return 'free';
-}
 
 function statusLabel(status) {
   const match = PLACE_STATUS_LABELS.find(([value]) => value === status);

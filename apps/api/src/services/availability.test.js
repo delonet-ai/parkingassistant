@@ -14,6 +14,11 @@ const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require(
 // Task 15 moved the SQL itself into `modules/place-releases/repository.js`, so the mock
 // is now the `queryOne`/`queryMany` surface a repository is handed rather than a raw pg
 // client. The assertions on the SQL text still hold — the repository is what runs it now.
+//
+// Task 16 moved the arithmetic into `packages/domain/guest-reserve.js`, and the snapshot
+// shape / reserve-status assertions moved to `guest-reserve.test.js` with it. What is
+// left here is what this file is now responsible for: that the service asks the
+// repository the right question and hands the answer to the right rule.
 
 function createMockClient(rows) {
   const calls = [];
@@ -79,61 +84,6 @@ test('calculateAvailabilitySnapshot passes the date and the guest reserve minimu
   assert.deepEqual(client.calls[0].params, ['2026-07-17', 5]);
   assert.match(client.calls[0].text, /from place_releases pr/);
   assert.match(client.calls[0].text, /pr\.release_during @> \$1::date/);
-});
-
-test('guest reserve status is ok at exactly the minimum and low below it', async () => {
-  const atMinimum = await calculateAvailabilitySnapshot(
-    createMockClient([{ ...fullRow, available_places: 5 }]),
-    '2026-07-17',
-    options
-  );
-  assert.equal(atMinimum.guestReserve.status, 'ok');
-
-  const belowMinimum = await calculateAvailabilitySnapshot(
-    createMockClient([{ ...fullRow, available_places: 4 }]),
-    '2026-07-17',
-    options
-  );
-  assert.equal(belowMinimum.guestReserve.status, 'low');
-
-  const empty = await calculateAvailabilitySnapshot(
-    createMockClient([{ ...fullRow, available_places: 0 }]),
-    '2026-07-17',
-    options
-  );
-  assert.equal(empty.guestReserve.status, 'low');
-  assert.equal(empty.guestReserve.availablePlaces, 0);
-});
-
-test('a zero guest reserve minimum is never low', async () => {
-  const snapshot = await calculateAvailabilitySnapshot(
-    createMockClient([{ ...fullRow, available_places: 0 }]),
-    '2026-07-17',
-    { appTimezone: 'Europe/Moscow', guestReserveMinimum: 0 }
-  );
-
-  assert.equal(snapshot.guestReserve.status, 'ok');
-  assert.equal(snapshot.guestReserve.minimum, 0);
-});
-
-test('calculateAvailabilitySnapshot defaults every counter to 0 when the row is missing', async () => {
-  const snapshot = await calculateAvailabilitySnapshot(createMockClient([]), '2026-07-17', options);
-
-  assert.equal(snapshot.releasedPlaces, 0);
-  assert.equal(snapshot.availablePlaces, 0);
-  assert.deepEqual(snapshot.employeeAvailability, { before19: 0, after19: 0 });
-  assert.deepEqual(snapshot.byType, { single: 0, double: 0, triple: 0 });
-  assert.equal(snapshot.guestReserve.status, 'low');
-});
-
-test('calculateAvailabilitySnapshot echoes the date and timezone it was given', async () => {
-  const snapshot = await calculateAvailabilitySnapshot(createMockClient([fullRow]), '2027-01-01', {
-    appTimezone: 'UTC',
-    guestReserveMinimum: 5
-  });
-
-  assert.equal(snapshot.date, '2027-01-01');
-  assert.equal(snapshot.timezone, 'UTC');
 });
 
 test('countAvailableReleasedPlaces returns the count for the requested date', async () => {

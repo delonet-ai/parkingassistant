@@ -52,14 +52,20 @@ Adapter layer for `Yandex Messenger`. It receives webhook events, calls backend 
 
 ### `packages/domain`
 
-Core parking rules and policies:
+Core parking rules and policies — pure functions with no I/O imports. Services fetch data
+through repositories and hand it to these; nothing here knows about Postgres, HTTP, or HTML.
 
-- reservation rules
-- guest reserve
-- queue processing
-- place inventory: capacity ↔ slot count, slot position assignment, archive-blocker detection
-- line occupancy
-- departure constraints
+| Module | Rules it owns |
+|---|---|
+| `scheduling.js` | the 18:00 early-departure and 07:00 departure-edit cut-offs, `is_early` drift detection |
+| `guest-reserve.js` | the availability snapshot fold, the employee pool = available − reserve, the `ok`/`low` status |
+| `queue.js` | queue allocation: pick order, the never-give-back-your-own-place cursor, every skip reason |
+| `line-inventory.js` | capacity ↔ slot count ↔ place type, slot position assignment, place role and guest rank normalization, slot status precedence, archive-blocker naming |
+| `line-ordering.js` | line position validity, "who is ahead of me", how a blocking contact may be reached |
+| `conflicts.js` | conflict classification (guest = warning, employee = info) and early-departure assignment warnings |
+
+`packages/domain/index.js` is the barrel the API imports; a renderer that needs one rule
+(admin-web's place drawer and `derivePlaceStatus`) requires the single module directly.
 - conflict detection
 
 ### `packages/db`

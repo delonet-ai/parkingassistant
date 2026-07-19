@@ -450,11 +450,34 @@ which had nowhere to go once no SQL was allowed to remain in `server.js`; they b
 together, so the enumerated list and the code still agree.
 
 ### Task 16: Extract pure business rules into packages/domain
-- [ ] Move scheduling/reserve/queue/early-departure/line-ordering/conflict rules into `packages/domain` as pure functions with no I/O imports; services call them with data from repositories.
-- [ ] Include the line-inventory rules: capacity ↔ slot count, position assignment, archive-blocker detection.
-- [ ] Relocate and expand the Phase 0 unit tests next to the domain code.
-- [ ] Golden tests unchanged; all validation commands green.
-- [ ] Mark completed.
+- [x] Move scheduling/reserve/queue/early-departure/line-ordering/conflict rules into `packages/domain` as pure functions with no I/O imports; services call them with data from repositories. — six modules behind a barrel (`index.js`): `scheduling.js` (the 18:00 and 07:00 cut-offs, `is_early` drift detection), `guest-reserve.js` (the availability fold, pool = available − reserve, `ok`/`low`), `queue.js` (`planQueueAssignments`), `line-inventory.js`, `line-ordering.js` (position validity, "who is ahead", contact resolution), `conflicts.js` (classification + assignment warnings). Every rule takes its clock reading as an argument rather than reading one, so it can be replayed for any moment. `packages/domain/**` was already under the ESLint boundary from Task 13, so the purity is enforced rather than asserted in a comment.
+- [x] Include the line-inventory rules: capacity ↔ slot count, position assignment, archive-blocker detection. — `buildLineDefinition()` now owns the whole create-an-element decision (capacity validity, slot-count agreement, per-slot code/role/rank normalization, duplicate detection, and the derived line code / name / notes / place type / 1..capacity positions), returning `{ error: { statusCode, error } }` or `{ line }` and never throwing; the handler is left with the transaction. Plus `describeArchiveBlockers()`.
+- [x] Relocate and expand the Phase 0 unit tests next to the domain code. — the 18:00 cut-off tests moved from `packages/shared/dates.test.js` to `packages/domain/scheduling.test.js`, and the availability snapshot / reserve-status characterization tests from `services/availability.test.js` to `guest-reserve.test.js`. Both sources keep only what is still theirs: `dates.test.js` the format helpers and the string-comparison guarantee the cut-offs rest on, `availability.test.js` the SQL parameters. 55 new domain tests in total (222 unit tests, up from 167).
+- [x] Golden tests unchanged; all validation commands green. — **not one of the 122 golden snapshots was regenerated**, verified byte-identical over four consecutive full runs; `npm run test:integration` **266/266** against a live Postgres. `npm run check` (extended with the six domain modules) / `lint` clean, `npm test` **222** pass.
+- [x] Mark completed.
+
+**Two duplicated rules collapsed while extracting, both of which had already drifted once:**
+
+1. `isEarlyDeparture` lived in `packages/shared/dates.js`. The 18:00 cut-off is a business
+   rule, not a date utility, and keeping it there is what let `departure_plans.is_early`
+   drift in the first place (Task 7). It moved to `scheduling.js`; `shared/dates` keeps
+   only format and timezone helpers, and a comment saying where the rule went.
+2. The slot-status precedence existed twice — `placeSlotStatus(row)` in the API and
+   `derivePlaceStatus(state)` in admin-web's renderer, over two different input shapes.
+   That divergence is Task 12's defect 5 (a slot reading «недоступно» opening a card
+   reading «свободно»), fixed then only *within* admin-web. There is now one
+   implementation in `line-inventory.js`; `placeSlotStatus` is its database-row adapter,
+   and admin-web imports it. `PLACE_ROLE_OPTIONS` is likewise built from the domain's
+   `PLACE_ROLES` with only the Russian labels left in the renderer, so a role added to
+   the domain cannot go missing from the select.
+
+**One characterization test corrected rather than the code:** the queue's pool ceiling is
+checked *before* the inventory is consulted, so a candidate whose pool is exhausted is
+skipped as `guest_reserve_minimum_reached` even when the real cause is that no place is
+left. `no_available_released_place` is reachable only when a candidate is still inside the
+pool and every remaining place is their own. The first draft of the test asserted the
+intuitive answer, failed, and was corrected to the actual behavior — which is the point of
+extracting under a test net rather than rewriting.
 
 ### Task 17: Extract controllers and per-module route tables
 - [ ] Move each handler group into `modules/<context>/controller.js`; controllers hold no SQL, services own transactions.

@@ -2,7 +2,27 @@
 
 const http = require('node:http');
 const { Pool } = require('pg');
-const { addDaysToIsoDate, currentDateInTimezone, currentTimeInTimezone, formatDateForSql, isEarlyDeparture, isIsoDate, isValidTime } = require('../../../packages/shared/dates');
+const { addDaysToIsoDate, currentDateInTimezone, currentTimeInTimezone, formatDateForSql, isIsoDate, isValidTime } = require('../../../packages/shared/dates');
+const {
+  blockingContactResolution,
+  buildLineDefinition,
+  classifyConflict,
+  describeArchiveBlockers,
+  describeBlockingContact,
+  earlyDepartureBlockingWarnings,
+  employeePoolSize,
+  findDriftedDeparturePlans,
+  isDepartureEditClosed,
+  isEarlyDeparture,
+  isPositionWithinCapacity,
+  isValidLinePosition,
+  normalizeDepartureTime,
+  isValidPlaceType,
+  normalizePlaceRole,
+  placeSlotStatus,
+  planQueueAssignments,
+  summarizeEmployeePool
+} = require('../../../packages/domain');
 const { normalizeApiErrorPayload } = require('../../../packages/shared/errors');
 const { readJsonBody, sendJson: writeJson } = require('../../../packages/shared/http');
 const { createDbRepository, withTransaction } = require('./repositories/db');
@@ -649,9 +669,9 @@ async function handleAdminParkingPlaceUpdate(req) {
   const linePositionHint = body.linePositionHint ? Number(body.linePositionHint) : null;
   const guestPriorityRank = body.guestPriorityRank ? Number(body.guestPriorityRank) : null;
   // Absent placeRole means "leave it alone" — the field is optional on this endpoint.
-  const placeRole = PLACE_ROLES.includes(body.placeRole) ? body.placeRole : null;
+  const placeRole = normalizePlaceRole(body.placeRole, null);
 
-  if (!placeId || !code || !title || !['single', 'double', 'triple'].includes(placeType)) {
+  if (!placeId || !code || !title || !isValidPlaceType(placeType)) {
     return {
       statusCode: 400,
       payload: {
@@ -1128,7 +1148,7 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
   const userId = body.userId || null;
   const guestParkingRequestId = body.guestParkingRequestId || null;
 
-  if (!isIsoDate(occupancyDate) || !lineGroupId || !parkingPlaceId || !Number.isInteger(position) || position < 1 || position > 3) {
+  if (!isIsoDate(occupancyDate) || !lineGroupId || !parkingPlaceId || !isValidLinePosition(position)) {
     return {
       statusCode: 400,
       payload: {
@@ -1160,7 +1180,7 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
         throw abortWith(404, 'Parking place is not attached to the selected line group');
       }
 
-      if (position > place.capacity) {
+      if (!isPositionWithinCapacity(position, place.capacity)) {
         throw abortWith(400, `Position ${position} exceeds line capacity ${place.capacity}`);
       }
 
@@ -1310,7 +1330,7 @@ async function handleBotBlockingContacts(searchParams) {
   const contacts = [];
 
   for (const blocker of blockers) {
-    const resolution = blocker.subject_type === 'guest' ? 'guest_contact_via_admin' : 'employee_contact_shown';
+    const resolution = blockingContactResolution(blocker.subject_type);
 
     await contactAccessRepository.insertContactAccessLog(dbRepository, {
       requesterUserId,
@@ -1326,33 +1346,8 @@ async function handleBotBlockingContacts(searchParams) {
       }
     });
 
-    contacts.push(
-        blocker.subject_type === 'guest'
-          ? {
-              position: blocker.position,
-              subjectType: 'guest',
-              guestName: blocker.guest_name,
-              message: 'Впереди стоит гость. В экстренном случае напишите администратору парковки.',
-              host: blocker.host_user_id
-                ? {
-                    id: blocker.host_user_id,
-                    displayName: blocker.host_display_name
-                  }
-                : null
-            }
-          : {
-              position: blocker.position,
-              subjectType: 'employee',
-              user: {
-                id: blocker.user_id,
-                displayName: blocker.user_display_name,
-                department: blocker.user_department,
-                email: blocker.user_email,
-                phone: blocker.user_phone
-              }
-            }
-      );
-    }
+    contacts.push(describeBlockingContact(blocker));
+  }
 
   return {
     statusCode: 200,
@@ -1384,19 +1379,7 @@ async function calculateAssignmentWarnings(repo, reservationDate, parkingPlaceId
     linePositionHint: place.line_position_hint
   });
 
-  return risks.map((risk) => ({
-    type: 'early_departure_blocking_risk',
-    message: `Назначение на место ${place.code} может перекрыть ранний выезд ${risk.display_name} в ${risk.departure_time.slice(0, 5)}.`,
-    lineGroupCode: risk.line_group_code,
-    assignedParkingPlaceCode: place.code,
-    affectedUser: {
-      id: risk.user_id,
-      displayName: risk.display_name
-    },
-    affectedParkingPlaceCode: risk.parking_place_code,
-    affectedPosition: risk.position,
-    departureTime: risk.departure_time.slice(0, 5)
-  }));
+  return earlyDepartureBlockingWarnings({ placeCode: place.code, risks });
 }
 
 async function getDeparturePlansForDate(date) {
@@ -1436,8 +1419,7 @@ async function getConflictsForDate(date) {
   const rows = await conflictsRepository.listConflictsForDate(dbRepository, date);
 
   return rows.map((row) => ({
-    type: row.blocker_subject_type === 'guest' ? 'guest_blocks_early_departure' : 'employee_blocks_early_departure',
-    severity: row.blocker_subject_type === 'guest' ? 'warning' : 'info',
+    ...classifyConflict(row.blocker_subject_type),
     lineGroup: {
       id: row.line_group_id,
       code: row.line_group_code,
@@ -1541,7 +1523,7 @@ async function handleDeparturePlanUpsert(req, actorService = 'bot') {
 
   const userId = body.userId;
   const planDate = body.planDate || body.date;
-  const departureTime = typeof body.departureTime === 'string' ? body.departureTime.slice(0, 5) : '';
+  const departureTime = normalizeDepartureTime(body.departureTime);
 
   if (!userId || !isIsoDate(planDate) || !isValidTime(departureTime)) {
     return {
@@ -1554,7 +1536,13 @@ async function handleDeparturePlanUpsert(req, actorService = 'bot') {
     };
   }
 
-  if (planDate === currentDateInTimezone(appTimezone) && currentTimeInTimezone(appTimezone) >= '07:00') {
+  if (
+    isDepartureEditClosed({
+      planDate,
+      today: currentDateInTimezone(appTimezone),
+      currentTime: currentTimeInTimezone(appTimezone)
+    })
+  ) {
     return {
       statusCode: 409,
       payload: {
@@ -1817,49 +1805,6 @@ async function handleAdminMapBackgroundUpdate(req) {
 // write path to parking_places.is_active.
 // ---------------------------------------------------------------------------
 
-const PLACE_ROLES = ['regular', 'rotatable', 'blocked'];
-const PLACE_TYPE_BY_CAPACITY = { 1: 'single', 2: 'double', 3: 'triple' };
-
-/**
- * Slot status, in the precedence the legend uses:
- * occupied → guest → released → blocked → rotatable → free.
- * The last two come from parking_places.place_role.
- */
-function placeSlotStatus(row) {
-  if (row.reservation_id) {
-    return row.reservation_source === 'guest' ? 'guest' : 'occupied';
-  }
-
-  if (row.release_id) {
-    return 'released';
-  }
-
-  if (row.place_role === 'blocked') {
-    return 'blocked';
-  }
-
-  if (row.place_role === 'rotatable') {
-    return 'rotatable';
-  }
-
-  return 'free';
-}
-
-function normalizePlaceRole(value, fallback = 'regular') {
-  return PLACE_ROLES.includes(value) ? value : fallback;
-}
-
-/** Guest priority is a smallint rank; an empty value means "not in the guest pool". */
-function normalizeGuestPriorityRank(value) {
-  if (value === undefined || value === null || value === '') {
-    return null;
-  }
-
-  const rank = Number(value);
-
-  return Number.isInteger(rank) && rank >= 1 && rank <= 99 ? rank : undefined;
-}
-
 async function handleAdminPlaceLinesList(searchParams) {
   const floor = normalizeOptionalString(searchParams.get('floor'));
   const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
@@ -1938,114 +1883,44 @@ async function handleAdminPlaceLineCreate(req) {
     };
   }
 
-  const floorLabel = normalizeOptionalString(body.floorLabel);
-  const capacity = Number(body.capacity);
-  const rawSlots = Array.isArray(body.slots) ? body.slots : [];
+  const definition = buildLineDefinition({
+    floorLabel: normalizeOptionalString(body.floorLabel),
+    capacity: body.capacity,
+    slots: body.slots
+  });
 
-  if (!floorLabel) {
+  if (definition.error) {
     return {
-      statusCode: 400,
+      statusCode: definition.error.statusCode,
       payload: {
         status: 'error',
         service: 'api',
-        error: 'floorLabel is required'
+        error: definition.error.error
       }
     };
   }
 
-  if (![1, 2, 3].includes(capacity)) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'capacity must be 1, 2 or 3'
-      }
-    };
-  }
-
-  if (rawSlots.length !== capacity) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: `slots must contain exactly ${capacity} entries to match capacity`
-      }
-    };
-  }
-
-  const slots = [];
-
-  for (const rawSlot of rawSlots) {
-    const code = typeof rawSlot?.code === 'string' ? rawSlot.code.trim() : '';
-    const title = typeof rawSlot?.title === 'string' && rawSlot.title.trim() ? rawSlot.title.trim() : code;
-    const guestPriorityRank = normalizeGuestPriorityRank(rawSlot?.guestPriorityRank);
-
-    if (!code) {
-      return {
-        statusCode: 400,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'every slot needs a code'
-        }
-      };
-    }
-
-    if (guestPriorityRank === undefined) {
-      return {
-        statusCode: 400,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'guestPriorityRank must be an integer between 1 and 99'
-        }
-      };
-    }
-
-    slots.push({
-      code,
-      title,
-      placeRole: normalizePlaceRole(rawSlot?.placeRole),
-      guestPriorityRank
-    });
-  }
-
-  const duplicate = slots.find((slot, index) => slots.findIndex((other) => other.code === slot.code) !== index);
-
-  if (duplicate) {
-    return {
-      statusCode: 409,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: `Duplicate place code in request: ${duplicate.code}`
-      }
-    };
-  }
-
-  const lineCode = `line-${floorLabel}-${slots[0].code}`;
+  const { capacity, code: lineCode, floorLabel, name, notes, placeType, slots } = definition.line;
 
   try {
     const stored = await withTransaction(pool, async (repo) => {
       const line = await placeLinesRepository.insertLineGroup(repo, {
         code: lineCode,
-        name: `Линия ${floorLabel} / ${slots[0].code}`,
+        name,
         capacity,
         floorLabel,
-        notes: `${PLACE_TYPE_BY_CAPACITY[capacity]} element`
+        notes
       });
 
-      for (const [index, slot] of slots.entries()) {
+      for (const slot of slots) {
         await placeLinesRepository.insertSlot(repo, {
           code: slot.code,
           title: slot.title,
           floorLabel,
-          placeType: PLACE_TYPE_BY_CAPACITY[capacity],
+          placeType,
           placeRole: slot.placeRole,
           lineGroupId: line.id,
-          linePositionHint: index + 1,
+          linePositionHint: slot.position,
           guestPriorityRank: slot.guestPriorityRank
         });
       }
@@ -2164,12 +2039,7 @@ async function handleAdminPlaceLineArchive(req) {
 
       if (blockerRows.length > 0) {
         throw abortWith(409, 'Parking line still has active reservations or permanent assignments', {
-          blockers: blockerRows.map((row) => ({
-            type: row.blocker_type,
-            placeCode: row.place_code,
-            detail: row.detail,
-            userDisplayName: row.user_display_name || null
-          }))
+          blockers: describeArchiveBlockers(blockerRows)
         });
       }
 
@@ -3247,71 +3117,46 @@ async function processQueueForDate(queueDate) {
       const queueEntries = await queueRepository.listWaitingEntriesForUpdate(repo, queueDate);
       const availablePlaces = await placeReleasesRepository.listPlacesForQueueAssignment(repo, queueDate);
 
-      const maxEmployeeAssignments = Math.max(0, availablePlaces.length - guestReserveMinimum);
+      const { decisions } = planQueueAssignments({
+        entries: queueEntries,
+        places: availablePlaces,
+        guestReserveMinimum
+      });
+
       const assignments = [];
       const skipped = [];
-      let placeIndex = 0;
 
-      for (const entry of queueEntries) {
-        // A user who already holds a place for the date — served manually, or by
-        // an earlier partial run — is done, not a candidate. Assigning them a
-        // second place trips reservations_active_user_date_uniq, and because the
-        // whole run is one transaction that used to fail the ENTIRE batch,
-        // including the employees queued behind them. Close their request against
-        // the reservation they already have and move on.
-        if (entry.existing_reservation_id) {
+      for (const decision of decisions) {
+        const { entry } = decision;
+        const identity = {
+          requestId: entry.request_id,
+          queueEntryId: entry.queue_entry_id,
+          queuePosition: entry.queue_position,
+          userId: entry.user_id,
+          userDisplayName: entry.user_display_name
+        };
+
+        if (decision.outcome === 'close') {
           await employeeRequestsRepository.assignRequest(repo, {
             requestId: entry.request_id,
-            reservationId: entry.existing_reservation_id
+            reservationId: decision.reservationId
           });
 
           await queueRepository.assignQueueEntry(repo, {
             queueEntryId: entry.queue_entry_id,
-            reservationId: entry.existing_reservation_id
+            reservationId: decision.reservationId
           });
 
-          skipped.push({
-            requestId: entry.request_id,
-            queueEntryId: entry.queue_entry_id,
-            queuePosition: entry.queue_position,
-            userId: entry.user_id,
-            userDisplayName: entry.user_display_name,
-            reservationId: entry.existing_reservation_id,
-            reason: 'already_has_reservation'
-          });
+          skipped.push({ ...identity, reservationId: decision.reservationId, reason: decision.reason });
           continue;
         }
 
-        if (assignments.length >= maxEmployeeAssignments) {
-          skipped.push({
-            requestId: entry.request_id,
-            queueEntryId: entry.queue_entry_id,
-            queuePosition: entry.queue_position,
-            userId: entry.user_id,
-            userDisplayName: entry.user_display_name,
-            reason: 'guest_reserve_minimum_reached'
-          });
+        if (decision.outcome === 'skip') {
+          skipped.push({ ...identity, reason: decision.reason });
           continue;
         }
 
-        while (placeIndex < availablePlaces.length && availablePlaces[placeIndex].owner_user_id === entry.user_id) {
-          placeIndex += 1;
-        }
-
-        const place = availablePlaces[placeIndex];
-
-        if (!place) {
-          skipped.push({
-            requestId: entry.request_id,
-            queueEntryId: entry.queue_entry_id,
-            queuePosition: entry.queue_position,
-            userId: entry.user_id,
-            userDisplayName: entry.user_display_name,
-            reason: 'no_available_released_place'
-          });
-          continue;
-        }
-
+        const { place } = decision;
         const reservation = await reservationsRepository.insertReservation(repo, {
           reservationDate: queueDate,
           parkingPlaceId: place.parking_place_id,
@@ -3368,8 +3213,6 @@ async function processQueueForDate(queueDate) {
             code: place.parking_place_code
           }
         });
-
-        placeIndex += 1;
       }
 
       // Entries closed against a reservation the user already held are excluded:
@@ -3701,15 +3544,18 @@ async function handleAdminJobUnlockEmployeePool(req) {
         await placeReleasesRepository.lockEmployeePoolForDate(repo, targetDate);
 
         const availableReleasedPlacesCount = await countAvailableReleasedPlaces(repo, targetDate);
-        const employeePoolSize = Math.max(0, availableReleasedPlacesCount - guestReserveMinimum);
+        const poolSize = employeePoolSize(availableReleasedPlacesCount, guestReserveMinimum);
 
         const queueSummary = await queueRepository.summarizeWaitingQueue(repo, {
           queueDate: targetDate,
-          employeePoolSize
+          employeePoolSize: poolSize
         });
 
-        const waitingCount = queueSummary?.waiting_count || 0;
-        const servableCount = Math.min(queueSummary?.servable_count || 0, employeePoolSize);
+        const { waitingCount, servableCount, unservableCount } = summarizeEmployeePool({
+          employeePoolSize: poolSize,
+          waitingCount: queueSummary?.waiting_count,
+          servableCount: queueSummary?.servable_count
+        });
 
         const alreadyUnlocked = await auditRepository.findEmployeePoolUnlockedLog(repo, targetDate);
 
@@ -3723,7 +3569,7 @@ async function handleAdminJobUnlockEmployeePool(req) {
               timezone: appTimezone,
               guestReserveMinimum,
               availableReleasedPlacesCount,
-              employeePoolSize,
+              employeePoolSize: poolSize,
               waitingCount,
               servableCount
             }
@@ -3735,10 +3581,10 @@ async function handleAdminJobUnlockEmployeePool(req) {
           timezone: appTimezone,
           guestReserveMinimum,
           availableReleasedPlacesCount,
-          employeePoolSize,
+          employeePoolSize: poolSize,
           waitingCount,
           servableCount,
-          unservableCount: Math.max(0, waitingCount - servableCount),
+          unservableCount,
           alreadyUnlocked: Boolean(alreadyUnlocked)
         };
       })
@@ -3807,14 +3653,12 @@ async function handleAdminJobRebuildConflicts(req) {
     const result = await withJobRun('rebuild_conflicts', targetDate, async () => {
       const plans = await departurePlansRepository.listPlanEarlyFlagsForDate(dbRepository, targetDate);
 
-      const drifted = plans.filter(
-        (plan) => isEarlyDeparture(plan.departure_time.slice(0, 5)) !== plan.is_early
-      );
+      const drifted = findDriftedDeparturePlans(plans);
 
       for (const plan of drifted) {
         await departurePlansRepository.updatePlanEarlyFlag(dbRepository, {
           planId: plan.id,
-          isEarly: isEarlyDeparture(plan.departure_time.slice(0, 5))
+          isEarly: plan.isEarly
         });
       }
 
