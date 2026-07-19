@@ -1,0 +1,29 @@
+name: parkingassistant-test
+
+# Ephemeral Postgres for `npm run test:integration`.
+# Data lives in tmpfs only — stopping the container discards the database, which is
+# exactly what an integration harness wants.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   export DATABASE_URL_TEST=postgresql://parkingassistant_test:parkingassistant_test@127.0.0.1:5433/parkingassistant_test
+#   npm run test:integration
+#   docker compose -f docker-compose.test.yml down
+
+services:
+  postgres-test:
+    image: postgres:16-bookworm
+    container_name: parkingassistant-postgres-test
+    environment:
+      POSTGRES_DB: parkingassistant_test
+      POSTGRES_USER: parkingassistant_test
+      POSTGRES_PASSWORD: parkingassistant_test
+      TZ: ${APP_TIMEZONE:-Europe/Moscow}
+    ports:
+      - "${POSTGRES_TEST_PORT:-5433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

@@ -7,6 +7,7 @@
     "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js",
     "test": "node --test",
     "test:watch": "node --test --watch",
+    "test:integration": "node --test \"**/*.itest.js\"",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "smoke:m1": "node scripts/smoke/m1.js",

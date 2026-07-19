@@ -137,6 +137,49 @@ docker compose --env-file staging/env/app.env up -d
 - для `OMV + Portainer Git stack` bind mounts должны быть абсолютными, иначе Portainer привяжет их к временному `/data/compose/<id>` workspace
 - в текущем compose server-side mounts зафиксированы через `/opt/git/parkingassistant/staging/...`
 
+## Integration test database
+
+Интеграционные тесты (`*.itest.js`) требуют живой PostgreSQL и запускаются отдельно от `npm test`.
+
+### 1. Поднять эфемерный Postgres
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+```
+
+Данные лежат в `tmpfs`, порт по умолчанию `5433` (переопределяется `POSTGRES_TEST_PORT`).
+После `down` база исчезает — это ожидаемое поведение для тестового стенда.
+
+### 2. Указать `DATABASE_URL_TEST`
+
+```bash
+export DATABASE_URL_TEST=postgresql://parkingassistant_test:parkingassistant_test@127.0.0.1:5433/parkingassistant_test
+```
+
+Подойдёт и любая другая база, в которой у пользователя есть право `CREATE SCHEMA`.
+Существующие данные не затрагиваются: каждый прогон создаёт собственную схему
+`itest_<pid>_<n>`, применяет в неё все `packages/db/schema/*.sql` и `packages/db/seeds/*.sql`,
+а в конце удаляет её целиком.
+
+### 3. Запустить
+
+```bash
+npm run test:integration
+```
+
+Если `DATABASE_URL_TEST` не задан, интеграционные наборы помечаются как `SKIP`, а не падают —
+поэтому команду безопасно запускать где угодно.
+
+### 4. Погасить
+
+```bash
+docker compose -f docker-compose.test.yml down
+```
+
+Хелперы: `packages/db/testing/harness.js` (схема + сиды + очистка) и
+`apps/api/testing/boot-api.js` (поднимает `apps/api/src/server.js` на свободном порту и ждёт
+`/health`). Подробности — в `AGENTS.md` → Testing.
+
 ## Current Limitation
 
 Сервисы `api`, `admin-web`, `bot-adapter`, `jobs` пока запускаются с placeholder-командами.

@@ -169,12 +169,12 @@ graphite. The existing status/type filters carry over and simply hide non-matchi
 - [x] Mark completed.
 
 ### Task 2: Postgres-backed integration test harness
-- [ ] Add a `test:integration` npm script running `node --test` over `**/*.itest.js`.
-- [ ] Provide an ephemeral Postgres (compose service or documented `DATABASE_URL_TEST`) and a setup helper that applies `packages/db/schema/*.sql` + seeds into a scratch schema per run.
-- [ ] Add one smoke integration test: boot the api handler layer against the test DB, hit `/health` and one read endpoint, assert 200 + payload shape.
-- [ ] Document the harness in `AGENTS.md` and `SETUP.md`.
-- [ ] Run `npm run test:integration`; green.
-- [ ] Mark completed.
+- [x] Add a `test:integration` npm script running `node --test` over `**/*.itest.js`. — note: integration tests must never live in a directory named `test/`; the default `node --test` discovery picks up *every* `.js` file under such a directory regardless of name, which would drag them into the `npm test` gate.
+- [x] Provide an ephemeral Postgres (compose service or documented `DATABASE_URL_TEST`) and a setup helper that applies `packages/db/schema/*.sql` + seeds into a scratch schema per run. — `docker-compose.test.yml` (tmpfs postgres on `5433`) + `packages/db/testing/harness.js` (`createTestDatabase()` → scratch schema `itest_<pid>_<n>`, schema+seed apply, `drop()`); psql meta-commands are stripped since the seeds are written for `psql`.
+- [x] Add one smoke integration test: boot the api handler layer against the test DB, hit `/health` and one read endpoint, assert 200 + payload shape. — `apps/api/integration/smoke.itest.js` covers `/health`, `/health/db`, and `/admin/places`; `apps/api/testing/boot-api.js` spawns the API on a free port because `server.js` self-starts its listener on require.
+- [x] Document the harness in `AGENTS.md` and `SETUP.md`.
+- [x] Run `npm run test:integration`; green. — 5/5 pass against a live Postgres; skips cleanly (not fails) when `DATABASE_URL_TEST` is unset.
+- [x] Mark completed.
 
 ### Task 3: Core-flow integration tests
 - [ ] Reservations: manual + guest assignment succeed; a second assignment to the same place/date is rejected (concurrency guard); `warnings` is returned and audit-logged.
