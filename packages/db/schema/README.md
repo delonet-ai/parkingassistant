@@ -24,6 +24,12 @@ Bootstrap seed:
 
 - [../seeds/001_bootstrap_system_admin.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/seeds/001_bootstrap_system_admin.sql)
 
+## Applying
+
+`npm run db:migrate` (см. `packages/db/migrate.js`) применяет файлы этой папки, затем
+`../seeds/*.sql`, в лексикографическом порядке и записывает каждый применённый файл в
+`schema_migrations`. Команда идемпотентна — повторный запуск не применяет ничего.
+
 ## Migration Strategy
 
 - каждая следующая миграция получает новый префикс `002_`, `003_` и так далее

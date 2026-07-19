@@ -20,6 +20,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # One-shot init container: applies packages/db/schema/*.sql and the base seeds, then exits.
+  # Idempotent — a redeploy re-runs it and it applies nothing new.
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/docker/app.Dockerfile
+      target: runtime
+    container_name: parkingassistant-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ROLE: migrate
+      NODE_ENV: ${NODE_ENV:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-parkingassistant}:${POSTGRES_PASSWORD:-parkingassistant}@postgres:5432/${POSTGRES_DB:-parkingassistant}
+    command: ["npm", "run", "db:migrate"]
+
   api:
     build:
       context: .
@@ -30,6 +49,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       APP_ROLE: api
       NODE_ENV: ${NODE_ENV:-development}
@@ -105,6 +126,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_started
     environment:

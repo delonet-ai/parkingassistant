@@ -6,18 +6,18 @@
 // Requires DATABASE_URL_TEST pointing at a database the test user may create schemas in.
 // See SETUP.md → "Integration test database".
 
-const fs = require('node:fs');
-const path = require('node:path');
 const { Pool } = require('pg');
 
-const SCHEMA_DIR = path.join(__dirname, '..', 'schema');
-const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
+const {
+  MIGRATION_LOCK_KEY,
+  plannedMigrations,
+  readSqlDirectory,
+  runMigrations,
+  stripPsqlMetaCommands
+} = require('../migrate');
 
 const SKIP_REASON =
   'DATABASE_URL_TEST is not set — see SETUP.md → "Integration test database"';
-
-// Arbitrary but stable key; only this harness takes it.
-const SCHEMA_APPLY_LOCK_KEY = 918273645;
 
 let scratchCounter = 0;
 
@@ -35,30 +35,6 @@ function skipWithoutDatabase() {
   return integrationTestsEnabled() ? false : SKIP_REASON;
 }
 
-function readSqlDirectory(directory) {
-  if (!fs.existsSync(directory)) {
-    return [];
-  }
-
-  return fs
-    .readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()
-    .map((name) => ({
-      name,
-      sql: stripPsqlMetaCommands(fs.readFileSync(path.join(directory, name), 'utf8'))
-    }));
-}
-
-// The seed files are written for psql and start with `\set ON_ERROR_STOP on`,
-// which the wire protocol does not understand.
-function stripPsqlMetaCommands(sql) {
-  return sql
-    .split('\n')
-    .filter((line) => !/^\s*\\/.test(line))
-    .join('\n');
-}
-
 function scratchSchemaName() {
   scratchCounter += 1;
   return `itest_${process.pid}_${scratchCounter}`;
@@ -73,7 +49,10 @@ function connectionStringForSchema(baseUrl, schemaName) {
 /**
  * Create a scratch schema, apply the schema migrations and (optionally) the base seeds.
  *
- * @param {{ seed?: boolean }} [options]
+ * `apply: false` returns an empty scratch schema instead — for tests that drive
+ * runMigrations() themselves (see packages/db/integration/migrate.itest.js).
+ *
+ * @param {{ seed?: boolean, apply?: boolean }} [options]
  * @returns {Promise<{
  *   schemaName: string,
  *   connectionString: string,
@@ -90,6 +69,7 @@ async function createTestDatabase(options = {}) {
   }
 
   const seed = options.seed !== false;
+  const apply = options.apply !== false;
   const schemaName = scratchSchemaName();
   const adminPool = new Pool({ connectionString: baseUrl });
 
@@ -111,40 +91,35 @@ async function createTestDatabase(options = {}) {
   const drop = async () => {
     await pool.end();
     const cleanupPool = new Pool({ connectionString: baseUrl });
+    const client = await cleanupPool.connect();
     try {
-      await cleanupPool.query(`drop schema if exists ${schemaName} cascade`);
+      // `CREATE EXTENSION` runs with the scratch schema on the search_path, so the
+      // extension lives inside it and `drop schema cascade` drops it too. That takes the
+      // same catalog locks a concurrent harness takes while creating it, which deadlocks
+      // once several test files run at once — so teardown waits on the migration lock.
+      await client.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+      await client.query(`drop schema if exists ${schemaName} cascade`);
     } finally {
+      await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
+      client.release();
       await cleanupPool.end();
     }
   };
 
   try {
-    // node --test runs one process per file, so several harnesses apply the
-    // schema at the same time. `CREATE EXTENSION IF NOT EXISTS` is not atomic
-    // against a concurrent creation of the same extension — the losers get
-    // `duplicate key value violates unique constraint "pg_extension_name_index"`
-    // — and extensions are database-wide, not per-schema. Serializing the apply
-    // step on a database-wide advisory lock removes the race; it costs nothing
-    // because applying the DDL takes milliseconds.
-    const client = await pool.connect();
+    // Same apply path as `npm run db:migrate`: the scratch schema is on the search_path,
+    // so the ledger and every created object land inside it. node --test runs one process
+    // per file, and runMigrations serializes the apply on an advisory lock — without it
+    // concurrent `CREATE EXTENSION IF NOT EXISTS` (database-wide, not atomic) races.
+    if (apply) {
+      const client = await pool.connect();
 
-    try {
-      await client.query('select pg_advisory_lock($1)', [SCHEMA_APPLY_LOCK_KEY]);
-
-      for (const file of readSqlDirectory(SCHEMA_DIR)) {
-        await client.query(file.sql);
-        appliedFiles.push(`schema/${file.name}`);
+      try {
+        const result = await runMigrations({ client, seed });
+        appliedFiles.push(...result.applied);
+      } finally {
+        client.release();
       }
-
-      if (seed) {
-        for (const file of readSqlDirectory(SEEDS_DIR)) {
-          await client.query(file.sql);
-          appliedFiles.push(`seeds/${file.name}`);
-        }
-      }
-    } finally {
-      await client.query('select pg_advisory_unlock($1)', [SCHEMA_APPLY_LOCK_KEY]).catch(() => {});
-      client.release();
     }
   } catch (error) {
     await drop();
@@ -168,6 +143,7 @@ module.exports = {
   connectionStringForSchema,
   createTestDatabase,
   integrationTestsEnabled,
+  plannedMigrations,
   readSqlDirectory,
   skipWithoutDatabase,
   stripPsqlMetaCommands,

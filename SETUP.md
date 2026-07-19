@@ -137,6 +137,29 @@ docker compose --env-file staging/env/app.env up -d
 - для `OMV + Portainer Git stack` bind mounts должны быть абсолютными, иначе Portainer привяжет их к временному `/data/compose/<id>` workspace
 - в текущем compose server-side mounts зафиксированы через `/opt/git/parkingassistant/staging/...`
 
+## Schema migrations
+
+Схема и базовые seeds применяются одной идемпотентной командой:
+
+```bash
+DATABASE_URL=postgresql://... npm run db:migrate
+```
+
+Что она делает:
+
+- применяет `packages/db/schema/*.sql`, затем `packages/db/seeds/*.sql` в лексикографическом порядке;
+- записывает каждый применённый файл в таблицу-леджер `schema_migrations`;
+- при повторном запуске ничего не применяет (`nothing to apply — N migration(s) already recorded`).
+
+Флаг `--no-seed` применяет только схему, без базовых seeds.
+
+В compose это отдельный one-shot сервис `migrate`: он поднимается после `postgres` (healthy), выполняет
+`npm run db:migrate` и завершается, а `api` и `jobs` стартуют только через
+`depends_on: migrate: service_completed_successfully`. Поэтому свежий деплой стека в Portainer
+поднимается с полной схемой без ручных шагов, а редеплой просто прогоняет миграцию вхолостую.
+
+Это единственный путь применения SQL: тот же `runMigrations()` использует и интеграционный харнесс.
+
 ## Integration test database
 
 Интеграционные тесты (`*.itest.js`) требуют живой PostgreSQL и запускаются отдельно от `npm test`.

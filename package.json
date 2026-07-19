@@ -4,7 +4,7 @@
   "private": true,
   "description": "Parking Assistant monorepo",
   "scripts": {
-    "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js",
+    "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js && node --check packages/db/migrate.js",
     "test": "node --test",
     "test:watch": "node --test --watch",
     "test:integration": "node --test \"**/*.itest.js\"",
@@ -15,6 +15,7 @@
     "admin-web:start": "node apps/admin-web/src/server.js",
     "bot-adapter:start": "node apps/bot-adapter/src/server.js",
     "jobs:start": "node apps/jobs/src/scheduler.js",
+    "db:migrate": "node packages/db/migrate.js",
     "db:import:parking-catalog": "node scripts/import/parking-catalog.js",
     "db:import:permanent-assignments": "node scripts/import/permanent-assignments.js"
   },

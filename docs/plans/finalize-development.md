@@ -195,12 +195,17 @@ graphite. The existing status/type filters carry over and simply hide non-matchi
 ## Phase 1 — Runtime & data (make the app deployable and UI-testable on the stand)
 
 ### Task 4: Schema + seed apply automation
-- [ ] Add an idempotent DB init/migrate step (`npm run db:migrate`) that applies `packages/db/schema/*.sql` in order and the base seeds, safe to re-run.
-- [ ] Ensure it runs on stack startup (init container or entrypoint) so a fresh Portainer deploy comes up with the full schema.
-- [ ] Integration test: applying migrations twice on a clean DB is a no-op the second time and leaves the expected tables.
-- [ ] Document in `docs/TECHNICAL_README.md` and `SETUP.md`.
-- [ ] Run `npm run test:integration`; green.
-- [ ] Mark completed.
+- [x] Add an idempotent DB init/migrate step (`npm run db:migrate`) that applies `packages/db/schema/*.sql` in order and the base seeds, safe to re-run. — `packages/db/migrate.js`: applies `schema/*.sql` then `seeds/*.sql` lexicographically and records each file in a `schema_migrations` ledger, so idempotency does not depend on every SQL file being individually re-runnable. `--no-seed` applies schema only. The apply is serialized on the same advisory lock the harness used, since `CREATE EXTENSION IF NOT EXISTS` is database-wide and not atomic.
+- [x] Ensure it runs on stack startup (init container or entrypoint) so a fresh Portainer deploy comes up with the full schema. — one-shot `migrate` service in `docker-compose.yml`, `depends_on: postgres: service_healthy`; `api` and `jobs` now wait on `migrate: service_completed_successfully`.
+- [x] Integration test: applying migrations twice on a clean DB is a no-op the second time and leaves the expected tables. — `packages/db/integration/migrate.itest.js` (6 tests): first run applies the full planned list, second and third apply nothing, the ledger has exactly one row per file, the expected tables exist, and the bootstrap seed is not duplicated. `createTestDatabase({ apply: false })` was added to hand the runner an empty scratch schema.
+- [x] Document in `docs/TECHNICAL_README.md` and `SETUP.md`. — plus `packages/db/schema/README.md`.
+- [x] Run `npm run test:integration`; green. — 65/65 against a live Postgres, stable over 4 consecutive runs; `npm run check` / `lint` / `test` (45) green. The CLI was also verified end-to-end against a fresh database: run 1 applies 4 files, run 2 reports `nothing to apply`.
+- [x] Mark completed.
+
+**Harness fix required by this task:** teardown (`drop schema ... cascade`) now takes the migration
+advisory lock too. `CREATE EXTENSION` runs with the scratch schema on the search_path, so the
+extension is created *inside* it and the cascading drop takes the same catalog locks a concurrent
+harness takes while creating it — with a sixth integration file in the run that deadlocked (`40P01`).
 
 ### Task 5: Demo/test dataset for UI
 - [ ] Add a `packages/db/seeds` demo dataset + `npm run db:seed:demo` that loads realistic data so every admin tab renders content: parking lines of each size (single/double/triple), employees (with/without permanent places), permanent assignments, an active release, an employee request, a guest request, a reservation, a departure plan.

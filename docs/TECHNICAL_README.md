@@ -162,6 +162,21 @@ local changes
 - SSH на сервер используется только для диагностики логов, health checks и аварийного анализа.
 - В compose не нужно монтировать исходники приложения в `/app`; код должен попадать внутрь image на этапе build.
 
+### Schema migrations
+
+Схема БД применяется идемпотентной командой `npm run db:migrate`
+(`packages/db/migrate.js`): она прогоняет `packages/db/schema/*.sql`, затем
+`packages/db/seeds/*.sql` в лексикографическом порядке и фиксирует каждый применённый файл в
+таблице-леджере `schema_migrations`. Повторный запуск не применяет ничего.
+
+В стеке это отдельный one-shot сервис `migrate`, который стартует после healthy `postgres` и
+завершается до старта `api` и `jobs` (`depends_on: service_completed_successfully`). Отдельного
+ручного шага при деплое нет: `push` в `main` → Portainer redeploy → миграция отрабатывает сама.
+
+Тот же `runMigrations()` использует интеграционный харнесс (`packages/db/testing/harness.js`), так
+что тесты и стенд применяют SQL одним и тем же кодом. Идемпотентность закреплена тестом
+`packages/db/integration/migrate.itest.js`.
+
 Production storage mounts:
 
 - `/opt/git/parkingassistant/staging/postgres`;
