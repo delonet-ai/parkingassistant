@@ -25,6 +25,21 @@ infra/
 
 Backend API and orchestration layer. Holds controllers, application services, auth entrypoints, and integration-facing contracts.
 
+Internally it is split by bounded context, one directory per context, at most three files each:
+
+```text
+apps/api/src/modules/<context>/
+  controller.js   HTTP I/O only: parse/validate, call the service, serialize
+  service.js      use-case orchestration + transaction boundaries (withTransaction)
+  repository.js   ALL SQL; the only place that talks to pg
+```
+
+Dependency direction is one-way — `controller → service → repository`, any layer → `packages/domain` — and is enforced by `no-restricted-imports` / `no-restricted-syntax` rules in `eslint.config.js`, not by convention. See [ADR 003](adr/003-modular-architecture.md).
+
+The contexts are `employees`, `places`, `place-lines`, `permanent-assignments`, `place-releases`, `employee-requests`, `guest-requests`, `reservations`, `queue`, `line-occupancy`, `departure-plans`, `conflicts`, `contact-access`, `maps`, `dashboard`, `audit`, `jobs`. `availability` is a read model over `place-releases`, `places` and `reservations` rather than a context of its own.
+
+All database access goes through `apps/api/src/repositories/db.js`: `createDbRepository(pool)` for pool-scoped reads, `withTransaction(pool, fn)` for anything transactional. `withTransaction` yields a client-bound repository with the same `queryOne` / `queryMany` surface, issues `begin`/`commit`/`rollback` around the callback, and always releases the client. A service that needs to abort throws — the helper never inspects the return value.
+
 ### `apps/admin-web`
 
 Administrative web interface for parking admins and system admins.
