@@ -16,6 +16,9 @@ const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
 const SKIP_REASON =
   'DATABASE_URL_TEST is not set — see SETUP.md → "Integration test database"';
 
+// Arbitrary but stable key; only this harness takes it.
+const SCHEMA_APPLY_LOCK_KEY = 918273645;
+
 let scratchCounter = 0;
 
 function testDatabaseUrl() {
@@ -116,16 +119,32 @@ async function createTestDatabase(options = {}) {
   };
 
   try {
-    for (const file of readSqlDirectory(SCHEMA_DIR)) {
-      await pool.query(file.sql);
-      appliedFiles.push(`schema/${file.name}`);
-    }
+    // node --test runs one process per file, so several harnesses apply the
+    // schema at the same time. `CREATE EXTENSION IF NOT EXISTS` is not atomic
+    // against a concurrent creation of the same extension — the losers get
+    // `duplicate key value violates unique constraint "pg_extension_name_index"`
+    // — and extensions are database-wide, not per-schema. Serializing the apply
+    // step on a database-wide advisory lock removes the race; it costs nothing
+    // because applying the DDL takes milliseconds.
+    const client = await pool.connect();
 
-    if (seed) {
-      for (const file of readSqlDirectory(SEEDS_DIR)) {
-        await pool.query(file.sql);
-        appliedFiles.push(`seeds/${file.name}`);
+    try {
+      await client.query('select pg_advisory_lock($1)', [SCHEMA_APPLY_LOCK_KEY]);
+
+      for (const file of readSqlDirectory(SCHEMA_DIR)) {
+        await client.query(file.sql);
+        appliedFiles.push(`schema/${file.name}`);
       }
+
+      if (seed) {
+        for (const file of readSqlDirectory(SEEDS_DIR)) {
+          await client.query(file.sql);
+          appliedFiles.push(`seeds/${file.name}`);
+        }
+      }
+    } finally {
+      await client.query('select pg_advisory_unlock($1)', [SCHEMA_APPLY_LOCK_KEY]).catch(() => {});
+      client.release();
     }
   } catch (error) {
     await drop();

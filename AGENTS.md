@@ -63,7 +63,33 @@ Guard each suite with `{ skip: skipWithoutDatabase() }` so the suite skips clean
 
 `apps/api/testing/boot-api.js` boots `apps/api/src/server.js` as a child process on a free port
 against a given `databaseUrl` and waits for `/health`. An out-of-process boot is required because the
-API entrypoint self-starts its listener on require and exports nothing.
+API entrypoint self-starts its listener on require and exports nothing. Pass `env` to override
+process-level configuration — `GUEST_RESERVE_MINIMUM` in particular is read once at module load, so
+a suite that wants a different reserve has to boot its own API with that value.
+
+`apps/api/testing/fixtures.js` builds the domain preconditions (`insertEmployee`, `insertPlace`,
+`insertLineGroup`, `insertReleasedPlace`, `insertQueuedRequest`, `insertLineOccupancy`,
+`insertDeparturePlan`) plus `postJson`/`getJson`. Prefer it over inline SQL so a test states what it
+needs, not how the tables are wired.
+
+The harness serializes schema application on a `pg_advisory_lock`: `node --test` runs one process per
+file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same
+database-wide extension.
+
+#### Characterization tests pin defects, they do not hide them
+
+Several integration tests are prefixed `CHARACTERIZATION:` and assert behavior that is **wrong**.
+They exist because Phase 0's job is to pin current behavior before refactoring, and a defect that is
+not pinned gets silently preserved or silently changed. Each one names the task that should fix it
+and will fail loudly when it does — that failure is the signal, not a regression. Known ones:
+
+- `POST /admin/reservations/cancel` always returns 500 (`FOR UPDATE` over a `LEFT JOIN`), so an
+  assignment cannot be undone through the API at all. → Task 12.
+- `freeze-next-day` is a read-only snapshot; there is no 19:00 cut-off and no past-date gate on
+  releases, despite `place_releases.frozen_at` and the `frozen` enum value existing. → Task 7.
+- A manual reservation does not close the employee's queue request, so the next `queue/process` run
+  trips the per-user unique index and 409s the **whole batch**, starving everyone behind them.
+  → Task 7.
 
 Ephemeral database for local runs:
 

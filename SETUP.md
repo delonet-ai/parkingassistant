@@ -176,9 +176,16 @@ npm run test:integration
 docker compose -f docker-compose.test.yml down
 ```
 
-Хелперы: `packages/db/testing/harness.js` (схема + сиды + очистка) и
+Хелперы: `packages/db/testing/harness.js` (схема + сиды + очистка),
 `apps/api/testing/boot-api.js` (поднимает `apps/api/src/server.js` на свободном порту и ждёт
-`/health`). Подробности — в `AGENTS.md` → Testing.
+`/health`) и `apps/api/testing/fixtures.js` (сотрудники, места, линии, релизы, очередь —
+чтобы предусловия теста читались одним блоком). Подробности — в `AGENTS.md` → Testing.
+
+`node --test` запускает каждый файл в отдельном процессе, поэтому наборы применяют схему
+параллельно. `CREATE EXTENSION IF NOT EXISTS` не атомарен относительно конкурентного
+создания того же расширения, а расширения живут на уровне базы, а не схемы — поэтому
+харнесс сериализует применение SQL через `pg_advisory_lock`. Без этого часть наборов
+падала с `duplicate key value violates unique constraint "pg_extension_name_index"`.
 
 ## Current Limitation
 

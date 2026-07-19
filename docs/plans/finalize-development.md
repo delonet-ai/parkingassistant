@@ -177,12 +177,18 @@ graphite. The existing status/type filters carry over and simply hide non-matchi
 - [x] Mark completed.
 
 ### Task 3: Core-flow integration tests
-- [ ] Reservations: manual + guest assignment succeed; a second assignment to the same place/date is rejected (concurrency guard); `warnings` is returned and audit-logged.
-- [ ] Queue: `process` skips manually-assigned users and respects ordering.
-- [ ] Releases: post-19:00 same-day return rejected once the day is frozen.
-- [ ] Line occupancy: position uniqueness per date; "who is ahead" derivation.
-- [ ] Run the validation commands; green.
-- [ ] Mark completed.
+- [x] Reservations: manual + guest assignment succeed; a second assignment to the same place/date is rejected (concurrency guard); `warnings` is returned and audit-logged. — `apps/api/integration/reservations.itest.js` (12 tests): manual assignment writes reservation + movement + event + audit; the duplicate is refused by `reservations_active_place_date_uniq` with exactly one active row surviving; guest assignment mints the guest, request and reservation in one call and honours the `single → double → triple, guest_priority_rank NULLS LAST` pick order; the early-departure `warnings` array is asserted both in the response and inside the persisted audit metadata; the guest-reserve refusal is pinned too.
+- [x] Queue: `process` skips manually-assigned users and respects ordering. — `apps/api/integration/queue.itest.js` (10 tests): `queue_position` ordering, the `double → triple → single` place preference, the never-give-back-your-own-place skip, the guest-reserve skip, second-run no-op, and `job_runs`/audit bookkeeping. **The premise of this checkbox is false and the test says so:** a manual reservation never closes the employee's queue request, so the user stays a candidate and the run trips `reservations_active_user_date_uniq` and 409s the *whole batch*. Pinned as `CHARACTERIZATION:` — fix belongs to Task 7.
+- [x] Releases: post-19:00 same-day return rejected once the day is frozen. — **This rule does not exist in the code.** `apps/api/integration/releases.itest.js` (15 tests) pins what is actually there: create/cancel/overlap/owner validation, the active-reservation cancel guard, cancel idempotency, and availability round-tripping. Three `CHARACTERIZATION:` tests record the gaps — `freeze-next-day` is a read-only snapshot that never sets `frozen_at` or `status='frozen'`, a release is still cancellable after the freeze ran, and releases can be created for past dates. No endpoint compares a date against `APP_TIMEZONE` "now". Implementing the cut-off is Task 7; these tests will fail when it lands, which is the intent.
+- [x] Line occupancy: position uniqueness per date; "who is ahead" derivation. — `apps/api/integration/line-occupancy.itest.js` (17 tests): both uniqueness constraints (`line_position_uniq` and `place_date_uniq`) mapping to the same 409, same position allowed on another date, move-not-duplicate semantics, capacity and membership rejection, position-ordered reads, and blocking contacts nearest-first with per-blocker `contact_access_logs`, other-line isolation, and guest redaction.
+- [x] Run the validation commands; green. — `npm run check`, `npm run lint`, `npm test` (45) all green; `npm run test:integration` 59/59, verified stable over 12 consecutive runs.
+- [x] Mark completed.
+
+**Two defects found and pinned (not fixed here — Phase 0 pins, later tasks fix):**
+1. `POST /admin/reservations/cancel` returns 500 for *every* reservation: the handler applies `for update` to a select that `left join`s `users`, which Postgres rejects outright. Because `/admin/place-releases/cancel` refuses while an active reservation stands on the place, the operator currently has **no way to undo an assignment** — both exits are closed. → Task 12.
+2. Manual assignment leaves the employee's queue request `queued`, so the next queue run 409s the whole batch (above). → Task 7.
+
+**Harness fix required by this task:** applying the schema concurrently (one `node --test` process per file) raced on `CREATE EXTENSION IF NOT EXISTS`, since extensions are database-wide and the statement is not atomic. `packages/db/testing/harness.js` now serializes the apply step on a `pg_advisory_lock`. This was latent in Task 2 because there was only one integration file.
 
 ---
 
