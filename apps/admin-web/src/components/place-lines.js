@@ -1,7 +1,7 @@
 'use strict';
 
-const { PLACE_ROLES, derivePlaceStatus } = require('../../../packages/domain/line-inventory');
-const { escapeHtml } = require('../../../packages/shared/html');
+const { PLACE_ROLES, derivePlaceStatus } = require('../../../../packages/domain/line-inventory');
+const { escapeHtml } = require('../../../../packages/shared/html');
 
 /**
  * Pure renderer for the place-inventory element grid.

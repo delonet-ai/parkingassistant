@@ -11,9 +11,11 @@ Accepted. Supersedes nothing; it records the target the Phase 3 strangler-fig sp
 and SQL in the same function bodies, and self-starts an HTTP listener on `require` while
 exporting nothing. That last property is the expensive one: none of its rules are unit
 reachable, so every assertion about them has to go through a live Postgres and a spawned
-process (`apps/api/testing/boot-api.js`). `apps/admin-web/src/server.js` has the same
+process (`apps/api/testing/boot-api.js`). `apps/admin-web/src/server.js` had the same
 shape on the rendering side, which is why Tasks 10–12 had to extract pure renderers
-(`render-place-lines.js`, `render-day-map.js`) before those tabs could be tested at all.
+(now `components/place-lines.js`, `components/day-map.js`) before those tabs could be tested
+at all. Task 19 finished that split: admin-web now carries the same layering under the names
+`http/routes → pages → components`, and no renderer performs I/O.
 
 Two database access patterns coexist today:
 

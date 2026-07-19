@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { filterDayLines, renderDayMap } = require('./render-day-map');
+const { filterDayLines, renderDayMap } = require('./day-map');
 
 const MAPS = [
   { id: 'g3', title: 'G3', filename: 'parking-g3.png' },

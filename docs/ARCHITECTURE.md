@@ -52,7 +52,31 @@ All database access goes through `apps/api/src/repositories/db.js`: `createDbRep
 
 ### `apps/admin-web`
 
-Administrative web interface for parking admins and system admins.
+Administrative web interface for parking admins and system admins. Server-rendered HTML, no
+framework and no build step.
+
+It is layered the same way the API is, with the layers renamed to what they actually do here:
+
+```text
+apps/admin-web/src/
+  server.js            bootstrap: config + listen, nothing else
+  config.js            the only reader of process.env
+  api-client.js        fetchJson / postJson — the only caller of the API
+  http/
+    router.js          dispatches into the route groups in order
+    routes/
+      assets.js        /health, floor-plan files, JSON proxies, the place drawer
+      page.js          GET / — builds the page model and hands it to renderPage()
+      forms.js         the form POSTs: post to the API, redirect back with a notice flag
+  pages/               one renderer per tab, plus the shared shell (layout.js)
+  components/          the tables, forms and panels the pages compose
+```
+
+The dependency direction is one-way — `routes → pages → components` — and the rule that makes
+it worth having is that **nothing under `pages/` or `components/` performs I/O**. A page is a
+pure function from a model to an HTML string, so `pages/pages.test.js` renders every tab
+directly from a fixture. `tabs.test.js` still drives the real process over HTTP against a
+stubbed API, which is what catches the wiring the pure tests cannot see.
 
 ### `apps/bot-adapter`
 

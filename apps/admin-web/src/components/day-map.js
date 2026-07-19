@@ -1,12 +1,12 @@
 'use strict';
 
-const { escapeHtml } = require('../../../packages/shared/html');
+const { escapeHtml } = require('../../../../packages/shared/html');
 const {
   PLACE_STATUS_LABELS,
   normalizedStatus,
   renderPlaceLines,
   statusLabel
-} = require('./render-place-lines');
+} = require('./place-lines');
 
 /**
  * Pure renderer for the Day tab's operational floor panel.

@@ -85,8 +85,11 @@ jobs
 - `apps/api/src/repositories/db.js`: `queryOne`/`queryMany` и `withTransaction`.
 - `apps/api/src/serializers`: общие row → JSON мапперы, которыми пользуются несколько контекстов.
 - `apps/api/src/support`: request-shaped helpers (`abortWith`, `parsePositiveLimit`, …).
-- `apps/admin-web/src/server.js`: admin UI entrypoint и текущий основной набор render/POST handlers.
-- `apps/admin-web/src/render-modules.js`: выбор render-модуля по вкладке admin UI.
+- `apps/admin-web/src/server.js`: bootstrap admin UI — config и listen, 17 строк.
+- `apps/admin-web/src/http/`: router и три route-группы (`assets`, `page`, `forms`); весь data-fetching живет здесь.
+- `apps/admin-web/src/api-client.js`: единственное место, откуда admin-web ходит в API.
+- `apps/admin-web/src/pages/`: по одному renderer на вкладку + общий shell (`layout.js`) и registry (`registry.js`).
+- `apps/admin-web/src/components/`: таблицы, формы и панели, из которых собираются вкладки.
 - `apps/bot-adapter/src/server.js`: текущий bot adapter entrypoint.
 - `apps/jobs/src/scheduler.js`: scheduler entrypoint.
 - `packages/shared`: общие helpers для HTTP, дат, HTML escaping и API errors.
@@ -349,7 +352,7 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 ### Code Structure
 
 - ~~`apps/api/src/server.js` все еще содержит крупные handler-группы и SQL-heavy business operations~~ — закрыто Phase 3: SQL вынесен в `modules/<context>/repository.js`, чистые правила в `packages/domain`, handlers в `modules/<context>/controller.js`. `server.js` — 65 строк bootstrap.
-- `apps/admin-web/src/server.js` все еще содержит большую часть HTML render-функций и POST handlers. Render selection вынесен в `render-modules.js`, но сами вкладки нужно переносить в отдельные files/modules.
+- ~~`apps/admin-web/src/server.js` все еще содержит большую часть HTML render-функций и POST handlers~~ — закрыто Task 19: renderers разнесены по `pages/` и `components/`, data-fetching — в `http/routes/`, `server.js` — 17 строк bootstrap. HTML остался байт-в-байт прежним.
 - `bot-adapter` пока остается отдельным adapter entrypoint без полноценной декомпозиции сценариев.
 - Нет полноценного тестового harness с PostgreSQL fixture data; `smoke:m1` проверяет старт и базовые HTTP paths, но не бизнес-инварианты.
 
@@ -372,7 +375,7 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 Status: completed and validated on OMV via Portainer Git redeploy on 2026-06-13.
 
 - Разделить `apps/api/src/server.js` на router, repositories, services и serializers: done for first stabilization layer; handler extraction remains tracked as technical debt.
-- Разделить `apps/admin-web/src/server.js` на render modules по вкладкам: done for render module selection; full file extraction remains tracked as technical debt.
+- Разделить `apps/admin-web/src/server.js` на render modules по вкладкам: done for render module selection; полная декомпозиция файла завершена в Task 19.
 - Вынести общие helpers для дат, HTML, HTTP, ошибок и статусов: done.
 - Ввести единый формат API-ошибки `{ error, code, details }`: done, old fields are preserved for compatibility.
 - Обновить README/TASKS под фактический статус: done.

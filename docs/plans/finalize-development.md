@@ -504,10 +504,21 @@ port `5433` with a tmpfs data directory, then stopped and removed — deliberate
 own `itest_<pid>_<n>` scratch schemas.
 
 ### Task 19: Split apps/admin-web the same way
-- [ ] Extract `render*` into `pages/` and `components/`; separate data-fetching from pure HTML rendering. The place-element renderer from Task 10 is the reference shape for a component.
-- [ ] Add render smoke tests: each page renderer given a fixture model returns non-empty, escaped HTML.
-- [ ] Keep tabs and HTML output identical. All validation commands green.
-- [ ] Mark completed.
+- [x] Extract `render*` into `pages/` and `components/`; separate data-fetching from pure HTML rendering. The place-element renderer from Task 10 is the reference shape for a component. — **3 916 → 17 lines.** 24 renderers moved into `pages/` (one per tab plus the shared shell `layout.js`) and `components/` (the tables, forms and panels they compose), with the layering named for what it does here rather than copied verbatim from the API: `http/routes → pages → components`. Data-fetching is now genuinely separable rather than merely tidy — `api-client.js` is the only caller of the API, `config.js` the only reader of `process.env`, and the request handler split into three route groups (`assets` for the health probe / floor-plan files / JSON proxies / place drawer, `page` for the one HTML route, `forms` for the 20 form POSTs). The three renderers Tasks 10–11 had already extracted moved down into `components/` as `place-lines.js` and `day-map.js`, since the plan calls the first of them the reference shape for a component and leaving them at the root would have left two conventions.
+- [x] Add render smoke tests: each page renderer given a fixture model returns non-empty, escaped HTML. — `apps/admin-web/src/pages/pages.test.js` (36 tests) over a fixture model in `apps/admin-web/testing/page-model.js`. Five assertions per page — populated model, escaping, no `undefined`/`[object Object]`, the all-lists-empty state, and every envelope failed (`{ ok: false, data: null }`, i.e. the API is down) — plus the shell's document framing, notice rendering and tab dispatch. **Every free-text field in the fixture carries a `<script>` probe**, so an unescaped interpolation fails the test instead of shipping an XSS; a guard test asserts the probe is still present and still escaped, so the escaping assertions cannot pass vacuously. These tests could not have existed before this task: the renderers lived inside a file that self-starts a listener on require and exports nothing, which is why `tabs.test.js` had to spawn the process. It still does, and still should — it covers the wiring the pure tests cannot see.
+- [x] Keep tabs and HTML output identical. All validation commands green. — identity was **measured, not argued**: 22 responses (every tab, the filter and selection variants, both notice flags, three place-drawer states, `/health`) were captured before the first edit and re-captured after each step; the 442 KB corpus is byte-identical throughout. `npm run check` (166 files) / `lint` clean, `npm test` **277** pass (241 + 36), `npm run test:integration` **266/266** against a live Postgres, stable over 3 consecutive runs, with **not one of the 122 golden snapshots regenerated**. Docs updated: `docs/ARCHITECTURE.md` gained the admin-web layout and the no-I/O-in-a-renderer rule, `docs/TECHNICAL_README.md`'s file map and its technical-debt entry (now struck through), and ADR 003's Context note that the rendering-side split is finished.
+- [x] Mark completed.
+
+**Two dead names caught by Task 18's guard rather than by review:** `buildOperationalPlaceCardModel`
+exported from the new `routes/assets.js` and a fixture id exported from the test model. Both were
+exports created *by this refactor* — the guard earning its keep on the first extraction after it
+landed, which is exactly what it was written for.
+
+**One assertion corrected rather than the code:** `renderPage` with an unknown `activeView` falls
+back to День for the *content* but renders no tab-strip highlight, so the full documents differ by
+one line. The whitelist in the page route means production never passes an unknown view, so the
+test compares the rendered body instead of the whole document — the fallback is the contract, the
+highlight is not.
 
 ---
 

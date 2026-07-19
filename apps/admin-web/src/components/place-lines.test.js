@@ -8,7 +8,7 @@ const {
   PLACE_STATUSES,
   renderPlaceLines,
   statusLabel
-} = require('./render-place-lines');
+} = require('./place-lines');
 
 function line(overrides = {}) {
   return {
