@@ -14,8 +14,8 @@ function createRenderModules(renderers) {
     lines: {
       render: renderers.renderLinesTab
     },
-    maps: {
-      render: renderers.renderMapEditorTab
+    places: {
+      render: renderers.renderPlacesTab
     },
     requests: {
       render: renderers.renderRequestsTab

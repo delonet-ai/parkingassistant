@@ -8,46 +8,43 @@ const { URL } = require('node:url');
 const { escapeHtml } = require('../../../packages/shared/html');
 const { readFormBody, readJsonBody } = require('../../../packages/shared/http');
 const { createRenderModules, renderActiveTab } = require('./render-modules');
+const { PLACE_ROLE_OPTIONS, renderPlaceLines } = require('./render-place-lines');
 
 const port = Number(process.env.PORT || 3100);
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000';
 const mapStoragePath = process.env.MAP_STORAGE_PATH || '/app/storage/maps';
 
+// Static reference plans only. The pixel width/height the SVG viewBox needed are gone
+// with the zone editor — the plan is now a plain <img> and the element list is the source
+// of truth for what exists.
 const parkingMaps = [
   {
     id: 'g3',
     title: 'G3',
     description: 'Underground parking level G3',
-    filename: 'parking-g3.png',
-    width: 2105,
-    height: 1490
+    filename: 'parking-g3.png'
   },
   {
     id: 'g4',
     title: 'G4',
     description: 'Underground parking level G4',
-    filename: 'parking-g4.png',
-    width: 2105,
-    height: 1490
+    filename: 'parking-g4.png'
   },
   {
     id: 'g5',
     title: 'G5',
     description: 'Underground parking level G5',
-    filename: 'parking-g5.png',
-    width: 2105,
-    height: 1490
+    filename: 'parking-g5.png'
   }
 ];
 
-// The replacement for the old per-zone "Тип зоны" select: place_role is a first-class
-// parking_places column since 005_place_inventory.sql. 'rotatable' is the guest pool,
-// 'blocked' takes a single slot out of service without archiving the whole line.
-const PLACE_ROLE_OPTIONS = [
-  ['regular', 'Обычное'],
-  ['rotatable', 'Ротируемое/гостевое'],
-  ['blocked', 'Недоступное']
-];
+/**
+ * Map codes are floor plan identifiers (g4); parking_places.floor_label is the bare digit
+ * (4). This is the one place that conversion lives.
+ */
+function mapCodeToFloorLabel(mapCode) {
+  return String(mapCode || '').replace(/^g/, '');
+}
 
 const allowedMapExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg']);
 
@@ -227,7 +224,7 @@ function renderTabs(activeView, selectedDate) {
   const catalogHref = `/?view=catalog&date=${encodeURIComponent(selectedDate)}`;
   const linesHref = `/?view=lines&date=${encodeURIComponent(selectedDate)}`;
   const auditHref = `/?view=audit&date=${encodeURIComponent(selectedDate)}`;
-  const mapsHref = `/?view=maps&date=${encodeURIComponent(selectedDate)}`;
+  const placesHref = `/?view=places&date=${encodeURIComponent(selectedDate)}`;
 
   return `
     <nav class="tabs" aria-label="Admin sections">
@@ -236,7 +233,7 @@ function renderTabs(activeView, selectedDate) {
       <a class="${activeView === 'lines' ? 'active' : ''}" href="${linesHref}">Линии</a>
       <a class="${activeView === 'catalog' ? 'active' : ''}" href="${catalogHref}">Справочники</a>
       <a class="${activeView === 'audit' ? 'active' : ''}" href="${auditHref}">Журнал</a>
-      <a class="${activeView === 'maps' ? 'active' : ''}" href="${mapsHref}">Карта</a>
+      <a class="${activeView === 'places' ? 'active' : ''}" href="${placesHref}">Места</a>
     </nav>
   `;
 }
@@ -331,13 +328,29 @@ function renderEmployeesTable(model) {
   `;
 }
 
-function renderMapEditorTab(model) {
+function nextFreePlaceCode(places, floorLabel) {
+  const numbers = places
+    .filter((place) => String(place.floorLabel || '') === String(floorLabel))
+    .map((place) => Number.parseInt(String(place.code || '').replace(/\D+/g, ''), 10))
+    .filter((value) => Number.isFinite(value));
+
+  return numbers.length ? String(Math.max(...numbers) + 1) : `${floorLabel}01`;
+}
+
+function renderPlacesTab(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const places = model.places?.data?.places || [];
   const activeMaps = configuredMaps(model);
   const diagnostics = model.mapDiagnostics?.data?.diagnostics || {};
-  const placeOptions = places
-    .map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(`${place.code} · ${place.title}`)}</option>`)
+  const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
+  const selectedMap = activeMaps.find((map) => map.id === selectedMapCode) || activeMaps[0];
+  // The floor selector speaks map codes (g4); parking_places.floor_label is the bare digit.
+  const selectedFloorLabel = mapCodeToFloorLabel(selectedMapCode);
+  const allLines = model.placeLines?.data?.lines || [];
+  const floorLines = allLines.filter((line) => String(line.floorLabel || '') === selectedFloorLabel);
+  const activePlaceCount = places.length;
+  const floorOptions = activeMaps
+    .map((map) => `<option value="${escapeHtml(map.id)}"${selectedMapCode === map.id ? ' selected' : ''}>${escapeHtml(map.title)}</option>`)
     .join('');
   const uploadForms = activeMaps
     .map((map) => {
@@ -350,7 +363,7 @@ function renderMapEditorTab(model) {
         <form class="map-upload-form" method="post" action="/admin/map-backgrounds" enctype="multipart/form-data">
           <input type="hidden" name="mapCode" value="${escapeHtml(map.id)}" />
           <input type="hidden" name="mapTitle" value="${escapeHtml(map.title)}" />
-          <input type="hidden" name="floorLabel" value="${escapeHtml(map.id.replace(/^g/, ''))}" />
+          <input type="hidden" name="floorLabel" value="${escapeHtml(mapCodeToFloorLabel(map.id))}" />
           <div>
             <strong>${escapeHtml(map.title)}</strong>
             <span class="muted">v${escapeHtml(version)} · ${escapeHtml(checksum)} · ${escapeHtml(filePath)}</span>
@@ -402,8 +415,8 @@ function renderMapEditorTab(model) {
               ? `<table>
                   <thead>
                     <tr>
-                      <th>Карта</th>
                       <th>Объект</th>
+                      <th>Название</th>
                       <th>Детали</th>
                     </tr>
                   </thead>
@@ -415,473 +428,238 @@ function renderMapEditorTab(model) {
       `;
     })
     .join('');
-
-  const cards = activeMaps
+  const slotFields = [1, 2, 3]
     .map(
-      (map) => `
-        <article class="map-card" data-map-id="${escapeHtml(map.id)}" data-map-title="${escapeHtml(map.title)}" data-map-filename="${escapeHtml(map.filename)}">
-          <div class="map-card-head">
-            <div>
-              <h3>${escapeHtml(map.title)}</h3>
-              <p>${escapeHtml(map.description)} · v${escapeHtml(map.metadata?.version || 0)} · ${escapeHtml(map.metadata?.sourceChecksum ? map.metadata.sourceChecksum.slice(0, 12) : 'checksum —')}</p>
-            </div>
-            <span class="tag">markup</span>
-          </div>
-          <div class="map-workspace">
-            <svg
-              class="map-svg"
-              data-map-id="${escapeHtml(map.id)}"
-              data-map-width="${escapeHtml(map.width)}"
-              data-map-height="${escapeHtml(map.height)}"
-              viewBox="0 0 ${escapeHtml(map.width)} ${escapeHtml(map.height)}"
-              preserveAspectRatio="xMidYMid meet"
-              role="img"
-              aria-label="Карта парковки ${escapeHtml(map.title)}"
-            >
-              <image href="/maps/${escapeHtml(map.filename)}" x="0" y="0" width="${escapeHtml(map.width)}" height="${escapeHtml(map.height)}" preserveAspectRatio="none"></image>
-              <g class="map-zones-layer" aria-label="Размеченные места ${escapeHtml(map.title)}"></g>
-              <rect class="map-draft-zone" hidden x="0" y="0" width="0" height="0"></rect>
-            </svg>
-          </div>
-        </article>
+      (position) => `
+        <fieldset class="place-slot-fields" data-slot-position="${position}">
+          <legend>Место ${position}</legend>
+          <label>
+            <span>Код</span>
+            <input name="code" required />
+          </label>
+          <label>
+            <span>Название</span>
+            <input name="title" />
+          </label>
+          <label>
+            <span>Роль</span>
+            <select name="placeRole">
+              ${PLACE_ROLE_OPTIONS.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span>Guest priority</span>
+            <input type="number" min="1" max="99" name="guestPriorityRank" />
+          </label>
+        </fieldset>
       `
     )
     .join('');
 
   return `
     <section class="card">
-      <h2 class="section-title">Редактор карт</h2>
-      <p class="section-copy">Технический режим: разметка зон, изменение типа места на карте и удаление зон. Операционная работа по местам вынесена на вкладку “День”.</p>
+      <div class="map-card-head">
+        <div>
+          <h2 class="section-title">Места</h2>
+          <p class="section-copy">
+            Инвентарь парковки: какие места вообще существуют. Элемент — это линия на 1–3 места;
+            добавление тройного элемента создает три реальных места и меняет вместимость системы.
+            Операционная работа по дню — на вкладке “День”.
+          </p>
+        </div>
+        <form class="map-floor-form" method="get" action="/">
+          <input type="hidden" name="view" value="places" />
+          <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+          <label>
+            <span>Этаж</span>
+            <select name="mapCode" onchange="this.form.submit()">
+              ${floorOptions}
+            </select>
+          </label>
+        </form>
+      </div>
+
+      <div class="place-toolbar">
+        <button type="button" class="place-line-add" data-capacity="1">+ Одинарное</button>
+        <button type="button" class="place-line-add" data-capacity="2">+ Двойное</button>
+        <button type="button" class="place-line-add" data-capacity="3">+ Тройное</button>
+        <span class="muted">Активных мест: ${escapeHtml(activePlaceCount)}</span>
+      </div>
+      <p class="notice notice-ok" id="place-lines-output">Этаж ${escapeHtml(selectedMap?.title || selectedMapCode)}: линий ${escapeHtml(floorLines.length)}.</p>
+
+      <div class="map-workspace">
+        <img class="place-floor-plan" src="/maps/${escapeHtml(selectedMap?.filename || '')}" alt="План парковки ${escapeHtml(selectedMap?.title || '')}" />
+      </div>
+
+      ${renderPlaceLines({ lines: floorLines, selectedDate, mapCode: selectedMapCode }, { mode: 'editor' })}
+
       <div class="map-upload-panel">
         <p class="label">Подложки G3/G4/G5</p>
         <div class="map-upload-grid">${uploadForms}</div>
       </div>
       <div class="map-diagnostics">${diagnosticHtml}</div>
-      <label class="map-edit-toggle">
-        <input id="map-edit-mode" type="checkbox" />
-        <span>Редактирование мест</span>
-      </label>
-      <div class="map-toolbar">
-        <label>
-          <span>Место для разметки</span>
-          <select id="map-place-select">
-            <option value="">Выберите место</option>
-            ${placeOptions}
-          </select>
-        </label>
-        <label>
-          <span>Тип зоны</span>
-          <select id="map-zone-type">
-            <option value="rotatable">Ротируемое/гостевое</option>
-            <option value="regular">Обычное</option>
-            <option value="blocked">Недоступное</option>
-          </select>
-        </label>
-      </div>
-      <p class="notice notice-ok" id="map-click-output">SVG overlay готов. Свободные зоны зеленые, занятые медовые, ротируемые красные.</p>
-      <div class="maps-grid">${cards}</div>
-      <h3>Размеченные места</h3>
-      <div id="map-zones-list">
-        <p class="empty">Зоны пока не загружены.</p>
-      </div>
     </section>
+
+    <dialog id="place-line-dialog">
+      <form method="dialog" id="place-line-form">
+        <h3 id="place-line-dialog-title">Новый элемент</h3>
+        <p class="muted" id="place-line-dialog-hint"></p>
+        <div class="place-slot-field-grid">${slotFields}</div>
+        <p class="notice notice-error" id="place-line-dialog-error" hidden></p>
+        <menu>
+          <button type="button" class="button-secondary" data-close-dialog>Отмена</button>
+          <button type="button" id="place-line-submit">Создать</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="place-line-archive-dialog">
+      <form method="dialog" id="place-line-archive-form">
+        <h3>Удалить линию</h3>
+        <p id="place-line-archive-summary"></p>
+        <p class="notice notice-error" id="place-line-archive-error" hidden></p>
+        <menu>
+          <button type="button" class="button-secondary" data-close-dialog>Отмена</button>
+          <button type="button" id="place-line-archive-submit">Удалить</button>
+        </menu>
+      </form>
+    </dialog>
+
     <script>
-      const selectedDate = ${JSON.stringify(selectedDate)};
-      const editModeToggle = document.getElementById('map-edit-mode');
-      const placeSelect = document.getElementById('map-place-select');
-      const zoneTypeSelect = document.getElementById('map-zone-type');
-      const output = document.getElementById('map-click-output');
-      const maps = ${JSON.stringify(activeMaps.map(({ metadata, ...map }) => map))};
-      const mapConfigs = new Map(maps.map((map) => [map.id, map]));
-      const places = ${JSON.stringify(places.map((place) => ({ id: place.id, code: place.code, title: place.title })))};
-      const placesById = new Map(places.map((place) => [place.id, place]));
-      const zonesByMap = new Map();
-      const zonesList = document.getElementById('map-zones-list');
-      const SVG_NS = 'http://www.w3.org/2000/svg';
+      (() => {
+        const selectedDate = ${JSON.stringify(selectedDate)};
+        const floorLabel = ${JSON.stringify(selectedFloorLabel)};
+        const nextCode = ${JSON.stringify(nextFreePlaceCode(places, selectedFloorLabel))};
+        const activePlaceCount = ${JSON.stringify(activePlaceCount)};
+        const output = document.getElementById('place-lines-output');
+        const dialog = document.getElementById('place-line-dialog');
+        const dialogTitle = document.getElementById('place-line-dialog-title');
+        const dialogHint = document.getElementById('place-line-dialog-hint');
+        const dialogError = document.getElementById('place-line-dialog-error');
+        const archiveDialog = document.getElementById('place-line-archive-dialog');
+        const archiveSummary = document.getElementById('place-line-archive-summary');
+        const archiveError = document.getElementById('place-line-archive-error');
+        const slotFieldsets = Array.from(document.querySelectorAll('.place-slot-fields'));
+        const capacityLabels = { 1: 'одинарное', 2: 'двойное', 3: 'тройное' };
+        let pendingCapacity = 1;
+        let pendingLineId = '';
 
-      function setOutput(text, isError = false) {
-        output.textContent = text;
-        output.classList.toggle('notice-error', isError);
-        output.classList.toggle('notice-ok', !isError);
-      }
-
-      function isEditMode() {
-        return editModeToggle.checked;
-      }
-
-      function syncEditMode() {
-        const editing = isEditMode();
-        document.body.classList.toggle('map-editing-enabled', editing);
-        placeSelect.disabled = !editing;
-        zoneTypeSelect.disabled = !editing;
-
-        for (const control of zonesList.querySelectorAll('.map-zone-type-select, .map-zone-delete')) {
-          control.disabled = !editing;
+        function setOutput(text, isError = false) {
+          output.textContent = text;
+          output.classList.toggle('notice-error', isError);
+          output.classList.toggle('notice-ok', !isError);
         }
 
-        setOutput(
-          editing
-            ? 'Редактирование включено: выберите место и протяните прямоугольник по карте.'
-            : 'Режим просмотра: можно нажимать на места и смотреть статус, разметка и удаление выключены.'
-        );
-      }
-
-      function setSvgRectAttributes(rect, box) {
-        rect.setAttribute('x', box.x);
-        rect.setAttribute('y', box.y);
-        rect.setAttribute('width', box.width);
-        rect.setAttribute('height', box.height);
-      }
-
-      function pixelBoxFromGeometry(mapConfig, geometry) {
-        const mapWidth = Number(mapConfig?.width || 1);
-        const mapHeight = Number(mapConfig?.height || 1);
-        return {
-          x: Number(((geometry.x || 0) * mapWidth).toFixed(2)),
-          y: Number(((geometry.y || 0) * mapHeight).toFixed(2)),
-          width: Number(((geometry.width || 0) * mapWidth).toFixed(2)),
-          height: Number(((geometry.height || 0) * mapHeight).toFixed(2))
-        };
-      }
-
-      function renderZone(layer, zone, mapConfig) {
-        const geometry = zone.geometry || {};
-        const box = pixelBoxFromGeometry(mapConfig, geometry);
-        const group = document.createElementNS(SVG_NS, 'g');
-        group.classList.add('map-zone-group');
-        group.dataset.zoneId = zone.id;
-        group.dataset.placeId = zone.parkingPlace?.id || '';
-
-        const rect = document.createElementNS(SVG_NS, 'rect');
-        rect.classList.add('map-zone-rect', 'map-zone-' + (zone.status || 'free'));
-        setSvgRectAttributes(rect, box);
-
-        const title = document.createElementNS(SVG_NS, 'title');
-        const titleText = [
-          zone.parkingPlace?.code || '',
-          zone.status || 'free',
-          zone.reservation?.userDisplayName || ''
-        ].filter(Boolean).join(' · ');
-        title.textContent = titleText;
-
-        group.appendChild(title);
-        group.appendChild(rect);
-
-        const label = zone.parkingPlace?.code || zone.zoneKey || '?';
-        if (box.width >= 36 && box.height >= 18) {
-          const text = document.createElementNS(SVG_NS, 'text');
-          text.classList.add('map-zone-label');
-          text.setAttribute('x', box.x + box.width / 2);
-          text.setAttribute('y', box.y + box.height / 2);
-          text.setAttribute('text-anchor', 'middle');
-          text.setAttribute('dominant-baseline', 'middle');
-          text.textContent = label;
-          group.appendChild(text);
+        function showDialogError(element, message) {
+          element.textContent = message;
+          element.hidden = !message;
         }
 
-        group.addEventListener('click', (event) => {
-          event.stopPropagation();
-          if (!isEditMode() && zone.parkingPlace?.id) {
-            window.location.href = '/?view=catalog&date=' + encodeURIComponent(selectedDate) + '&placeId=' + encodeURIComponent(zone.parkingPlace.id);
-            return;
-          }
-          setOutput(titleText || label);
-        });
-        layer.appendChild(group);
-      }
-
-      function zoneTypeLabel(zoneType) {
-        if (zoneType === 'rotatable') {
-          return 'Ротируемое/гостевое';
-        }
-        if (zoneType === 'blocked') {
-          return 'Недоступное';
-        }
-        return 'Обычное';
-      }
-
-      function renderZonesList() {
-        const zones = Array.from(zonesByMap.entries()).flatMap(([mapId, mapZones]) =>
-          mapZones.map((zone) => ({ ...zone, mapId }))
-        );
-
-        if (!zones.length) {
-          zonesList.innerHTML = '<p class="empty">Размеченных мест пока нет. Выберите место сверху и протяните прямоугольник по карте.</p>';
-          syncEditMode();
-          return;
+        function reload() {
+          window.location.reload();
         }
 
-        const rows = zones
-          .sort((left, right) => String(left.parkingPlace?.code || '').localeCompare(String(right.parkingPlace?.code || ''), 'ru'))
-          .map((zone) => {
-            const geometry = zone.geometry || {};
-            const zoneType = geometry.zoneType || 'regular';
-            const coords = [
-              'x=' + Number(geometry.x || 0).toFixed(4),
-              'y=' + Number(geometry.y || 0).toFixed(4),
-              'w=' + Number(geometry.width || 0).toFixed(4),
-              'h=' + Number(geometry.height || 0).toFixed(4)
-            ].join(', ');
-
-            return \`
-              <tr>
-                <td>\${zone.mapId.toUpperCase()}</td>
-                <td>\${zone.parkingPlace?.code || '—'}</td>
-                <td>\${zone.parkingPlace?.title || '—'}</td>
-                <td>
-                  <select class="map-zone-type-select" data-zone-id="\${zone.id}" data-map-id="\${zone.mapId}">
-                    <option value="regular"\${zoneType === 'regular' ? ' selected' : ''}>Обычное</option>
-                    <option value="rotatable"\${zoneType === 'rotatable' ? ' selected' : ''}>Ротируемое/гостевое</option>
-                    <option value="blocked"\${zoneType === 'blocked' ? ' selected' : ''}>Недоступное</option>
-                  </select>
-                </td>
-                <td><span class="tag map-zone-status-\${zone.status || 'free'}">\${zone.status || 'free'}</span></td>
-                <td>\${coords}</td>
-                <td>
-                  <button class="button-secondary map-zone-delete" type="button" data-zone-id="\${zone.id}" data-map-id="\${zone.mapId}">
-                    Удалить с карты
-                  </button>
-                </td>
-              </tr>
-            \`;
-          })
-          .join('');
-
-        zonesList.innerHTML = \`
-          <table>
-            <thead>
-              <tr>
-                <th>Карта</th>
-                <th>Место</th>
-                <th>Название</th>
-                <th>Тип зоны</th>
-                <th>Статус</th>
-                <th>Координаты</th>
-                <th>Действие</th>
-              </tr>
-            </thead>
-            <tbody>\${rows}</tbody>
-          </table>
-        \`;
-        syncEditMode();
-      }
-
-      async function loadZones(card) {
-        const mapId = card.dataset.mapId;
-        const layer = card.querySelector('.map-zones-layer');
-        const mapConfig = mapConfigs.get(mapId);
-        layer.innerHTML = '';
-
-        const response = await fetch('/admin/map-zones?mapCode=' + encodeURIComponent(mapId) + '&date=' + encodeURIComponent(selectedDate));
-        const data = await response.json();
-
-        if (!response.ok) {
-          setOutput(data.error || 'Не удалось загрузить зоны', true);
-          return;
+        for (const button of document.querySelectorAll('[data-close-dialog]')) {
+          button.addEventListener('click', () => button.closest('dialog').close());
         }
 
-        zonesByMap.set(mapId, data.zones || []);
-        for (const zone of data.zones || []) {
-          renderZone(layer, zone, mapConfig);
-        }
-        renderZonesList();
-      }
+        for (const button of document.querySelectorAll('.place-line-add')) {
+          button.addEventListener('click', () => {
+            pendingCapacity = Number(button.dataset.capacity);
+            dialogTitle.textContent = 'Новый элемент: ' + capacityLabels[pendingCapacity];
+            dialogHint.textContent =
+              'Этаж G' + floorLabel + '. Мест в элементе: ' + pendingCapacity +
+              '. Первое свободное числовое имя: ' + nextCode + '.';
+            showDialogError(dialogError, '');
 
-      async function updateZoneType(zoneId, zoneType, mapId) {
-        const response = await fetch('/admin/map-zones/update', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ zoneId, zoneType })
-        });
-        const data = await response.json();
+            slotFieldsets.forEach((fieldset, index) => {
+              const visible = index < pendingCapacity;
+              fieldset.hidden = !visible;
+              fieldset.disabled = !visible;
+              const codeInput = fieldset.querySelector('input[name="code"]');
+              const titleInput = fieldset.querySelector('input[name="title"]');
+              codeInput.value = visible ? String(Number(nextCode) + index) : '';
+              titleInput.value = '';
+            });
 
-        if (!response.ok) {
-          setOutput(data.error || 'Не удалось изменить тип зоны', true);
-          return;
-        }
-
-        setOutput('Тип зоны изменен: ' + zoneTypeLabel(zoneType));
-        const card = document.querySelector('.map-card[data-map-id="' + mapId + '"]');
-        if (card) {
-          await loadZones(card);
-        }
-      }
-
-      async function deleteZone(zoneId, mapId) {
-        const response = await fetch('/admin/map-zones/delete', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ zoneId })
-        });
-        const data = await response.json();
-
-        if (!response.ok) {
-          setOutput(data.error || 'Не удалось удалить зону', true);
-          return;
+            dialog.showModal();
+          });
         }
 
-        setOutput('Зона удалена с карты.');
-        const card = document.querySelector('.map-card[data-map-id="' + mapId + '"]');
-        if (card) {
-          await loadZones(card);
-        }
-      }
+        document.getElementById('place-line-submit').addEventListener('click', async () => {
+          const slots = slotFieldsets.slice(0, pendingCapacity).map((fieldset) => ({
+            code: fieldset.querySelector('input[name="code"]').value.trim(),
+            title: fieldset.querySelector('input[name="title"]').value.trim(),
+            placeRole: fieldset.querySelector('select[name="placeRole"]').value,
+            guestPriorityRank: fieldset.querySelector('input[name="guestPriorityRank"]').value || null
+          }));
 
-      async function saveZone(card, geometry) {
-        const parkingPlaceId = placeSelect.value;
-        const selectedPlace = placesById.get(parkingPlaceId);
-
-        if (!selectedPlace) {
-          setOutput('Сначала выберите место для разметки.', true);
-          return;
-        }
-
-        const payload = {
-          mapCode: card.dataset.mapId,
-          mapTitle: card.dataset.mapTitle,
-          floorLabel: card.dataset.mapId.replace('g', ''),
-          filePath: '/maps/' + card.dataset.mapFilename,
-          parkingPlaceId,
-          zoneType: zoneTypeSelect.value,
-          geometry
-        };
-
-        const response = await fetch('/admin/map-zones', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-
-        if (!response.ok) {
-          setOutput(data.error || 'Не удалось сохранить зону', true);
-          return;
-        }
-
-        setOutput('Зона сохранена: ' + selectedPlace.code + ' на карте ' + card.dataset.mapId.toUpperCase());
-        await loadZones(card);
-      }
-
-      function svgPoint(svg, event) {
-        const matrix = svg.getScreenCTM();
-        if (!matrix) {
-          return { x: 0, y: 0 };
-        }
-
-        const point = svg.createSVGPoint();
-        point.x = event.clientX;
-        point.y = event.clientY;
-        const transformed = point.matrixTransform(matrix.inverse());
-        const mapWidth = Number(svg.dataset.mapWidth || 1);
-        const mapHeight = Number(svg.dataset.mapHeight || 1);
-
-        return {
-          x: Math.min(Math.max(transformed.x, 0), mapWidth),
-          y: Math.min(Math.max(transformed.y, 0), mapHeight)
-        };
-      }
-
-      function normalizedRect(svg, startPoint, currentPoint) {
-        const mapWidth = Number(svg.dataset.mapWidth || 1);
-        const mapHeight = Number(svg.dataset.mapHeight || 1);
-        const startX = Math.min(Math.max(startPoint.x, 0), mapWidth);
-        const startY = Math.min(Math.max(startPoint.y, 0), mapHeight);
-        const currentX = Math.min(Math.max(currentPoint.x, 0), mapWidth);
-        const currentY = Math.min(Math.max(currentPoint.y, 0), mapHeight);
-        const left = Math.min(startX, currentX);
-        const top = Math.min(startY, currentY);
-        const width = Math.abs(currentX - startX);
-        const height = Math.abs(currentY - startY);
-
-        return {
-          x: Number((left / mapWidth).toFixed(6)),
-          y: Number((top / mapHeight).toFixed(6)),
-          width: Number((width / mapWidth).toFixed(6)),
-          height: Number((height / mapHeight).toFixed(6))
-        };
-      }
-
-      for (const card of document.querySelectorAll('.map-card')) {
-        const svg = card.querySelector('.map-svg');
-        const draft = card.querySelector('.map-draft-zone');
-        let pointerStart = null;
-
-        loadZones(card);
-
-        svg.addEventListener('pointerdown', (event) => {
-          if (event.target.closest && event.target.closest('.map-zone-group')) {
-            return;
-          }
-          if (!isEditMode()) {
-            return;
-          }
-          event.preventDefault();
-          pointerStart = svgPoint(svg, event);
-          draft.hidden = false;
-          setSvgRectAttributes(draft, { x: pointerStart.x, y: pointerStart.y, width: 0, height: 0 });
-          svg.setPointerCapture(event.pointerId);
-        });
-
-        svg.addEventListener('pointermove', (event) => {
-          if (!pointerStart) {
-            return;
-          }
-          const geometry = normalizedRect(svg, pointerStart, svgPoint(svg, event));
-          setSvgRectAttributes(draft, pixelBoxFromGeometry(mapConfigs.get(card.dataset.mapId), geometry));
-        });
-
-        svg.addEventListener('pointerup', async (event) => {
-          if (!pointerStart) {
-            return;
-          }
-          const currentPoint = svgPoint(svg, event);
-          const geometry = normalizedRect(svg, pointerStart, currentPoint);
-          pointerStart = null;
-          draft.hidden = true;
-
-          if (geometry.width < 0.001 || geometry.height < 0.001) {
-            const x = (currentPoint.x / Number(svg.dataset.mapWidth || 1)).toFixed(4);
-            const y = (currentPoint.y / Number(svg.dataset.mapHeight || 1)).toFixed(4);
-            setOutput('Карта ' + card.dataset.mapId.toUpperCase() + ': x=' + x + ', y=' + y + '. Для зоны протяните прямоугольник хотя бы на пару пикселей.');
+          if (slots.some((slot) => !slot.code)) {
+            showDialogError(dialogError, 'Заполните код каждого места.');
             return;
           }
 
-          await saveZone(card, geometry);
+          const response = await fetch('/admin/place-lines', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ floorLabel, capacity: pendingCapacity, slots })
+          });
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            showDialogError(dialogError, data.error || ('Не удалось создать элемент (' + response.status + ')'));
+            return;
+          }
+
+          dialog.close();
+          setOutput('Элемент создан: мест добавлено ' + pendingCapacity + '.');
+          reload();
         });
-      }
 
-      zonesList.addEventListener('change', async (event) => {
-        if (!event.target.classList.contains('map-zone-type-select')) {
-          return;
-        }
-        if (!isEditMode()) {
-          event.preventDefault();
-          syncEditMode();
-          return;
-        }
-
-        await updateZoneType(event.target.dataset.zoneId, event.target.value, event.target.dataset.mapId);
-      });
-
-      zonesList.addEventListener('click', async (event) => {
-        const button = event.target.closest('.map-zone-delete');
-        if (!button) {
-          return;
-        }
-        if (!isEditMode()) {
-          setOutput('Включите "Редактирование мест", чтобы удалять зоны с карты.');
-          return;
+        for (const button of document.querySelectorAll('.place-line-archive')) {
+          button.addEventListener('click', () => {
+            pendingLineId = button.dataset.lineId;
+            const codes = button.dataset.placeCodes || '—';
+            const affected = codes === '—' ? 0 : codes.split(',').length;
+            archiveSummary.textContent =
+              'Линия ' + button.dataset.lineCode + ': будут архивированы места ' + codes +
+              '. Активных мест станет ' + (activePlaceCount - affected) + ' вместо ' + activePlaceCount + '.';
+            showDialogError(archiveError, '');
+            archiveDialog.showModal();
+          });
         }
 
-        if (!window.confirm('Удалить это место с карты?')) {
-          return;
+        document.getElementById('place-line-archive-submit').addEventListener('click', async () => {
+          const response = await fetch('/admin/place-lines/archive', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ lineId: pendingLineId })
+          });
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            const blockers = (data.blockers || [])
+              .map((blocker) => blocker.placeCode + ': ' + blocker.type + ' ' + (blocker.detail || '') + ' ' + (blocker.userDisplayName || ''))
+              .join('; ');
+            showDialogError(archiveError, (data.error || 'Не удалось удалить линию') + (blockers ? ' — ' + blockers : ''));
+            return;
+          }
+
+          archiveDialog.close();
+          setOutput('Линия архивирована.');
+          reload();
+        });
+
+        // In the inventory editor a slot click opens the place card in Справочники;
+        // selecting a place for day operations is the Day tab's job.
+        for (const slot of document.querySelectorAll('.place-slot')) {
+          slot.addEventListener('click', () => {
+            window.location.href =
+              '/?view=catalog&date=' + encodeURIComponent(selectedDate) +
+              '&placeId=' + encodeURIComponent(slot.dataset.placeId);
+          });
         }
-
-        await deleteZone(button.dataset.zoneId, button.dataset.mapId);
-      });
-
-      editModeToggle.addEventListener('change', syncEditMode);
-      syncEditMode();
+      })();
     </script>
   `;
 }
@@ -958,7 +736,7 @@ function renderOperationalPlaceCard(model) {
           <h3>${escapeHtml(place.code)} · ${escapeHtml(place.title)}</h3>
           <p class="section-copy">${escapeHtml(place.floorLabel || 'без этажа')} · ${escapeHtml(place.placeType)} · ${place.lineGroup ? escapeHtml(`линия ${place.lineGroup.code}`) : 'без линии'}</p>
         </div>
-        <span class="tag map-zone-status-${escapeHtml(status)}">${escapeHtml(status)}</span>
+        <span class="tag place-status-${escapeHtml(status)}">${escapeHtml(status)}</span>
       </div>
 
       <div class="mini-grid">
@@ -1180,12 +958,12 @@ function renderOperationalMap(model) {
         </form>
       </div>
       <div class="map-legend">
-        <span class="tag map-zone-status-free">free</span>
-        <span class="tag map-zone-status-released">released</span>
-        <span class="tag map-zone-status-occupied">occupied</span>
-        <span class="tag map-zone-status-guest">guest</span>
-        <span class="tag map-zone-status-rotatable">rotatable</span>
-        <span class="tag map-zone-status-blocked">blocked</span>
+        <span class="tag place-status-free">free</span>
+        <span class="tag place-status-released">released</span>
+        <span class="tag place-status-occupied">occupied</span>
+        <span class="tag place-status-guest">guest</span>
+        <span class="tag place-status-rotatable">rotatable</span>
+        <span class="tag place-status-blocked">blocked</span>
       </div>
       <div class="operational-layout">
         <div class="maps-grid operational-maps-grid">${cards}</div>
@@ -2950,7 +2728,7 @@ const renderModules = createRenderModules({
   renderCatalogTab,
   renderDayPage,
   renderLinesTab,
-  renderMapEditorTab,
+  renderPlacesTab,
   renderRequestsTab
 });
 
@@ -3240,11 +3018,6 @@ function renderPage(model) {
         background: rgba(255, 255, 255, 0.44);
       }
 
-      .maps-grid {
-        display: grid;
-        gap: 18px;
-      }
-
       .operational-layout {
         display: grid;
         grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
@@ -3259,6 +3032,170 @@ function renderPage(model) {
       .place-drawer {
         position: sticky;
         top: 16px;
+      }
+
+      .place-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin: 0 0 14px;
+      }
+
+      .place-floor-plan {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: #fff;
+      }
+
+      .place-floor {
+        margin: 18px 0 0;
+      }
+
+      .place-floor-title {
+        margin: 0 0 10px;
+      }
+
+      .place-line-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 14px;
+      }
+
+      .place-line {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .place-line-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .place-line-head h4 {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .place-line-slots {
+        display: grid;
+        gap: 6px;
+      }
+
+      .place-slot-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .place-slot {
+        display: grid;
+        grid-template-columns: auto auto 1fr auto;
+        gap: 8px;
+        width: 100%;
+        min-height: 44px;
+        align-items: center;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .place-slot-code {
+        font-weight: 700;
+      }
+
+      .place-slot-position,
+      .place-slot-owner {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .place-slot-status {
+        font-size: 13px;
+      }
+
+      .place-slot--selected {
+        outline: 3px solid #000;
+        outline-offset: 1px;
+      }
+
+      /* The six status colours carried over verbatim from the retired map legend.
+         Colour never carries the meaning alone — every slot prints the status word. */
+      .place-slot--free {
+        background: #dcefd7;
+      }
+
+      .place-slot--released {
+        background: #d8eeef;
+      }
+
+      .place-slot--occupied,
+      .place-slot--guest {
+        background: #ead8c4;
+      }
+
+      .place-slot--rotatable {
+        background: #efc5bd;
+      }
+
+      .place-slot--blocked {
+        color: #fff;
+        background: #4b4f52;
+      }
+
+      .place-slot-role select {
+        min-width: 150px;
+      }
+
+      .place-slot-field-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .place-slot-fields[hidden] {
+        display: none;
+      }
+
+      .place-slot-fields {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .place-slot-fields label {
+        display: grid;
+        gap: 6px;
+      }
+
+      dialog menu {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        margin: 14px 0 0;
+        padding: 0;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
       }
 
       .map-card {
@@ -3280,48 +3217,6 @@ function renderPage(model) {
 
       .map-card p {
         color: var(--muted);
-      }
-
-      .map-edit-toggle {
-        display: inline-flex;
-        width: auto;
-        align-items: center;
-        gap: 10px;
-        margin: 0 0 16px;
-        padding: 9px 12px;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        background: #fff;
-        cursor: pointer;
-      }
-
-      .map-edit-toggle input {
-        width: 18px;
-        min-height: 18px;
-      }
-
-      .map-edit-toggle span {
-        color: var(--text);
-        font-size: 15px;
-      }
-
-      .map-toolbar {
-        display: grid;
-        grid-template-columns: minmax(260px, 1fr) minmax(200px, 260px);
-        gap: 14px;
-        margin-bottom: 16px;
-      }
-
-      .map-toolbar label {
-        display: grid;
-        gap: 7px;
-      }
-
-      .map-toolbar span {
-        color: var(--muted);
-        font-size: 13px;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
       }
 
       .map-floor-form {
@@ -3401,105 +3296,26 @@ function renderPage(model) {
         background: #fff;
       }
 
-      .map-svg {
-        display: block;
-        width: 100%;
-        height: auto;
-        background: #fff;
-        cursor: default;
-        touch-action: none;
-        user-select: none;
-      }
-
-      .map-editing-enabled .map-svg {
-        cursor: crosshair;
-      }
-
-      .map-svg image {
-        user-select: none;
-        -webkit-user-drag: none;
-      }
-
-      .map-zone-group {
-        cursor: pointer;
-      }
-
-      .map-zone-rect {
-        fill: rgba(47, 104, 70, 0.22);
-        stroke: rgba(31, 111, 120, 0.88);
-        stroke-width: 2;
-        vector-effect: non-scaling-stroke;
-      }
-
-      .map-zone-occupied {
-        fill: rgba(234, 216, 196, 0.52);
-        stroke: rgba(159, 58, 42, 0.92);
-      }
-
-      .map-zone-released {
-        fill: rgba(31, 111, 120, 0.22);
-        stroke: rgba(31, 111, 120, 0.92);
-      }
-
-      .map-zone-guest {
-        fill: rgba(223, 151, 71, 0.44);
-        stroke: rgba(159, 94, 22, 0.92);
-      }
-
-      .map-zone-rotatable {
-        fill: rgba(170, 33, 34, 0.28);
-        stroke: rgba(170, 33, 34, 0.92);
-      }
-
-      .map-zone-blocked {
-        fill: rgba(31, 35, 40, 0.26);
-        stroke: rgba(31, 35, 40, 0.76);
-      }
-
-      .map-zone-selected {
-        stroke: #000;
-        stroke-width: 5;
-      }
-
-      .map-zone-status-free {
+      .place-status-free {
         background: #dcefd7;
       }
 
-      .map-zone-status-released {
+      .place-status-released {
         background: #d8eeef;
       }
 
-      .map-zone-status-occupied,
-      .map-zone-status-guest {
+      .place-status-occupied,
+      .place-status-guest {
         background: #ead8c4;
       }
 
-      .map-zone-status-rotatable {
+      .place-status-rotatable {
         background: #efc5bd;
       }
 
-      .map-zone-status-blocked {
+      .place-status-blocked {
         color: #fff;
         background: #4b4f52;
-      }
-
-      .map-zone-label {
-        fill: #111;
-        font: 700 22px/1 ui-sans-serif, system-ui, sans-serif;
-        paint-order: stroke;
-        pointer-events: none;
-        stroke: rgba(255, 255, 255, 0.88);
-        stroke-linejoin: round;
-        stroke-width: 5;
-      }
-
-      .map-draft-zone {
-        fill: rgba(31, 111, 120, 0.18);
-        pointer-events: none;
-        stroke: rgba(31, 111, 120, 0.88);
-        stroke-dasharray: 12 8;
-        stroke-width: 3;
-        vector-effect: non-scaling-stroke;
       }
 
       .empty {
@@ -3530,7 +3346,6 @@ function renderPage(model) {
       @media (max-width: 760px) {
         .action-form,
         .date-form,
-        .map-toolbar,
         .map-floor-form,
         .operational-layout,
         .action-form label.wide {
@@ -3617,8 +3432,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
-    const result = await fetchJson(`/admin/map-zones?${url.searchParams.toString()}`);
+  if (req.method === 'GET' && url.pathname === '/admin/place-lines') {
+    const result = await fetchJson(`/admin/place-lines?${url.searchParams.toString()}`);
     res.writeHead(result.status, { 'content-type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result.data));
     return;
@@ -3659,7 +3474,7 @@ const server = http.createServer(async (req, res) => {
       const result = await postJson('/admin/map-backgrounds', {
         mapCode,
         mapTitle: form.fields.get('mapTitle') || mapConfig.title,
-        floorLabel: form.fields.get('floorLabel') || mapCode.replace(/^g/, ''),
+        floorLabel: form.fields.get('floorLabel') || mapCodeToFloorLabel(mapCode),
         filePath: `/maps/${filename}`,
         fileType,
         sourceChecksum: checksum
@@ -3669,11 +3484,11 @@ const server = http.createServer(async (req, res) => {
         throw new Error(result.data?.error || `API error ${result.status}`);
       }
 
-      res.writeHead(303, { location: `/?view=maps&mapCode=${encodeURIComponent(mapCode)}&mapUploaded=1` });
+      res.writeHead(303, { location: `/?view=places&mapCode=${encodeURIComponent(mapCode)}&mapUploaded=1` });
       res.end();
       return;
     } catch (error) {
-      res.writeHead(303, { location: `/?view=maps&error=${encodeURIComponent(error.message)}` });
+      res.writeHead(303, { location: `/?view=places&error=${encodeURIComponent(error.message)}` });
       res.end();
       return;
     }
@@ -3681,9 +3496,7 @@ const server = http.createServer(async (req, res) => {
 
   if (
     req.method === 'POST' &&
-    (url.pathname === '/admin/map-zones' ||
-      url.pathname === '/admin/map-zones/update' ||
-      url.pathname === '/admin/map-zones/delete')
+    (url.pathname === '/admin/place-lines' || url.pathname === '/admin/place-lines/archive')
   ) {
     let payload;
 
@@ -3737,7 +3550,7 @@ const server = http.createServer(async (req, res) => {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
       const requestedView = url.searchParams.get('view') || 'day';
       const normalizedView = requestedView === 'dashboard' ? 'day' : requestedView;
-      const activeView = ['day', 'requests', 'catalog', 'lines', 'audit', 'maps'].includes(normalizedView) ? normalizedView : 'day';
+      const activeView = ['day', 'requests', 'catalog', 'lines', 'audit', 'places'].includes(normalizedView) ? normalizedView : 'day';
       const placeId = url.searchParams.get('placeId');
       const employeeId = url.searchParams.get('employeeId');
       const requestedMapCode = url.searchParams.get('mapCode') || parkingMaps[0]?.id || 'g4';
@@ -3783,6 +3596,7 @@ const server = http.createServer(async (req, res) => {
         auditLogs,
         contactAccessLogs,
         mapDiagnostics,
+        placeLines,
         placeHistory,
         employeeHistory
       ] = await Promise.all([
@@ -3804,6 +3618,7 @@ const server = http.createServer(async (req, res) => {
         fetchJson(`/admin/audit-logs?${auditParams.toString()}`),
         fetchJson(`/admin/contact-access-logs?date=${encodeURIComponent(selectedDate)}&limit=120`),
         fetchJson('/admin/map-diagnostics'),
+        fetchJson(`/admin/place-lines?date=${encodeURIComponent(selectedDate)}`),
         placeId ? fetchJson(`/admin/places/${encodeURIComponent(placeId)}/history`) : Promise.resolve({ ok: true, status: 200, data: null }),
         employeeId ? fetchJson(`/admin/employees/${encodeURIComponent(employeeId)}/history`) : Promise.resolve({ ok: true, status: 200, data: null })
       ]);
@@ -3878,6 +3693,7 @@ const server = http.createServer(async (req, res) => {
           auditLogs,
           contactAccessLogs,
           mapDiagnostics,
+          placeLines,
           placeHistory,
           employeeHistory,
           selectedDate,
@@ -3946,16 +3762,20 @@ const server = http.createServer(async (req, res) => {
       guestPriorityRank: form.get('guestPriorityRank'),
       placeRole: form.get('placeRole')
     };
+    // The per-slot role control on the Места tab posts the same form; returnView keeps the
+    // operator on the tab they edited from instead of bouncing them into Справочники.
+    const returnView = form.get('returnView') === 'places' ? 'places' : 'catalog';
+    const mapCodeParam = form.get('mapCode') ? `&mapCode=${encodeURIComponent(form.get('mapCode'))}` : '';
     const result = await postJson('/admin/places/update', payload);
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeUpdated=1&placeId=${encodeURIComponent(placeId || '')}` });
+      res.writeHead(303, { location: `/?view=${returnView}&date=${encodeURIComponent(selectedDate)}${mapCodeParam}&placeUpdated=1&placeId=${encodeURIComponent(placeId || '')}` });
       res.end();
       return;
     }
 
     const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeId=${encodeURIComponent(placeId || '')}&error=${encodeURIComponent(message)}` });
+    res.writeHead(303, { location: `/?view=${returnView}&date=${encodeURIComponent(selectedDate)}${mapCodeParam}&placeId=${encodeURIComponent(placeId || '')}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }
