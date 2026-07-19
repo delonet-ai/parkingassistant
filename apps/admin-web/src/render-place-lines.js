@@ -212,6 +212,7 @@ module.exports = {
   PLACE_ROLE_OPTIONS,
   PLACE_STATUSES,
   PLACE_STATUS_LABELS,
+  normalizedStatus,
   renderPlaceLines,
   statusLabel
 };

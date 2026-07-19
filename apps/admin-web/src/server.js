@@ -9,6 +9,7 @@ const { escapeHtml } = require('../../../packages/shared/html');
 const { readFormBody, readJsonBody } = require('../../../packages/shared/http');
 const { createRenderModules, renderActiveTab } = require('./render-modules');
 const { PLACE_ROLE_OPTIONS, renderPlaceLines } = require('./render-place-lines');
+const { renderDayMap } = require('./render-day-map');
 
 const port = Number(process.env.PORT || 3100);
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000';
@@ -709,7 +710,7 @@ function renderOperationalPlaceCard(model) {
     return `
       <aside class="place-drawer card">
         <h3>Место не выбрано</h3>
-        <p class="empty">Нажмите на размеченное место на карте, чтобы открыть операционную карточку.</p>
+        <p class="empty">Выберите место в списке элементов, чтобы открыть операционную карточку.</p>
       </aside>
     `;
   }
@@ -870,287 +871,19 @@ async function buildOperationalPlaceCardModel({ selectedDate, selectedPlaceId, s
 function renderOperationalMap(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const selectedMapCode = model.selectedMapCode || parkingMaps[0]?.id || 'g4';
-  const selectedStatusFilter = model.mapStatusFilter || '';
-  const selectedTypeFilter = model.mapTypeFilter || '';
-  const activeMaps = configuredMaps(model);
-  const mapOptions = activeMaps
-    .map((map) => `<option value="${escapeHtml(map.id)}"${selectedMapCode === map.id ? ' selected' : ''}>${escapeHtml(map.title)}</option>`)
-    .join('');
-  const statusOptions = [
-    ['', 'Все статусы'],
-    ['free', 'free'],
-    ['released', 'released'],
-    ['occupied', 'occupied'],
-    ['guest', 'guest'],
-    ['rotatable', 'rotatable'],
-    ['blocked', 'blocked']
-  ]
-    .map(([value, label]) => `<option value="${escapeHtml(value)}"${selectedStatusFilter === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
-    .join('');
-  const typeOptions = [
-    ['', 'Все типы'],
-    ['single', 'single'],
-    ['double', 'double'],
-    ['triple', 'triple']
-  ]
-    .map(([value, label]) => `<option value="${escapeHtml(value)}"${selectedTypeFilter === value ? ' selected' : ''}>${escapeHtml(label)}</option>`)
-    .join('');
-  const cards = activeMaps
-    .map(
-      (map) => `
-        <article class="map-card operational-map-card${selectedMapCode === map.id ? ' active' : ''}" data-map-id="${escapeHtml(map.id)}" data-map-title="${escapeHtml(map.title)}">
-          <div class="map-card-head">
-            <div>
-              <h3>${escapeHtml(map.title)}</h3>
-              <p>${escapeHtml(map.description)}</p>
-            </div>
-            <span class="tag">операционный слой</span>
-          </div>
-          <div class="map-workspace">
-            <svg
-              class="map-svg operational-map-svg"
-              data-map-id="${escapeHtml(map.id)}"
-              data-map-width="${escapeHtml(map.width)}"
-              data-map-height="${escapeHtml(map.height)}"
-              viewBox="0 0 ${escapeHtml(map.width)} ${escapeHtml(map.height)}"
-              preserveAspectRatio="xMidYMid meet"
-              role="img"
-              aria-label="Операционная карта парковки ${escapeHtml(map.title)}"
-            >
-              <image href="/maps/${escapeHtml(map.filename)}" x="0" y="0" width="${escapeHtml(map.width)}" height="${escapeHtml(map.height)}" preserveAspectRatio="none"></image>
-              <g class="map-zones-layer" aria-label="Места ${escapeHtml(map.title)}"></g>
-            </svg>
-          </div>
-        </article>
-      `
-    )
-    .join('');
 
-  return `
-    <section class="card">
-      <div class="map-card-head">
-        <div>
-          <h2 class="section-title">Карта дня</h2>
-          <p class="section-copy">Операционный режим: просмотр статусов и действия по выбранному месту. Разметка и изменение зон здесь отключены.</p>
-        </div>
-        <form class="map-floor-form" method="get" action="/">
-          <input type="hidden" name="view" value="day" />
-          <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
-          ${model.selectedPlaceId ? `<input type="hidden" name="placeId" value="${escapeHtml(model.selectedPlaceId)}" />` : ''}
-          <label>
-            <span>Этаж</span>
-            <select name="mapCode" onchange="this.form.submit()">
-              ${mapOptions}
-            </select>
-          </label>
-          <label>
-            <span>Статус</span>
-            <select name="status" onchange="this.form.submit()">
-              ${statusOptions}
-            </select>
-          </label>
-          <label>
-            <span>Тип</span>
-            <select name="type" onchange="this.form.submit()">
-              ${typeOptions}
-            </select>
-          </label>
-        </form>
-      </div>
-      <div class="map-legend">
-        <span class="tag place-status-free">free</span>
-        <span class="tag place-status-released">released</span>
-        <span class="tag place-status-occupied">occupied</span>
-        <span class="tag place-status-guest">guest</span>
-        <span class="tag place-status-rotatable">rotatable</span>
-        <span class="tag place-status-blocked">blocked</span>
-      </div>
-      <div class="operational-layout">
-        <div class="maps-grid operational-maps-grid">${cards}</div>
-        ${renderOperationalPlaceCard(model)}
-      </div>
-    </section>
-    <script>
-      (() => {
-        const selectedDate = ${JSON.stringify(selectedDate)};
-        const selectedMapCode = ${JSON.stringify(selectedMapCode)};
-        let currentSelectedPlaceId = ${JSON.stringify(model.selectedPlaceId || '')};
-        const selectedStatusFilter = ${JSON.stringify(selectedStatusFilter)};
-        const selectedTypeFilter = ${JSON.stringify(selectedTypeFilter)};
-        const releasedPlaceIds = new Set(${JSON.stringify((model.dashboard?.data?.releasedPlaces || []).map((item) => item.parkingPlace.id))});
-        const maps = ${JSON.stringify(activeMaps.map(({ metadata, ...map }) => map))};
-        const mapConfigs = new Map(maps.map((map) => [map.id, map]));
-        const SVG_NS = 'http://www.w3.org/2000/svg';
-
-        function pixelBoxFromGeometry(mapConfig, geometry) {
-          const mapWidth = Number(mapConfig?.width || 1);
-          const mapHeight = Number(mapConfig?.height || 1);
-          return {
-            x: Number(((geometry.x || 0) * mapWidth).toFixed(2)),
-            y: Number(((geometry.y || 0) * mapHeight).toFixed(2)),
-            width: Number(((geometry.width || 0) * mapWidth).toFixed(2)),
-            height: Number(((geometry.height || 0) * mapHeight).toFixed(2))
-          };
-        }
-
-        function setSvgRectAttributes(rect, box) {
-          rect.setAttribute('x', box.x);
-          rect.setAttribute('y', box.y);
-          rect.setAttribute('width', box.width);
-          rect.setAttribute('height', box.height);
-        }
-
-        function effectiveStatus(zone) {
-          if (zone.reservation?.source === 'guest') {
-            return 'guest';
-          }
-          if (!zone.reservation && zone.parkingPlace?.id && releasedPlaceIds.has(zone.parkingPlace.id) && zone.status === 'free') {
-            return 'released';
-          }
-          return zone.status || 'free';
-        }
-
-        function renderZone(layer, zone, mapConfig) {
-          const geometry = zone.geometry || {};
-          const box = pixelBoxFromGeometry(mapConfig, geometry);
-          const status = effectiveStatus(zone);
-          const placeType = zone.parkingPlace?.placeType || '';
-          if (selectedStatusFilter && status !== selectedStatusFilter) {
-            return;
-          }
-          if (selectedTypeFilter && placeType !== selectedTypeFilter) {
-            return;
-          }
-          const group = document.createElementNS(SVG_NS, 'g');
-          group.classList.add('map-zone-group', 'operational-zone-group');
-          group.dataset.placeId = zone.parkingPlace?.id || '';
-
-          const rect = document.createElementNS(SVG_NS, 'rect');
-          rect.classList.add('map-zone-rect', 'map-zone-' + status);
-          if (zone.parkingPlace?.id === currentSelectedPlaceId) {
-            rect.classList.add('map-zone-selected');
-          }
-          setSvgRectAttributes(rect, box);
-
-          const title = document.createElementNS(SVG_NS, 'title');
-          title.textContent = [zone.parkingPlace?.code, status, zone.reservation?.userDisplayName].filter(Boolean).join(' · ');
-          group.appendChild(title);
-          group.appendChild(rect);
-
-          const label = zone.parkingPlace?.code || zone.zoneKey || '?';
-          if (box.width >= 36 && box.height >= 18) {
-            const text = document.createElementNS(SVG_NS, 'text');
-            text.classList.add('map-zone-label');
-            text.setAttribute('x', box.x + box.width / 2);
-            text.setAttribute('y', box.y + box.height / 2);
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('dominant-baseline', 'middle');
-            text.textContent = label;
-            group.appendChild(text);
-          }
-
-          group.addEventListener('click', (event) => {
-            event.stopPropagation();
-            if (!zone.parkingPlace?.id) {
-              return;
-            }
-            loadOperationalPlaceCard(zone.parkingPlace.id, true);
-          });
-          layer.appendChild(group);
-        }
-
-        function dayUrl(placeId) {
-          const params = new URLSearchParams({
-            view: 'day',
-            date: selectedDate,
-            mapCode: selectedMapCode
-          });
-
-          if (placeId) {
-            params.set('placeId', placeId);
-          }
-          if (selectedStatusFilter) {
-            params.set('status', selectedStatusFilter);
-          }
-          if (selectedTypeFilter) {
-            params.set('type', selectedTypeFilter);
-          }
-
-          return '/?' + params.toString();
-        }
-
-        function setSelectedZone(placeId) {
-          currentSelectedPlaceId = placeId || '';
-          for (const rect of document.querySelectorAll('.operational-zone-group .map-zone-rect')) {
-            const group = rect.closest('.operational-zone-group');
-            rect.classList.toggle('map-zone-selected', Boolean(group && group.dataset.placeId === currentSelectedPlaceId));
-          }
-        }
-
-        function replacePlaceCard(html) {
-          const currentCard = document.querySelector('.place-drawer');
-          if (currentCard) {
-            currentCard.outerHTML = html;
-          }
-        }
-
-        async function loadOperationalPlaceCard(placeId, shouldPushState) {
-          setSelectedZone(placeId);
-          const params = new URLSearchParams({
-            date: selectedDate,
-            mapCode: selectedMapCode
-          });
-
-          if (placeId) {
-            params.set('placeId', placeId);
-          }
-
-          const response = await fetch('/admin/operational-place-card?' + params.toString(), {
-            headers: { accept: 'application/json' }
-          });
-          const data = await response.json();
-
-          if (!response.ok) {
-            replacePlaceCard('<aside class="place-drawer card"><h3>Место не выбрано</h3><p class="empty">Не удалось загрузить карточку места.</p></aside>');
-            return;
-          }
-
-          replacePlaceCard(data.html);
-          if (shouldPushState) {
-            window.history.pushState({ placeId: placeId || '' }, '', dayUrl(placeId));
-          }
-        }
-
-        async function loadZones(card) {
-          const mapId = card.dataset.mapId;
-          const layer = card.querySelector('.map-zones-layer');
-          const mapConfig = mapConfigs.get(mapId);
-          layer.innerHTML = '';
-
-          const response = await fetch('/admin/map-zones?mapCode=' + encodeURIComponent(mapId) + '&date=' + encodeURIComponent(selectedDate));
-          const data = await response.json();
-          if (!response.ok) {
-            return;
-          }
-
-          for (const zone of data.zones || []) {
-            renderZone(layer, zone, mapConfig);
-          }
-        }
-
-        for (const card of document.querySelectorAll('.operational-map-card')) {
-          card.hidden = card.dataset.mapId !== selectedMapCode;
-          loadZones(card);
-        }
-
-        window.addEventListener('popstate', () => {
-          const params = new URLSearchParams(window.location.search);
-          const placeId = params.get('placeId') || '';
-          loadOperationalPlaceCard(placeId, false);
-        });
-      })();
-    </script>
-  `;
+  return renderDayMap({
+    maps: configuredMaps(model),
+    selectedMapCode,
+    // The floor selector speaks map codes (g4); parking_places.floor_label is the bare digit.
+    selectedFloorLabel: mapCodeToFloorLabel(selectedMapCode),
+    selectedDate,
+    selectedPlaceId: model.selectedPlaceId || '',
+    statusFilter: model.mapStatusFilter || '',
+    typeFilter: model.mapTypeFilter || '',
+    lines: model.placeLines?.data?.lines || [],
+    placeCardHtml: renderOperationalPlaceCard(model)
+  });
 }
 
 function renderDateSelector(selectedDate, view = 'day', extraHidden = '') {
@@ -1928,7 +1661,7 @@ function renderDayPage(model) {
   return `
     <section class="card">
       <h2 class="section-title">День</h2>
-      <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Основная работа администратора: карта, статус мест и быстрые действия по выбранному месту.</p>
+      <p class="section-copy">Выбранная дата: ${escapeHtml(selectedDate)}. Основная работа администратора: статус мест и быстрые действия по выбранному месту.</p>
       ${renderDateSelector(selectedDate, 'day', daySelectorHidden)}
       ${renderDayKpis(model)}
     </section>
@@ -3025,7 +2758,7 @@ function renderPage(model) {
         align-items: start;
       }
 
-      .operational-maps-grid {
+      .operational-places {
         min-width: 0;
       }
 
