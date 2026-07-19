@@ -55,6 +55,28 @@ test('isEarlyDeparture is true only for valid times before 18:00', () => {
   assert.equal(isEarlyDeparture('not-a-time'), false);
 });
 
+// The 07:00 departure-edit lock (apps/api/src/server.js) and the 19:00 / 08:00 / 07:00
+// job triggers (apps/jobs/src/scheduler.js) all compare `currentTimeInTimezone()` output
+// against a literal `HH:MM` string. That only works because zero-padded h23 times sort
+// chronologically as strings — pin it here so the comparison style stays safe.
+test('zero-padded HH:MM strings compare chronologically', () => {
+  assert.equal('07:00' >= '07:00', true);
+  assert.equal('06:59' >= '07:00', false);
+  assert.equal('07:01' >= '07:00', true);
+  assert.equal('18:59' >= '19:00', false);
+  assert.equal('19:00' >= '19:00', true);
+  assert.equal('23:59' >= '19:00', true);
+  assert.equal('00:00' >= '07:00', false);
+  assert.equal('09:00' < '10:00', true);
+});
+
+test('currentTimeInTimezone output is zero-padded, so cut-off comparisons hold', () => {
+  const value = currentTimeInTimezone('Europe/Moscow');
+  assert.equal(value.length, 5);
+  assert.equal(isValidTime(value), true);
+  assert.equal(value[2], ':');
+});
+
 test('currentDateInTimezone returns an ISO date for a valid zone', () => {
   const value = currentDateInTimezone('Europe/Moscow');
   assert.equal(isIsoDate(value), true);
