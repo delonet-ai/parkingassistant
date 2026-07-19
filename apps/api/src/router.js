@@ -3,60 +3,84 @@
 const { URL } = require('node:url');
 const { errorPayload } = require('../../../packages/shared/errors');
 
-const rootEndpoints = [
-  '/health',
-  '/health/db',
-  '/auth/bootstrap-status',
-  '/admin/users',
-  '/admin/employees',
-  '/admin/employees/update',
-  '/admin/employees/disable',
-  '/admin/employees/:id/history',
-  '/admin/places',
-  '/admin/places/update',
-  '/admin/places/:id/history',
-  '/admin/place-lines',
-  '/admin/place-lines/archive',
-  '/admin/permanent-assignments',
-  '/admin/permanent-assignments/end',
-  '/admin/audit-logs',
-  '/admin/contact-access-logs',
-  '/admin/line-groups',
-  '/admin/line-occupancy',
-  '/admin/line-groups/:id/occupancy',
-  '/bot/line/position',
-  '/bot/line/blocking-contacts',
-  '/bot/departure-plans',
-  '/admin/departure-plans',
-  '/admin/conflicts',
-  '/admin/map-diagnostics',
-  '/admin/map-backgrounds',
-  '/admin/dashboard',
-  '/admin/availability',
-  '/admin/place-releases',
-  '/admin/place-releases/cancel',
-  '/admin/employee-parking-requests',
-  '/admin/guest-parking-requests',
-  '/admin/guest-parking-requests/assign',
-  '/admin/jobs/process-queue',
-  '/admin/jobs/freeze-next-day',
-  '/admin/jobs/lock-departure-plans',
-  '/admin/jobs/unlock-employee-pool',
-  '/admin/jobs/rebuild-conflicts',
-  '/admin/jobs/runs',
-  '/admin/reservations/manual',
-  '/admin/reservations/cancel'
-];
+// The router owns no routes of its own. Each module publishes a route table and the router
+// composes them in the order `modules/index.js` lists the contexts; the endpoint index
+// served at `GET /` is derived from the same tables, so a route and its documentation
+// cannot drift apart the way the hand-kept `rootEndpoints` array could.
+//
+// A route entry is:
+//   { method, path | paths[] | pattern, handler, advertise?, safe? }
+//
+// `handler` receives one object: { req, url, searchParams, params }. `safe: true` selects
+// the catch-all dispatcher (a thrown error becomes a 500 payload); without it a throw
+// propagates, which is what the pre-split router did for the write endpoints.
+function buildRouteTable(modules) {
+  const exactRoutes = new Map();
+  const patternRoutes = [];
+  const endpoints = [];
 
-function createApiRouter({ handlers, sendJson, startedAt }) {
-  async function dispatch(handler, res) {
-    const result = await handler();
+  function advertise(path) {
+    if (!endpoints.includes(path)) {
+      endpoints.push(path);
+    }
+  }
+
+  for (const module of modules) {
+    for (const route of module.routes) {
+      const paths = route.pattern ? [] : [].concat(route.path || route.paths);
+
+      for (const path of paths) {
+        exactRoutes.set(`${route.method} ${path}`, route);
+      }
+
+      if (route.pattern) {
+        patternRoutes.push(route);
+      }
+
+      if (route.advertise === true) {
+        paths.forEach(advertise);
+      } else if (typeof route.advertise === 'string') {
+        advertise(route.advertise);
+      }
+    }
+  }
+
+  return { endpoints, exactRoutes, patternRoutes };
+}
+
+function findRoute({ exactRoutes, patternRoutes }, method, pathname) {
+  const exact = exactRoutes.get(`${method} ${pathname}`);
+
+  if (exact) {
+    return { route: exact, params: [] };
+  }
+
+  for (const route of patternRoutes) {
+    if (route.method !== method) {
+      continue;
+    }
+
+    const match = pathname.match(route.pattern);
+
+    if (match) {
+      return { route, params: match.slice(1) };
+    }
+  }
+
+  return null;
+}
+
+function createApiRouter({ modules, sendJson }) {
+  const table = buildRouteTable(modules);
+
+  async function dispatch(route, context, res) {
+    const result = await route.handler(context);
     sendJson(res, result.statusCode, result.payload);
   }
 
-  async function dispatchSafely(handler, res) {
+  async function dispatchSafely(route, context, res) {
     try {
-      await dispatch(handler, res);
+      await dispatch(route, context, res);
     } catch (error) {
       sendJson(res, 500, errorPayload(error));
     }
@@ -64,268 +88,23 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
 
   return async function routeApiRequest(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const matched = findRoute(table, req.method, url.pathname);
 
-    if (req.method === 'GET' && url.pathname === '/health') {
-      sendJson(res, 200, {
-        status: 'ok',
-        service: 'api',
-        uptimeSeconds: Math.floor(process.uptime()),
-        startedAt,
-        timestamp: new Date().toISOString()
-      });
-      return;
-    }
+    if (matched) {
+      const context = {
+        req,
+        url,
+        searchParams: url.searchParams,
+        params: matched.params,
+        pathname: url.pathname
+      };
 
-    if (req.method === 'GET' && url.pathname === '/health/db') {
-      await dispatch(() => handlers.handleDbHealth(), res);
-      return;
-    }
+      if (matched.route.safe) {
+        await dispatchSafely(matched.route, context, res);
+      } else {
+        await dispatch(matched.route, context, res);
+      }
 
-    if (req.method === 'GET' && url.pathname === '/auth/bootstrap-status') {
-      await dispatch(() => handlers.handleAuthBootstrapStatus(), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/users') {
-      await dispatch(() => handlers.handleAdminUsersList(), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/employees') {
-      await dispatch(() => handlers.handleAdminEmployeesList(url.searchParams), res);
-      return;
-    }
-
-    const employeeHistoryMatch = url.pathname.match(/^\/admin\/employees\/([^/]+)\/history$/);
-    if (req.method === 'GET' && employeeHistoryMatch) {
-      await dispatchSafely(() => handlers.handleAdminEmployeeHistory(employeeHistoryMatch[1]), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/employees') {
-      await dispatch(() => handlers.handleAdminEmployeeCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/employees/update') {
-      await dispatch(() => handlers.handleAdminEmployeeUpdate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/employees/disable') {
-      await dispatch(() => handlers.handleAdminEmployeeDisable(req), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/places') {
-      await dispatch(() => handlers.handleAdminPlacesList(), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/places/update') {
-      await dispatch(() => handlers.handleAdminParkingPlaceUpdate(req), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/place-lines') {
-      await dispatchSafely(() => handlers.handleAdminPlaceLinesList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/place-lines') {
-      await dispatch(() => handlers.handleAdminPlaceLineCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/place-lines/archive') {
-      await dispatch(() => handlers.handleAdminPlaceLineArchive(req), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/permanent-assignments') {
-      await dispatchSafely(() => handlers.handleAdminPermanentAssignmentsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments') {
-      await dispatch(() => handlers.handleAdminPermanentAssignmentCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/permanent-assignments/end') {
-      await dispatch(() => handlers.handleAdminPermanentAssignmentEnd(req), res);
-      return;
-    }
-
-    const placeHistoryMatch = url.pathname.match(/^\/admin\/places\/([^/]+)\/history$/);
-    if (req.method === 'GET' && placeHistoryMatch) {
-      await dispatchSafely(() => handlers.handleAdminPlaceHistory(placeHistoryMatch[1]), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/audit-logs') {
-      await dispatchSafely(() => handlers.handleAdminAuditLogsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/contact-access-logs') {
-      await dispatchSafely(() => handlers.handleAdminContactAccessLogsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/line-groups') {
-      await dispatchSafely(() => handlers.handleAdminLineGroupsList(), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/line-occupancy') {
-      await dispatchSafely(() => handlers.handleAdminLineOccupancyList(url.searchParams), res);
-      return;
-    }
-
-    const lineGroupOccupancyMatch = url.pathname.match(/^\/admin\/line-groups\/([^/]+)\/occupancy$/);
-    if (req.method === 'GET' && lineGroupOccupancyMatch) {
-      await dispatchSafely(() => handlers.handleAdminLineGroupOccupancy(lineGroupOccupancyMatch[1], url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/line-occupancy') {
-      await dispatch(() => handlers.handleLineOccupancySet(req, 'admin-web'), res);
-      return;
-    }
-
-    if (req.method === 'POST' && (url.pathname === '/bot/line/position' || url.pathname === '/bot/line-occupancy')) {
-      await dispatch(() => handlers.handleLineOccupancySet(req, 'bot'), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/bot/line/blocking-contacts') {
-      await dispatchSafely(() => handlers.handleBotBlockingContacts(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/departure-plans') {
-      await dispatchSafely(() => handlers.handleDeparturePlansList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/conflicts') {
-      await dispatchSafely(() => handlers.handleConflictsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && (url.pathname === '/bot/departure-plans' || url.pathname === '/admin/departure-plans')) {
-      await dispatch(() => handlers.handleDeparturePlanUpsert(req, url.pathname.startsWith('/bot/') ? 'bot' : 'admin-web'), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/map-diagnostics') {
-      await dispatchSafely(() => handlers.handleAdminMapDiagnostics(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/map-backgrounds') {
-      await dispatch(() => handlers.handleAdminMapBackgroundUpdate(req), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/dashboard') {
-      await dispatchSafely(() => handlers.handleAdminDashboard(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/availability') {
-      await dispatchSafely(() => handlers.handleAdminAvailability(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/place-releases') {
-      await dispatchSafely(() => handlers.handleAdminPlaceReleasesList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/employee-parking-requests') {
-      await dispatchSafely(() => handlers.handleAdminEmployeeParkingRequestsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/guest-parking-requests') {
-      await dispatchSafely(() => handlers.handleAdminGuestParkingRequestsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/place-releases') {
-      await dispatch(() => handlers.handleAdminPlaceReleaseCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/place-releases/cancel') {
-      await dispatch(() => handlers.handleAdminPlaceReleaseCancel(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests') {
-      await dispatch(() => handlers.handleAdminEmployeeParkingRequestCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/employee-parking-requests/cancel') {
-      await dispatch(() => handlers.handleAdminEmployeeParkingRequestCancel(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests') {
-      await dispatch(() => handlers.handleAdminGuestParkingRequestCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/assign') {
-      await dispatch(() => handlers.handleAdminGuestParkingRequestAssign(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/cancel') {
-      await dispatch(() => handlers.handleAdminGuestParkingRequestCancel(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/jobs/process-queue') {
-      await dispatch(() => handlers.handleAdminJobProcessQueue(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/jobs/freeze-next-day') {
-      await dispatch(() => handlers.handleAdminJobFreezeNextDay(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/jobs/lock-departure-plans') {
-      await dispatch(() => handlers.handleAdminJobLockDeparturePlans(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/jobs/unlock-employee-pool') {
-      await dispatch(() => handlers.handleAdminJobUnlockEmployeePool(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/jobs/rebuild-conflicts') {
-      await dispatch(() => handlers.handleAdminJobRebuildConflicts(req), res);
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/admin/jobs/runs') {
-      await dispatchSafely(() => handlers.handleAdminJobRunsList(url.searchParams), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/reservations/manual') {
-      await dispatch(() => handlers.handleAdminManualReservationCreate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/reservations/cancel') {
-      await dispatch(() => handlers.handleAdminReservationCancel(req), res);
       return;
     }
 
@@ -334,7 +113,7 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
         status: 'ok',
         service: 'api',
         message: 'Parking Assistant API is running',
-        endpoints: rootEndpoints
+        endpoints: table.endpoints
       });
       return;
     }
@@ -344,5 +123,6 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
 }
 
 module.exports = {
+  buildRouteTable,
   createApiRouter
 };

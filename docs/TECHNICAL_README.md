@@ -78,11 +78,13 @@ jobs
 
 Основные каталоги:
 
-- `apps/api/src/server.js`: backend entrypoint, wiring сервера и текущий основной набор API handlers.
-- `apps/api/src/router.js`: активный HTTP router для backend API.
-- `apps/api/src/repositories`: первый слой repository modules.
-- `apps/api/src/services`: первый слой service modules.
-- `apps/api/src/serializers`: первый слой response serializers.
+- `apps/api/src/server.js`: bootstrap — env, pool, сборка модулей, listen, shutdown. Handlers здесь нет.
+- `apps/api/src/modules/<context>/`: bounded context: `controller.js` (HTTP), `service.js` (use case + транзакции), `repository.js` (весь SQL).
+- `apps/api/src/modules/index.js`: composition root — порядок контроллеров задает endpoint index на `GET /`.
+- `apps/api/src/router.js`: HTTP router, собирающий per-module route tables.
+- `apps/api/src/repositories/db.js`: `queryOne`/`queryMany` и `withTransaction`.
+- `apps/api/src/serializers`: общие row → JSON мапперы, которыми пользуются несколько контекстов.
+- `apps/api/src/support`: request-shaped helpers (`abortWith`, `parsePositiveLimit`, …).
 - `apps/admin-web/src/server.js`: admin UI entrypoint и текущий основной набор render/POST handlers.
 - `apps/admin-web/src/render-modules.js`: выбор render-модуля по вкладке admin UI.
 - `apps/bot-adapter/src/server.js`: текущий bot adapter entrypoint.
@@ -346,7 +348,7 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 
 ### Code Structure
 
-- `apps/api/src/server.js` все еще содержит крупные handler-группы и SQL-heavy business operations. Router, первый repository/service/serializer слой и shared helpers уже вынесены, но handlers нужно дальше переносить по доменным модулям.
+- ~~`apps/api/src/server.js` все еще содержит крупные handler-группы и SQL-heavy business operations~~ — закрыто Phase 3: SQL вынесен в `modules/<context>/repository.js`, чистые правила в `packages/domain`, handlers в `modules/<context>/controller.js`. `server.js` — 65 строк bootstrap.
 - `apps/admin-web/src/server.js` все еще содержит большую часть HTML render-функций и POST handlers. Render selection вынесен в `render-modules.js`, но сами вкладки нужно переносить в отдельные files/modules.
 - `bot-adapter` пока остается отдельным adapter entrypoint без полноценной декомпозиции сценариев.
 - Нет полноценного тестового harness с PostgreSQL fixture data; `smoke:m1` проверяет старт и базовые HTTP paths, но не бизнес-инварианты.
@@ -521,10 +523,9 @@ Acceptance:
 Локальные проверки перед push:
 
 ```bash
-node --check apps/api/src/server.js
-node --check apps/admin-web/src/server.js
-node --check apps/bot-adapter/src/server.js
-node --check apps/jobs/src/scheduler.js
+npm run check   # парсит каждый .js в репозитории
+npm run lint
+npm test
 git diff --check
 ```
 

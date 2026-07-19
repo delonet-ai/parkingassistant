@@ -9,7 +9,9 @@ plain Node `http` (no web framework), PostgreSQL 16. Only runtime deps are `pg` 
 
 ## Layout
 
-- `apps/api` — HTTP API. Business logic lives in `apps/api/src/server.js` and `apps/api/src/services/`.
+- `apps/api` — HTTP API. `src/server.js` is a bootstrap only; every bounded context lives in
+  `src/modules/<context>/{controller,service,repository}.js` and the router composes their
+  route tables. See `docs/adr/003-modular-architecture.md` for the layer rules.
 - `apps/admin-web` — server-rendered admin UI.
 - `apps/bot-adapter` — Yandex Messenger bot.
 - `apps/jobs` — scheduled jobs (19:00, 07:00, daily rules).

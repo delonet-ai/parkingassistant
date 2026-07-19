@@ -38,7 +38,13 @@ Dependency direction is one-way — `controller → service → repository`, any
 
 The contexts are `employees`, `places`, `place-lines`, `permanent-assignments`, `place-releases`, `employee-requests`, `guest-requests`, `reservations`, `queue`, `line-occupancy`, `departure-plans`, `conflicts`, `contact-access`, `maps`, `dashboard`, `audit`, `jobs`, `system`. `availability` is a read model over `place-releases`, `places` and `reservations` rather than a context of its own; `dashboard` owns no repository, because its handler is a composition of three other contexts' reads.
 
+`queue` has a service but no controller: it serves no route of its own and runs only under the process-queue job.
+
 Every SQL string in the API lives in an `apps/api/src/modules/<context>/repository.js`, and nowhere else — a test asserts it. A repository function takes the query surface as its first argument, so the same function serves a pool-bound repository and the client-bound one `withTransaction` yields.
+
+A service may require any context's repository — a transaction spans contexts by nature. A controller may require none: it reaches the database only through `deps.services`, and `apps/api/src/module-boundary.test.js` fails the build if one requires a repository, `pg`, `repositories/db` or `services/availability`.
+
+`apps/api/src/server.js` is a bootstrap: read the environment, open the pool, build the modules, listen, shut down. `apps/api/src/modules/index.js` is the composition root — it builds every service into one registry, hands that registry to every factory, and lists the controllers in the order the endpoint index at `GET /` is published. `apps/api/src/router.js` owns no routes; it composes the per-module route tables and derives that index from the entries marked `advertise`, so a route and its documentation cannot drift apart.
 
 All database access goes through `apps/api/src/repositories/db.js`: `createDbRepository(pool)` for pool-scoped reads, `withTransaction(pool, fn)` for anything transactional. `withTransaction` yields a client-bound repository with the same `queryOne` / `queryMany` surface, issues `begin`/`commit`/`rollback` around the callback, and always releases the client. A service that needs to abort throws — the helper never inspects the return value.
 

@@ -155,3 +155,36 @@ Negative:
 - more files and one more indirection per request
 - Task 15 must move ~19 transaction blocks by hand, each behind the golden tests
 - until Task 18 turns the rules on repo-wide, the boundary holds only where code has moved
+
+## Addendum — how the split actually landed (Task 17)
+
+The layout above is now the code, not the plan. Three points the original text did not
+settle, decided while moving the handlers:
+
+**A service may require any context's repository; a controller may require none.** The
+one-way rule in this ADR is about *layers*, not contexts, and a transaction inherently
+spans contexts — the manual-assignment use case writes reservations, closes an employee
+request and touches the queue in one `withTransaction`. Forcing each of those through a
+sibling service would have produced ~60 pass-through methods and no extra safety. What is
+enforced instead, by `apps/api/src/module-boundary.test.js`, is the layer boundary that
+actually protects anything: no `controller.js` requires a `repository.js`, `pg`,
+`repositories/db` or `services/availability`.
+
+**The transaction lives in the service, the status mapping in the controller.** The
+sentinel this ADR describes (`AbortTransaction` / `abortWith`, now in
+`src/support/transaction.js`) is thrown from inside the service's transaction and caught
+by the controller, which turns it into a status and payload. Pg error codes are mapped the
+same way. That is what keeps `withTransaction` blind to the return value while still
+letting a rolled-back use case answer 404 or 409.
+
+**Routes are per-module tables and the endpoint index is derived from them.** `router.js`
+holds no routes and no `rootEndpoints` array; it composes the tables in the order
+`modules/index.js` lists the contexts, and builds the `GET /` index from the entries marked
+`advertise`. That index is part of the HTTP contract and is pinned twice — by a golden
+snapshot and, so it fails without a database, by a unit test.
+
+`queue` ended up with a service and no controller: it serves no route of its own and is
+driven only by the process-queue job. With `dashboard` (a context with no repository) and
+`system` (a repository for reads that belong to no business context), that makes three of
+the eighteen contexts that do not have all three files. The layer rules hold regardless;
+the file set is not the contract.
