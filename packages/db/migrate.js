@@ -191,7 +191,6 @@ if (require.main === module) {
 module.exports = {
   LEDGER_TABLE,
   MIGRATION_LOCK_KEY,
-  migrateDatabase,
   plannedMigrations,
   readSqlDirectory,
   runMigrations,

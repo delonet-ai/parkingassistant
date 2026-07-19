@@ -297,11 +297,8 @@ async function getHtml(baseUrl, pathname) {
 module.exports = {
   BLOCKED_PLACE_ID,
   DISABLED_EMPLOYEE_ID,
-  EMPLOYEE_ID,
-  LINE_ID,
   PLACE_ID,
   RELEASE_ID,
-  RESERVATION_ID,
   getHtml,
   startAdminWeb,
   startStubApi

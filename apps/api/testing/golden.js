@@ -268,8 +268,6 @@ async function recordRequest({ baseUrl, request, refs, normalize }) {
 }
 
 module.exports = {
-  DATE_OFFSET_WINDOW_DAYS,
-  GOLDEN_DIR,
   createNormalizer,
   currentDateInZone,
   normalizeDate,

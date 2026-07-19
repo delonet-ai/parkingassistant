@@ -191,8 +191,6 @@ function describeArchiveBlockers(rows) {
 }
 
 module.exports = {
-  GUEST_PRIORITY_RANK_MAX,
-  GUEST_PRIORITY_RANK_MIN,
   LINE_CAPACITIES,
   PLACE_ROLES,
   PLACE_STATUSES,
@@ -204,8 +202,6 @@ module.exports = {
   describeArchiveBlockers,
   isValidCapacity,
   isValidPlaceType,
-  lineCodeFor,
-  lineNameFor,
   normalizeGuestPriorityRank,
   normalizePlaceRole,
   placeSlotStatus,

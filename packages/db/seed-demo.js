@@ -107,11 +107,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  DEMO_DIR,
-  DATASET_FILE,
-  RESET_FILE,
   loadDemoData,
-  readDemoSql,
   resetDemoData,
   seedDemoDatabase
 };

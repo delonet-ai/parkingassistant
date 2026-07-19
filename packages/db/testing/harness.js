@@ -159,10 +159,8 @@ async function createTestDatabase(options = {}) {
 }
 
 module.exports = {
-  SKIP_REASON,
   connectionStringForSchema,
   createTestDatabase,
-  integrationTestsEnabled,
   plannedMigrations,
   readSqlDirectory,
   skipWithoutDatabase,

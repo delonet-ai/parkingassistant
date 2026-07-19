@@ -121,11 +121,36 @@ The boundary is a lint rule, not a convention. `eslint.config.js` carries
 `no-restricted-imports` plus `no-restricted-syntax` selectors over `require()` — the
 project is CommonJS, so the import-shaped rule alone would never fire:
 
-- `packages/domain/**` may not require `pg`, `node:http`/`node:https`, or
-  `packages/shared/http|html`.
-- `**/controller.js` may not require `pg`.
+- `packages/domain/**` may not require `pg`, `node:http`/`node:https`,
+  `packages/shared/http|html`, an application, or `packages/db`.
+- `packages/shared/**` may not require `pg` or an application — it is a leaf.
+- `**/controller.js` may not require `pg`, a `repository.js`, `repositories/db`, or
+  `services/availability`. It reaches its service and stops there.
+- `**/service.js` (and `apps/api/src/services/*.js`, where the availability read model
+  lives) may not require `pg`, `node:http(s)`, `packages/shared/http|html`, or a
+  controller. Transactions go through `withTransaction`, not a hand-opened client.
+- `**/repository.js` may not require `node:http(s)`, `packages/shared/http|html`, a
+  service, or a controller. It is the bottom of the stack.
 
-Task 18 verifies these repo-wide and adds the "no raw SQL in a controller" check.
+Each rule only forbids what points the wrong way. Reaching *down* or *sideways* within the
+allowed direction is deliberately unrestricted — a service may require any context's
+repository, because a transaction spans contexts (see Consequences).
+
+Three checks keep this honest, and each was verified to fail by planting a violation:
+
+- `architecture.test.js` runs ESLint over synthetic sources at each layer's path, proving
+  every rule fires — a config that *looks* right can enforce nothing, since
+  `no-restricted-imports` never sees a `require()`. It then lints the **real** tree and
+  asserts zero boundary messages, so `npm test` fails on a violation even if nobody runs
+  `npm run lint`. It also reads the files directly to assert no controller contains raw SQL
+  and no domain module contains a forbidden `require` or a SQL statement — inline SQL is
+  invisible to any import rule.
+- `apps/api/src/repository-boundary.test.js` asserts no SQL and no `pg` driver call outside
+  a `repository.js` anywhere in the API.
+- `apps/api/src/module-boundary.test.js` asserts the controller→service layering and that
+  the composed route tables still reproduce the published endpoint index.
+- `dead-exports.test.js` asserts no file exports a name nothing else requires, so the next
+  extraction cannot leave orphans behind the way this one did.
 
 ## Rationale
 
