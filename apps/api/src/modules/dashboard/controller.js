@@ -151,14 +151,12 @@ function createDashboardController({ appTimezone, guestReserveMinimum, services 
         method: 'GET',
         path: '/admin/dashboard',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminDashboard(searchParams)
       },
       {
         method: 'GET',
         path: '/admin/availability',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminAvailability(searchParams)
       }
     ]

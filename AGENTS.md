@@ -108,16 +108,17 @@ Three things to know before touching it:
 - **Identifier tokens are numbered across the whole run** (`<id:1>`, `<id:2>`, …), which is what makes
   "the id `POST` returned is the id `GET` returns" assertable. Inserting a request in the middle of a
   group renumbers the ids after it, so the diff of a regeneration is large by design — read it anyway.
-- **Lists whose SQL ordering has ties are marked `unordered` in the scenario.** `/admin/audit-logs`
-  orders by `occurred_at desc` with no tiebreaker and every row one transaction writes shares a
-  timestamp, so Postgres may return them in any order. Sorting alone does not fix it (a reshuffle
-  renumbers the id tokens), so inside those lists identity is made opaque and the rows are sorted by
-  normalized content.
+- **Lists whose SQL ordering has ties are still marked `unordered` in the scenario, and must stay
+  that way.** Task 21 added `, id desc` to the journal `order by` clauses, which makes a repeated
+  read and a `limit` page consistent *within one database* — the actual defect. It does **not** make
+  the snapshot orderable: the ids are `gen_random_uuid()`, so the tie order is reshuffled by every
+  fresh scratch schema. Inside those lists identity stays opaque and rows stay sorted by normalized
+  content.
 
-One defect is pinned rather than fixed, and its scenario name says so: `GET /admin/places/:id/history`
-with a malformed id returns **500** with the raw Postgres cast error (`invalid input syntax for type
-uuid`) instead of a 400. Task 14 records behavior; the fix belongs to the Task 21 review pass, and the
-snapshot will fail loudly when it lands.
+Both defects Task 14 pinned rather than fixed are now fixed, and no `CHARACTERIZATION:`-style
+pinned-defect snapshot remains: `GET /admin/places/:id/history` with a malformed id answers **400**
+instead of a 500 quoting the raw Postgres cast error, and the journal ordering above has its
+tiebreaker.
 
 #### Rendering the admin UI in a test
 

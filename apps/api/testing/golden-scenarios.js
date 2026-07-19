@@ -156,12 +156,10 @@ function buildScenarios() {
           path: '/admin/employees/00000000-0000-0000-0000-000000000000/history'
         },
         {
-          // DEFECT, recorded as-is: a malformed id in the path is not validated, so the
-          // Postgres cast error escapes as a 500 with the raw driver message in `error`.
-          // A snapshot's job is to pin what the code does, not what it should do — the
-          // fix belongs to the Task 21 review pass, and this entry will fail loudly when
-          // it lands, which is the point.
-          name: 'GET /admin/places/:id/history (malformed id — DEFECT: 500, should be 400)',
+          // Was a DEFECT pinned by Task 14: an unvalidated id reached Postgres, and the
+          // cast error escaped as a 500 quoting the offending value back at the client.
+          // Fixed in Task 21 — the id is shape-checked before any query runs.
+          name: 'GET /admin/places/:id/history (malformed id is rejected as 400)',
           path: '/admin/places/not-a-uuid/history'
         }
       ]
@@ -192,7 +190,11 @@ function buildScenarios() {
 
     {
       group: 'validation-errors',
-      description: 'The 400 payloads every write endpoint returns for a missing field.',
+      description:
+        'The 400 payloads every write endpoint returns for a missing field, and for an id ' +
+        'that is present but not uuid-shaped. The two are deliberately separate answers: ' +
+        'a missing field keeps its own "X is required" message, so adding the shape check ' +
+        'in Task 21 left every message below untouched.',
       requests: [
         { name: 'POST /admin/employees (no displayName)', method: 'POST', path: '/admin/employees', body: {} },
         { name: 'POST /admin/place-lines (no floorLabel)', method: 'POST', path: '/admin/place-lines', body: { capacity: 1, slots: [] } },
@@ -233,7 +235,62 @@ function buildScenarios() {
         { name: 'POST /admin/guest-parking-requests (no fields)', method: 'POST', path: '/admin/guest-parking-requests', body: {} },
         { name: 'POST /admin/employee-parking-requests (no fields)', method: 'POST', path: '/admin/employee-parking-requests', body: {} },
         { name: 'POST /admin/line-occupancy (no fields)', method: 'POST', path: '/admin/line-occupancy', body: {} },
-        { name: 'POST /admin/departure-plans (no fields)', method: 'POST', path: '/admin/departure-plans', body: {} }
+        { name: 'POST /admin/departure-plans (no fields)', method: 'POST', path: '/admin/departure-plans', body: {} },
+
+        // Malformed ids. Before Task 21 each of these reached Postgres, which raised 22P02
+        // and answered 500 with the offending value quoted back in `error`; on the two
+        // endpoints whose handler had no try/catch it was worse than a leak, because the
+        // rejection escaped the request listener and took the process down.
+        {
+          name: 'POST /admin/reservations/cancel (malformed reservationId)',
+          method: 'POST',
+          path: '/admin/reservations/cancel',
+          body: { reservationId: 'not-a-uuid' }
+        },
+        {
+          name: 'POST /admin/employees/disable (malformed employeeId — used to crash the process)',
+          method: 'POST',
+          path: '/admin/employees/disable',
+          body: { employeeId: 'not-a-uuid' }
+        },
+        {
+          name: 'POST /admin/permanent-assignments/end (malformed assignmentId — used to crash the process)',
+          method: 'POST',
+          path: '/admin/permanent-assignments/end',
+          resolve: () => ({ body: { assignmentId: 'not-a-uuid', dateTo: today } })
+        },
+        {
+          name: 'POST /admin/reservations/manual (names every malformed id, not just the first)',
+          method: 'POST',
+          path: '/admin/reservations/manual',
+          resolve: () => ({
+            body: { userId: 'nope', parkingPlaceId: 'also-nope', reservationDate: today }
+          })
+        },
+        {
+          name: 'POST /admin/place-lines/archive (malformed lineId)',
+          method: 'POST',
+          path: '/admin/place-lines/archive',
+          body: { lineId: "'; drop table parking_places; --" }
+        },
+        {
+          name: 'GET /admin/audit-logs (malformed entityId)',
+          path: '/admin/audit-logs?entityId=not-a-uuid'
+        },
+        {
+          name: 'POST /admin/places/update (guestPriorityRank out of smallint range)',
+          method: 'POST',
+          path: '/admin/places/update',
+          resolve: (refs) => ({
+            body: {
+              placeId: refs.placeByCode.get('101'),
+              code: '101',
+              title: '101',
+              placeType: 'triple',
+              guestPriorityRank: 99999
+            }
+          })
+        }
       ]
     },
 

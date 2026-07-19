@@ -2,7 +2,9 @@
 
 const { isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
+const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 function createEmployeeRequestsController({ services }) {
   const service = services.employeeRequests;
@@ -90,6 +92,12 @@ function createEmployeeRequestsController({ services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ userId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const { employee, parkingRequest, queueEntry } = await service.createRequest({ userId, requestDate, notes });
 
@@ -131,14 +139,7 @@ function createEmployeeRequestsController({ services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminEmployeeParkingRequestCreate');
     }
   }
 
@@ -171,6 +172,12 @@ function createEmployeeRequestsController({ services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ requestId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const canceledRequest = await service.cancelRequest(requestId);
 
@@ -192,14 +199,7 @@ function createEmployeeRequestsController({ services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminEmployeeParkingRequestCancel');
     }
   }
 
@@ -210,7 +210,6 @@ function createEmployeeRequestsController({ services }) {
         method: 'GET',
         path: '/admin/employee-parking-requests',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminEmployeeParkingRequestsList(searchParams)
       },
       {

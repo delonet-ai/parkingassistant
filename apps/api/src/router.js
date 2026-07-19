@@ -9,11 +9,13 @@ const { errorPayload } = require('../../../packages/shared/errors');
 // cannot drift apart the way the hand-kept `rootEndpoints` array could.
 //
 // A route entry is:
-//   { method, path | paths[] | pattern, handler, advertise?, safe? }
+//   { method, path | paths[] | pattern, handler, advertise? }
 //
-// `handler` receives one object: { req, url, searchParams, params }. `safe: true` selects
-// the catch-all dispatcher (a thrown error becomes a 500 payload); without it a throw
-// propagates, which is what the pre-split router did for the write endpoints.
+// `handler` receives one object: { req, url, searchParams, params }. Every route is
+// dispatched through the same catch: a handler that throws answers 500 and the process
+// stays up. `safe` is gone — it used to mean "this route catches", which left the write
+// endpoints letting a rejection escape the request listener into an unhandled rejection,
+// i.e. a malformed uuid in a POST body took the API down. See docs/plans, Task 21.
 function buildRouteTable(modules) {
   const exactRoutes = new Map();
   const patternRoutes = [];
@@ -74,20 +76,32 @@ function createApiRouter({ modules, sendJson }) {
   const table = buildRouteTable(modules);
 
   async function dispatch(route, context, res) {
-    const result = await route.handler(context);
-    sendJson(res, result.statusCode, result.payload);
-  }
-
-  async function dispatchSafely(route, context, res) {
     try {
-      await dispatch(route, context, res);
+      const result = await route.handler(context);
+      sendJson(res, result.statusCode, result.payload);
     } catch (error) {
-      sendJson(res, 500, errorPayload(error));
+      // The real error goes to the log, never to the client: an unmapped failure is a
+      // driver or programming error, and its message quotes the input that caused it.
+      console.error(`unhandled error in ${route.method} ${context.pathname}`, error);
+      sendJson(res, 500, errorPayload('Internal server error'));
     }
   }
 
   return async function routeApiRequest(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    let url;
+
+    try {
+      // A fixed base on purpose. This used to interpolate `req.headers.host`, which the
+      // client controls: `Host: ]bad host[` made `new URL` throw before any route matched,
+      // and the rejection escaped the request listener — one header, no valid path or body
+      // needed, and the API was down. Nothing downstream reads the host, only pathname and
+      // searchParams, so there is no reason to let the client into the parse at all.
+      url = new URL(req.url, 'http://api.local');
+    } catch {
+      sendJson(res, 400, errorPayload('Malformed request URL', 400));
+      return;
+    }
+
     const matched = findRoute(table, req.method, url.pathname);
 
     if (matched) {
@@ -99,12 +113,7 @@ function createApiRouter({ modules, sendJson }) {
         pathname: url.pathname
       };
 
-      if (matched.route.safe) {
-        await dispatchSafely(matched.route, context, res);
-      } else {
-        await dispatch(matched.route, context, res);
-      }
-
+      await dispatch(matched.route, context, res);
       return;
     }
 

@@ -41,7 +41,6 @@ function createContactAccessController({ services }) {
         method: 'GET',
         path: '/admin/contact-access-logs',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminContactAccessLogsList(searchParams)
       }
     ]

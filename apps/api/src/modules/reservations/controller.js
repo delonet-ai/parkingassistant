@@ -2,7 +2,9 @@
 
 const { isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
+const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 function createReservationsController({ services }) {
   const service = services.reservations;
@@ -37,6 +39,12 @@ function createReservationsController({ services }) {
           error: 'userId, parkingPlaceId and reservationDate are required; date must use YYYY-MM-DD format'
         }
       };
+    }
+
+    const invalidId = uuidValidationError({ userId, parkingPlaceId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     try {
@@ -86,14 +94,7 @@ function createReservationsController({ services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminManualReservationCreate');
     }
   }
 
@@ -126,6 +127,12 @@ function createReservationsController({ services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ reservationId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const { canceledReservation } = await service.cancelReservation(reservationId);
 
@@ -147,14 +154,7 @@ function createReservationsController({ services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminReservationCancel');
     }
   }
 

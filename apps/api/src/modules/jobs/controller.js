@@ -288,7 +288,6 @@ function createJobsController({ appTimezone, services }) {
         method: 'GET',
         path: '/admin/jobs/runs',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminJobRunsList(searchParams)
       }
     ]

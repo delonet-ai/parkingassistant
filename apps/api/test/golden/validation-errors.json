@@ -193,5 +193,96 @@
       "service": "api",
       "status": "error"
     }
+  },
+  {
+    "name": "POST /admin/reservations/cancel (malformed reservationId)",
+    "method": "POST",
+    "path": "/admin/reservations/cancel",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "reservationId must be a valid uuid",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/employees/disable (malformed employeeId — used to crash the process)",
+    "method": "POST",
+    "path": "/admin/employees/disable",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "employeeId must be a valid uuid",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/permanent-assignments/end (malformed assignmentId — used to crash the process)",
+    "method": "POST",
+    "path": "/admin/permanent-assignments/end",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "assignmentId must be a valid uuid",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/reservations/manual (names every malformed id, not just the first)",
+    "method": "POST",
+    "path": "/admin/reservations/manual",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "userId, parkingPlaceId must be a valid uuid",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (malformed lineId)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "lineId must be a valid uuid",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "GET /admin/audit-logs (malformed entityId)",
+    "method": "GET",
+    "path": "/admin/audit-logs?entityId=not-a-uuid",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "entityId must be a valid uuid",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/places/update (guestPriorityRank out of smallint range)",
+    "method": "POST",
+    "path": "/admin/places/update",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "guestPriorityRank must be an integer between 1 and 99",
+      "service": "api",
+      "status": "error"
+    }
   }
 ]

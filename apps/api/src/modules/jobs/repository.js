@@ -71,7 +71,7 @@ async function listJobRuns(db, { jobName, targetDate, limit }) {
       from job_runs
       where ($1::text is null or job_name = $1)
         and ($2::date is null or target_date = $2::date)
-      order by started_at desc
+      order by started_at desc, id desc
       limit $3
     `,
     [jobName, targetDate, limit]
@@ -85,7 +85,7 @@ async function listLatestSuccessfulRuns(db, jobName) {
       from job_runs
       where status = 'success'
         and ($1::text is null or job_name = $1)
-      order by job_name, finished_at desc nulls last, started_at desc
+      order by job_name, finished_at desc nulls last, started_at desc, id desc
     `,
     [jobName]
   );

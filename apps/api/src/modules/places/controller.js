@@ -1,9 +1,14 @@
 'use strict';
 
-const { isValidPlaceType, normalizePlaceRole } = require('../../../../../packages/domain');
+const {
+  isValidPlaceType,
+  normalizeGuestPriorityRank,
+  normalizePlaceRole
+} = require('../../../../../packages/domain');
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapAuditLog } = require('../../serializers/audit-logs');
-const { normalizeOptionalString } = require('../../support/params');
+const { normalizeOptionalString, uuidValidationError } = require('../../support/params');
+const { internalError } = require('../../support/http-errors');
 
 function createPlacesController({ services }) {
   const service = services.places;
@@ -46,14 +51,7 @@ function createPlacesController({ services }) {
         }
       };
     } catch (error) {
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminPlacesList');
     }
   }
 
@@ -80,7 +78,9 @@ function createPlacesController({ services }) {
     const placeType = body.placeType;
     const lineGroupId = normalizeOptionalString(body.lineGroupId);
     const linePositionHint = body.linePositionHint ? Number(body.linePositionHint) : null;
-    const guestPriorityRank = body.guestPriorityRank ? Number(body.guestPriorityRank) : null;
+    // `undefined` means "present but out of range" — the column is a smallint and the pool
+    // ordering is 1..99, so an unchecked value reached Postgres as a 22003/22P02 500.
+    const guestPriorityRank = normalizeGuestPriorityRank(body.guestPriorityRank);
     // Absent placeRole means "leave it alone" — the field is optional on this endpoint.
     const placeRole = normalizePlaceRole(body.placeRole, null);
 
@@ -104,6 +104,23 @@ function createPlacesController({ services }) {
           error: 'linePositionHint must be between 1 and 3'
         }
       };
+    }
+
+    if (guestPriorityRank === undefined) {
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'guestPriorityRank must be an integer between 1 and 99'
+        }
+      };
+    }
+
+    const invalidId = uuidValidationError({ placeId, lineGroupId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     try {
@@ -161,18 +178,17 @@ function createPlacesController({ services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminParkingPlaceUpdate');
     }
   }
 
   async function handleAdminPlaceHistory(placeId) {
+    const invalidId = uuidValidationError({ placeId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     const history = await service.getPlaceHistory(placeId);
 
     if (!history) {
@@ -288,7 +304,6 @@ function createPlacesController({ services }) {
         method: 'GET',
         pattern: /^\/admin\/places\/([^/]+)\/history$/,
         advertise: '/admin/places/:id/history',
-        safe: true,
         handler: ({ params }) => handleAdminPlaceHistory(params[0])
       }
     ]

@@ -4,7 +4,8 @@ const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/sh
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapAuditLog } = require('../../serializers/audit-logs');
 const { mapContactAccessLog } = require('../../serializers/contact-access');
-const { normalizeOptionalString, splitDisplayName } = require('../../support/params');
+const { normalizeOptionalString, splitDisplayName, uuidValidationError } = require('../../support/params');
+const { internalError } = require('../../support/http-errors');
 
 function createEmployeesController({ appTimezone, services }) {
   const service = services.employees;
@@ -52,14 +53,7 @@ function createEmployeesController({ appTimezone, services }) {
         }
       };
     } catch (error) {
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminEmployeesList');
     }
   }
 
@@ -139,14 +133,7 @@ function createEmployeesController({ appTimezone, services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminEmployeeCreate');
     }
   }
 
@@ -183,6 +170,12 @@ function createEmployeesController({ appTimezone, services }) {
           error: 'employeeId and displayName are required'
         }
       };
+    }
+
+    const invalidId = uuidValidationError({ employeeId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     const { firstName, lastName } = splitDisplayName(displayName);
@@ -241,14 +234,7 @@ function createEmployeesController({ appTimezone, services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminEmployeeUpdate');
     }
   }
 
@@ -281,6 +267,12 @@ function createEmployeesController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ employeeId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     const employee = await service.disableEmployee(employeeId);
 
     if (!employee) {
@@ -308,6 +300,12 @@ function createEmployeesController({ appTimezone, services }) {
   }
 
   async function handleAdminEmployeeHistory(userId) {
+    const invalidId = uuidValidationError({ userId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     const history = await service.getEmployeeHistory(userId);
 
     if (!history) {
@@ -469,7 +467,6 @@ function createEmployeesController({ appTimezone, services }) {
         method: 'GET',
         pattern: /^\/admin\/employees\/([^/]+)\/history$/,
         advertise: '/admin/employees/:id/history',
-        safe: true,
         handler: ({ params }) => handleAdminEmployeeHistory(params[0])
       }
     ]

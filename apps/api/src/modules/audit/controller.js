@@ -2,7 +2,7 @@
 
 const { isIsoDate } = require('../../../../../packages/shared/dates');
 const { mapAuditLog } = require('../../serializers/audit-logs');
-const { parsePositiveLimit } = require('../../support/params');
+const { parsePositiveLimit, uuidValidationError } = require('../../support/params');
 
 function createAuditController({ services }) {
   const service = services.audit;
@@ -24,6 +24,12 @@ function createAuditController({ services }) {
           error: 'date must use YYYY-MM-DD format'
         }
       };
+    }
+
+    const invalidId = uuidValidationError({ entityId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     const rows = await service.listAuditLogs({
@@ -52,7 +58,6 @@ function createAuditController({ services }) {
         method: 'GET',
         path: '/admin/audit-logs',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminAuditLogsList(searchParams)
       }
     ]

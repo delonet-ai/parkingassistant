@@ -96,7 +96,7 @@ async function listContactAccessLogs(db, { date, limit }) {
     `
       ${CONTACT_LOG_SELECT}
       ${where.length ? `where ${where.join(' and ')}` : ''}
-      order by cal.created_at desc
+      order by cal.created_at desc, cal.id desc
       limit $${params.length}
     `,
     params
@@ -110,7 +110,7 @@ async function listContactAccessLogsForUser(db, userId) {
       ${CONTACT_LOG_SELECT}
       where cal.requester_user_id = $1
          or cal.target_user_id = $1
-      order by cal.created_at desc
+      order by cal.created_at desc, cal.id desc
       limit 100
     `,
     [userId]

@@ -108,6 +108,7 @@
       "code": "not_found",
       "details": null,
       "error": "Not found",
+      "service": "api",
       "status": "error"
     }
   },
@@ -120,6 +121,7 @@
       "code": "not_found",
       "details": null,
       "error": "Not found",
+      "service": "api",
       "status": "error"
     }
   }

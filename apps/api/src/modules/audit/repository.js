@@ -84,7 +84,7 @@ async function listAuditLogs(db, { date, entityType, entityId, action, actor, li
       left join users actor_user on actor_user.id = al.actor_user_id
       left join auth_users actor_auth on actor_auth.id = al.actor_auth_user_id
       ${where.length ? `where ${where.join(' and ')}` : ''}
-      order by al.occurred_at desc
+      order by al.occurred_at desc, al.id desc
       limit $${params.length}
     `,
     params
@@ -120,7 +120,7 @@ async function listAuditLogsForPlace(db, placeId) {
       ${AUDIT_JOURNAL_SELECT}
       where al.entity_id = $1
          or al.metadata->>'parkingPlaceId' = $1::text
-      order by al.occurred_at desc
+      order by al.occurred_at desc, al.id desc
       limit 100
     `,
     [placeId]
@@ -135,7 +135,7 @@ async function listAuditLogsForUser(db, userId) {
          or al.actor_user_id = $1
          or al.metadata->>'userId' = $1::text
          or al.metadata->>'hostUserId' = $1::text
-      order by al.occurred_at desc
+      order by al.occurred_at desc, al.id desc
       limit 100
     `,
     [userId]

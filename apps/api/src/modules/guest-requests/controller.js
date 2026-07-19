@@ -2,8 +2,9 @@
 
 const { isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
-const { splitDisplayName } = require('../../support/params');
+const { splitDisplayName, uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 function createGuestRequestsController({ services }) {
   const service = services.guestRequests;
@@ -100,6 +101,12 @@ function createGuestRequestsController({ services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ hostUserId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     const { firstName, lastName } = splitDisplayName(guestName);
 
     try {
@@ -169,14 +176,7 @@ function createGuestRequestsController({ services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminGuestParkingRequestCreate');
     }
   }
 
@@ -207,6 +207,12 @@ function createGuestRequestsController({ services }) {
           error: 'requestId is required'
         }
       };
+    }
+
+    const invalidId = uuidValidationError({ requestId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     try {
@@ -254,14 +260,7 @@ function createGuestRequestsController({ services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminGuestParkingRequestAssign');
     }
   }
 
@@ -294,6 +293,12 @@ function createGuestRequestsController({ services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ requestId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const { canceledRequest, canceledReservation } = await service.cancelGuestRequest(requestId);
 
@@ -323,14 +328,7 @@ function createGuestRequestsController({ services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminGuestParkingRequestCancel');
     }
   }
 
@@ -341,7 +339,6 @@ function createGuestRequestsController({ services }) {
         method: 'GET',
         path: '/admin/guest-parking-requests',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminGuestParkingRequestsList(searchParams)
       },
       {

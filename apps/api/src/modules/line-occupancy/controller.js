@@ -8,7 +8,9 @@ const {
 const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapLineOccupancy } = require('../../serializers/line-occupancy');
+const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 // This module owns the whole `/admin/line-groups*` and `/bot/line/*` URL space — the lines as
 // the operator meets them day to day: who stands where today, and who has to be called to move.
@@ -52,6 +54,12 @@ function createLineOccupancyController({ appTimezone, services }) {
           error: 'line group id and date=YYYY-MM-DD are required'
         }
       };
+    }
+
+    const invalidId = uuidValidationError({ lineGroupId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     const lineGroup = await services.placeLines.findLineGroupById(lineGroupId);
@@ -160,6 +168,18 @@ function createLineOccupancyController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({
+      lineGroupId,
+      parkingPlaceId,
+      userId,
+      guestParkingRequestId,
+      reservationId: body.reservationId || null
+    });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const { occupancyId, occupancy } = await service.setLineOccupancy({
         occupancyDate,
@@ -197,14 +217,7 @@ function createLineOccupancyController({ appTimezone, services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleLineOccupancySet');
     }
   }
 
@@ -221,6 +234,12 @@ function createLineOccupancyController({ appTimezone, services }) {
           error: 'requesterUserId and date=YYYY-MM-DD are required'
         }
       };
+    }
+
+    const invalidId = uuidValidationError({ requesterUserId });
+
+    if (invalidId) {
+      return invalidId;
     }
 
     // Deliberately not a transaction: the original ran these on one pooled client without
@@ -306,14 +325,12 @@ function createLineOccupancyController({ appTimezone, services }) {
         method: 'GET',
         path: '/admin/line-groups',
         advertise: true,
-        safe: true,
         handler: () => handleAdminLineGroupsList()
       },
       {
         method: 'GET',
         path: '/admin/line-occupancy',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminLineOccupancyList(searchParams)
       },
       {
@@ -325,7 +342,6 @@ function createLineOccupancyController({ appTimezone, services }) {
         method: 'GET',
         pattern: /^\/admin\/line-groups\/([^/]+)\/occupancy$/,
         advertise: '/admin/line-groups/:id/occupancy',
-        safe: true,
         handler: ({ params, searchParams }) => handleAdminLineGroupOccupancy(params[0], searchParams)
       },
       {
@@ -338,7 +354,6 @@ function createLineOccupancyController({ appTimezone, services }) {
         method: 'GET',
         path: '/bot/line/blocking-contacts',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleBotBlockingContacts(searchParams)
       }
     ]

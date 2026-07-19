@@ -2,7 +2,8 @@
 
 const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
-const { normalizeOptionalString } = require('../../support/params');
+const { normalizeOptionalString, uuidValidationError } = require('../../support/params');
+const { internalError } = require('../../support/http-errors');
 
 function createPermanentAssignmentsController({ appTimezone, services }) {
   const service = services.permanentAssignments;
@@ -102,6 +103,12 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ userId, parkingPlaceId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const assignment = await service.createPermanentAssignment({
         userId,
@@ -142,14 +149,7 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminPermanentAssignmentCreate');
     }
   }
 
@@ -183,6 +183,12 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ assignmentId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     const assignment = await service.endPermanentAssignment({ assignmentId, dateTo });
 
     if (!assignment) {
@@ -213,7 +219,6 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
         method: 'GET',
         path: '/admin/permanent-assignments',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminPermanentAssignmentsList(searchParams)
       },
       {

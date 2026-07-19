@@ -2,6 +2,7 @@
 
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapParkingPlaceMap } = require('../../serializers/maps');
+const { internalError } = require('../../support/http-errors');
 
 function createMapsController({ services }) {
   const service = services.maps;
@@ -109,14 +110,7 @@ function createMapsController({ services }) {
         }
       };
     } catch (error) {
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminMapBackgroundUpdate');
     }
   }
 
@@ -127,7 +121,6 @@ function createMapsController({ services }) {
         method: 'GET',
         path: '/admin/map-diagnostics',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminMapDiagnostics(searchParams)
       },
       {

@@ -3,8 +3,9 @@
 const { buildLineDefinition, placeSlotStatus } = require('../../../../../packages/domain');
 const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
-const { normalizeOptionalString } = require('../../support/params');
+const { normalizeOptionalString, uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 // ---------------------------------------------------------------------------
 // Place inventory (Task 9).
@@ -172,14 +173,7 @@ function createPlaceLinesController({ appTimezone, services }) {
         };
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminPlaceLineCreate');
     }
   }
 
@@ -212,6 +206,12 @@ function createPlaceLinesController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ lineId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     const today = currentDateInTimezone(appTimezone);
 
     try {
@@ -240,14 +240,7 @@ function createPlaceLinesController({ appTimezone, services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminPlaceLineArchive');
     }
   }
 
@@ -258,7 +251,6 @@ function createPlaceLinesController({ appTimezone, services }) {
         method: 'GET',
         path: '/admin/place-lines',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminPlaceLinesList(searchParams)
       },
       {

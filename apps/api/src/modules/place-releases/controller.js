@@ -2,7 +2,9 @@
 
 const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
+const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 function createPlaceReleasesController({ appTimezone, services }) {
   const service = services.placeReleases;
@@ -88,6 +90,12 @@ function createPlaceReleasesController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ parkingPlaceId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     if (dateTo < dateFrom) {
       return {
         statusCode: 400,
@@ -146,14 +154,7 @@ function createPlaceReleasesController({ appTimezone, services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminPlaceReleaseCreate');
     }
   }
 
@@ -186,6 +187,12 @@ function createPlaceReleasesController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ releaseId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     try {
       const canceledRelease = await service.cancelRelease(releaseId);
 
@@ -208,14 +215,7 @@ function createPlaceReleasesController({ appTimezone, services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleAdminPlaceReleaseCancel');
     }
   }
 
@@ -226,7 +226,6 @@ function createPlaceReleasesController({ appTimezone, services }) {
         method: 'GET',
         path: '/admin/place-releases',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleAdminPlaceReleasesList(searchParams)
       },
       {

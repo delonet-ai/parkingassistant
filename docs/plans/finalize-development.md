@@ -530,10 +530,66 @@ highlight is not.
 - [x] Mark completed.
 
 ### Task 21: Lightweight review pass
-- [ ] Run `ralphex --review` on the accumulated branch; triage findings.
-- [ ] Confirm: all SQL parameterized (no string-concatenated user input), input validation on every write endpoint, consistent error payloads, boundaries still enforced.
-- [ ] Fix issues; re-run all validation commands; all green.
-- [ ] Mark completed.
+- [x] Run `ralphex --review` on the accumulated branch; triage findings. — `ralphex --review` is an external CLI this agent cannot invoke (skipped — not automatable); the review was run inline instead, as four parallel read-only audits over the whole tree: SQL parameterization, write-endpoint validation, error-payload consistency, and the boundary checks. Findings triaged below.
+- [x] Confirm: all SQL parameterized (no string-concatenated user input), input validation on every write endpoint, consistent error payloads, boundaries still enforced. — **SQL: clean, nothing to fix.** Every query funnels through `queryOne`/`queryMany` → `pg`, so a `$N` is always a real bind. The four dynamic-`where` builders (`audit`, `contact-access`, `maps`, and the `limit` clauses) interpolate only repository-authored literals and *placeholder numbers* (`$${params.length}`) — values go into the params array, never the text. `%${action}%` interpolates into a parameter, so the worst case is an attacker-chosen LIKE wildcard, not injection. The only bare-identifier interpolation is `${schemaName}` in the test harness, built from pid + counter. **The other three needed fixes** — see below.
+- [x] Fix issues; re-run all validation commands; all green. — `npm run check` (170 files) / `lint` clean, `npm test` **297** (277 + 13 `uuidValidationError` + 7 router), `npm run test:integration` **288/288** against a live Postgres, stable over 3 consecutive full runs. Of the 122 golden snapshots, **119 are byte-identical**; the three that changed were regenerated deliberately and the diff read line by line (two 404 fall-throughs gaining `service`, and the malformed-uuid history entry Task 14 pinned as a defect turning 500 → 400). Seven new golden entries pin the new 400s.
+- [x] Mark completed.
+
+**Two remote denial-of-service defects, both confirmed by reproduction before being fixed.** Neither
+needed a valid route, body or method, and neither was theoretical — the repro scripts are in the
+task's history and the fixes are pinned by `apps/api/src/router.test.js`.
+
+1. **A handler that threw took the process down.** Routes carried a `safe` flag and only the flagged
+   ones were dispatched inside a try/catch. Every write endpoint was unflagged, so a rejection
+   escaped the request listener, and since nothing registers an `unhandledRejection` handler, Node's
+   default exits the process. Two write endpoints (`/admin/employees/disable`,
+   `/admin/permanent-assignments/end`) had no try/catch of their own *and* no id validation, so
+   `{"employeeId": "not-a-uuid"}` was sufficient: 22P02 → rejection → API down, no response sent.
+   The router now dispatches every route through one catch and `safe` is deleted rather than left
+   inert, per the no-compatibility rule.
+2. **A malformed `Host` header was enough on its own.** `new URL(req.url, \`http://${req.headers.host}\`)`
+   let a client-controlled header into the parse, and `Host: ]bad host[` threw `ERR_INVALID_URL`
+   *before* any route matched — upstream of the catch that fixes (1). Node's parser forwards such a
+   header to the listener rather than rejecting it. Nothing downstream reads the host (no handler
+   even destructures `url`), so the base is now the fixed `http://api.local` and an unparseable
+   request target answers 400.
+
+**Input validation: no uuid was validated anywhere in the repo.** 17 uuid-shaped body/query fields
+reached Postgres behind a bare truthiness check, so `{"reservationId": "x"}` answered 500 with
+`invalid input syntax for type uuid: "x"` — the input echoed back at the client. `uuidValidationError()`
+in `support/params.js` now shape-checks them before any query runs, across 12 controllers and all
+three `:id` pattern routes. It deliberately **skips absent fields**: "missing" stays the caller's own
+`X is required` message, which is why adding it left all 15 pinned validation snapshots untouched
+instead of relabelling them. `guestPriorityRank` on `/admin/places/update` was likewise unbounded
+against a `smallint` column — it now reuses the domain's own `normalizeGuestPriorityRank` (1..99),
+which `buildLineDefinition` had been using all along while this endpoint went without.
+
+**Error payloads: two inconsistencies, one of them a leak.** Router-generated errors omitted
+`service: 'api'` that every hand-built payload carries, so the same 404 had two shapes depending on
+which layer produced it. And the terminal branch of every write controller's catch returned
+`error.message` verbatim after failing to match a known `error.code` — constraint names, column
+types and the offending value. Both fixed: `errorPayload` sets `service`, and `internalError()` in
+`support/http-errors.js` logs the real error and answers a flat `Internal server error`. The `jobs`
+and `system` controllers keep their messages on purpose — a job outcome and the `/health/db` probe
+exist to tell the operator what went wrong, so there the message *is* the payload.
+
+**Both defects Task 14 deferred here are fixed.** The journal `order by` clauses
+(`/admin/audit-logs`, the per-entity history journals, `/admin/jobs/runs`, contact-access) gained
+`, id desc`. Worth being precise about what that buys: it makes a repeated read and a `limit` page
+consistent **within one database**, which was the defect. It does **not** let the golden snapshots
+drop their `unordered` marking — the ids are `gen_random_uuid()`, so tie order is reshuffled by every
+fresh scratch schema. `AGENTS.md` and `docs/TECHNICAL_README.md` now say so, since the obvious next
+move on reading "tiebreaker added" is to try making them ordered.
+
+**One finding accepted rather than fixed:** `/admin/employees` takes any string as `email` with no
+format check. Auth, sessions and admin-users are explicitly deferred post-MVP and the operator is
+the only writer, so a format validator here would be ceremony; the 23505 uniqueness constraint is
+the property that actually matters and it is enforced. Recorded so the next reviewer does not
+re-litigate it.
+
+**The dead-export guard from Task 18 earned its keep again**, on the first new module after it
+landed: `isUuid` was exported alongside `uuidValidationError` and used only internally, and the
+guard failed the build until it was unexported.
 
 **The day the test walks, and why it is shaped that way.** The catalog import plants a triple
 (101/102/103) and two singles on floor 4; a second triple is added on floor 5 purely so there is an

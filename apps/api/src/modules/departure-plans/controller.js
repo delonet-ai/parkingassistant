@@ -3,7 +3,9 @@
 const { isDepartureEditClosed, normalizeDepartureTime } = require('../../../../../packages/domain');
 const { currentDateInTimezone, currentTimeInTimezone, isIsoDate, isValidTime } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
+const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { internalError } = require('../../support/http-errors');
 
 function createDeparturePlansController({ appTimezone, services }) {
   const service = services.departurePlans;
@@ -64,6 +66,12 @@ function createDeparturePlansController({ appTimezone, services }) {
       };
     }
 
+    const invalidId = uuidValidationError({ userId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
     // Cheap wall-clock rejection before the transaction opens; the persisted lock is
     // checked inside it, because only there can it be read consistently with the write.
     if (
@@ -111,14 +119,7 @@ function createDeparturePlansController({ appTimezone, services }) {
         return error.result;
       }
 
-      return {
-        statusCode: 500,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      return internalError(error, 'handleDeparturePlanUpsert');
     }
   }
 
@@ -136,7 +137,6 @@ function createDeparturePlansController({ appTimezone, services }) {
         // `/admin/departure-plans`, and the endpoint index de-duplicates paths.
         method: 'GET',
         path: '/admin/departure-plans',
-        safe: true,
         handler: ({ searchParams }) => handleDeparturePlansList(searchParams)
       }
     ]

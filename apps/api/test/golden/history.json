@@ -236,14 +236,15 @@
     }
   },
   {
-    "name": "GET /admin/places/:id/history (malformed id — DEFECT: 500, should be 400)",
+    "name": "GET /admin/places/:id/history (malformed id is rejected as 400)",
     "method": "GET",
     "path": "/admin/places/not-a-uuid/history",
-    "status": 500,
+    "status": 400,
     "payload": {
-      "code": "internal_error",
+      "code": "bad_request",
       "details": null,
-      "error": "invalid input syntax for type uuid: \"not-a-uuid\"",
+      "error": "placeId must be a valid uuid",
+      "service": "api",
       "status": "error"
     }
   }

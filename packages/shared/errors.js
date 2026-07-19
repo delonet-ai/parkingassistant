@@ -30,6 +30,7 @@ function errorPayload(error, statusCode = 500, details = null) {
   return normalizeApiErrorPayload(
     {
       status: 'error',
+      service: 'api',
       error: error instanceof Error ? error.message : String(error),
       details
     },

@@ -37,7 +37,6 @@ function createConflictsController({ appTimezone, services }) {
         method: 'GET',
         path: '/admin/conflicts',
         advertise: true,
-        safe: true,
         handler: ({ searchParams }) => handleConflictsList(searchParams)
       }
     ]
