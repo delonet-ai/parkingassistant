@@ -44,6 +44,8 @@ const rootEndpoints = [
   '/admin/jobs/process-queue',
   '/admin/jobs/freeze-next-day',
   '/admin/jobs/lock-departure-plans',
+  '/admin/jobs/unlock-employee-pool',
+  '/admin/jobs/rebuild-conflicts',
   '/admin/jobs/runs',
   '/admin/reservations/manual',
   '/admin/reservations/cancel'
@@ -322,6 +324,16 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
 
     if (req.method === 'POST' && url.pathname === '/admin/jobs/lock-departure-plans') {
       await dispatch(() => handlers.handleAdminJobLockDeparturePlans(req), res);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/admin/jobs/unlock-employee-pool') {
+      await dispatch(() => handlers.handleAdminJobUnlockEmployeePool(req), res);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/admin/jobs/rebuild-conflicts') {
+      await dispatch(() => handlers.handleAdminJobRebuildConflicts(req), res);
       return;
     }
 

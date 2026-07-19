@@ -2471,6 +2471,34 @@ async function handleDeparturePlanUpsert(req, actorService = 'bot') {
       };
     }
 
+    // The wall-clock 07:00 check above only covers "today in APP_TIMEZONE".
+    // lock-departure-plans persists the same decision, so a plan stays locked
+    // across a day rollover and the rule can be replayed on any date.
+    const lockedPlanResult = await client.query(
+      `
+        select locked_at
+        from departure_plans
+        where user_id = $1
+          and plan_date = $2::date
+          and locked_at is not null
+      `,
+      [userId, planDate]
+    );
+
+    if (lockedPlanResult.rows[0]) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Departure plan editing is locked for this date',
+          lockedAt: lockedPlanResult.rows[0].locked_at,
+          timezone: appTimezone
+        }
+      };
+    }
+
     const planResult = await client.query(
       `
         insert into departure_plans (
@@ -5140,10 +5168,15 @@ async function processQueueForDate(queueDate) {
           qe.queue_position,
           epr.id as request_id,
           epr.user_id,
-          u.display_name as user_display_name
+          u.display_name as user_display_name,
+          existing.id as existing_reservation_id
         from queue_entries qe
         join employee_parking_requests epr on epr.id = qe.employee_parking_request_id
         join users u on u.id = epr.user_id
+        left join reservations existing
+          on existing.user_id = epr.user_id
+          and existing.reservation_date = $1::date
+          and existing.status = 'active'
         where qe.queue_date = $1::date
           and qe.status = 'waiting'
           and epr.status = 'queued'
@@ -5190,6 +5223,50 @@ async function processQueueForDate(queueDate) {
     let placeIndex = 0;
 
     for (const entry of queueEntries) {
+      // A user who already holds a place for the date — served manually, or by
+      // an earlier partial run — is done, not a candidate. Assigning them a
+      // second place trips reservations_active_user_date_uniq, and because the
+      // whole run is one transaction that used to fail the ENTIRE batch,
+      // including the employees queued behind them. Close their request against
+      // the reservation they already have and move on.
+      if (entry.existing_reservation_id) {
+        await client.query(
+          `
+            update employee_parking_requests
+            set
+              status = 'assigned',
+              assigned_reservation_id = $1,
+              updated_at = now()
+            where id = $2
+          `,
+          [entry.existing_reservation_id, entry.request_id]
+        );
+
+        await client.query(
+          `
+            update queue_entries
+            set
+              status = 'assigned',
+              assigned_reservation_id = $1,
+              processed_at = now(),
+              updated_at = now()
+            where id = $2
+          `,
+          [entry.existing_reservation_id, entry.queue_entry_id]
+        );
+
+        skipped.push({
+          requestId: entry.request_id,
+          queueEntryId: entry.queue_entry_id,
+          queuePosition: entry.queue_position,
+          userId: entry.user_id,
+          userDisplayName: entry.user_display_name,
+          reservationId: entry.existing_reservation_id,
+          reason: 'already_has_reservation'
+        });
+        continue;
+      }
+
       if (assignments.length >= maxEmployeeAssignments) {
         skipped.push({
           requestId: entry.request_id,
@@ -5329,7 +5406,13 @@ async function processQueueForDate(queueDate) {
       placeIndex += 1;
     }
 
-    if (skipped.length) {
+    // Entries closed against a reservation the user already held are excluded:
+    // they were marked 'assigned' above and must not be downgraded to 'skipped'.
+    const skippedEntryIds = skipped
+      .filter((item) => item.reason !== 'already_has_reservation')
+      .map((item) => item.queueEntryId);
+
+    if (skippedEntryIds.length) {
       await client.query(
         `
           update queue_entries
@@ -5340,7 +5423,7 @@ async function processQueueForDate(queueDate) {
           where id = any($1::uuid[])
             and status = 'waiting'
         `,
-        [skipped.map((item) => item.queueEntryId)]
+        [skippedEntryIds]
       );
     }
 
@@ -5489,7 +5572,36 @@ async function handleAdminJobFreezeNextDay(req) {
       const client = await pool.connect();
 
       try {
+        await client.query('begin');
+        await client.query('select pg_advisory_xact_lock(hashtext($1))', [`freeze_next_day:${targetDate}`]);
+
         const snapshot = await calculateAvailabilitySnapshot(client, targetDate, { appTimezone, guestReserveMinimum });
+
+        // Freezing is the state transition, not the audit row: once frozen_at
+        // is set the owner can no longer withdraw the release, so the pool the
+        // queue will hand out tomorrow morning cannot shrink underneath it.
+        // The `frozen_at is null` guard is what makes a second run a no-op.
+        const frozenResult = await client.query(
+          `
+            update place_releases pr
+            set
+              frozen_at = now(),
+              updated_at = now()
+            from parking_places pp
+            where pp.id = pr.parking_place_id
+              and pr.status = 'active'
+              and pr.release_during @> $1::date
+              and pr.frozen_at is null
+            returning
+              pr.id,
+              pp.id as parking_place_id,
+              pp.code as parking_place_code,
+              pp.place_type,
+              pr.user_id as owner_user_id
+          `,
+          [targetDate]
+        );
+
         const releaseResult = await client.query(
           `
             select
@@ -5497,7 +5609,8 @@ async function handleAdminJobFreezeNextDay(req) {
               pp.id as parking_place_id,
               pp.code as parking_place_code,
               pp.place_type,
-              pr.user_id as owner_user_id
+              pr.user_id as owner_user_id,
+              pr.frozen_at
             from place_releases pr
             join parking_places pp on pp.id = pr.parking_place_id
             where pr.status = 'active'
@@ -5507,30 +5620,41 @@ async function handleAdminJobFreezeNextDay(req) {
           [targetDate]
         );
 
-        await client.query(
-          `
-            insert into audit_logs (
-              entity_type,
-              action,
-              actor_service,
-              metadata
-            )
-            values ('system', 'availability_frozen', 'admin-web', $1::jsonb)
-          `,
-          [
-            JSON.stringify({
-              targetDate,
-              timezone: appTimezone,
-              releaseCount: releaseResult.rows.length,
-              availability: snapshot
-            })
-          ]
-        );
+        const frozenCount = frozenResult.rows.length;
+
+        // Only a run that changed something leaves an audit trail; re-running
+        // the job must not grow the journal with identical rows.
+        if (frozenCount > 0) {
+          await client.query(
+            `
+              insert into audit_logs (
+                entity_type,
+                action,
+                actor_service,
+                metadata
+              )
+              values ('system', 'availability_frozen', 'admin-web', $1::jsonb)
+            `,
+            [
+              JSON.stringify({
+                targetDate,
+                timezone: appTimezone,
+                releaseCount: releaseResult.rows.length,
+                frozenCount,
+                availability: snapshot
+              })
+            ]
+          );
+        }
+
+        await client.query('commit');
 
         return {
           date: targetDate,
           timezone: appTimezone,
           releaseCount: releaseResult.rows.length,
+          frozenCount,
+          alreadyFrozen: frozenCount === 0,
           availability: snapshot,
           frozenReleases: releaseResult.rows.map((release) => ({
             id: release.id,
@@ -5540,6 +5664,9 @@ async function handleAdminJobFreezeNextDay(req) {
             ownerUserId: release.owner_user_id
           }))
         };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
       } finally {
         client.release();
       }
@@ -5597,6 +5724,21 @@ async function handleAdminJobLockDeparturePlans(req) {
 
   try {
     const result = await withJobRun('lock_departure_plans', targetDate, async () => {
+      // `locked_at is null` is the idempotency guard: the second run of the day
+      // locks nothing and writes no audit row.
+      const lockedResult = await queryMany(
+        `
+          update departure_plans
+          set
+            locked_at = now(),
+            updated_at = now()
+          where plan_date = $1::date
+            and locked_at is null
+          returning id
+        `,
+        [targetDate]
+      );
+
       const summary = await queryOne(
         `
           select
@@ -5608,32 +5750,313 @@ async function handleAdminJobLockDeparturePlans(req) {
         [targetDate]
       );
 
-      await queryOne(
-        `
-          insert into audit_logs (
-            entity_type,
-            action,
-            actor_service,
-            metadata
-          )
-          values ('system', 'departure_plan_editing_locked', 'admin-web', $1::jsonb)
-          returning id
-        `,
-        [
-          JSON.stringify({
-            targetDate,
-            timezone: appTimezone,
-            plansCount: summary?.plans_count || 0,
-            earlyPlansCount: summary?.early_plans_count || 0
-          })
-        ]
-      );
+      const lockedCount = lockedResult.length;
+
+      if (lockedCount > 0) {
+        await queryOne(
+          `
+            insert into audit_logs (
+              entity_type,
+              action,
+              actor_service,
+              metadata
+            )
+            values ('system', 'departure_plan_editing_locked', 'admin-web', $1::jsonb)
+            returning id
+          `,
+          [
+            JSON.stringify({
+              targetDate,
+              timezone: appTimezone,
+              plansCount: summary?.plans_count || 0,
+              earlyPlansCount: summary?.early_plans_count || 0,
+              lockedCount
+            })
+          ]
+        );
+      }
 
       return {
         date: targetDate,
         timezone: appTimezone,
         plansCount: summary?.plans_count || 0,
-        earlyPlansCount: summary?.early_plans_count || 0
+        earlyPlansCount: summary?.early_plans_count || 0,
+        lockedCount,
+        alreadyLocked: lockedCount === 0
+      };
+    });
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        ...result
+      }
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message,
+        jobRun: error.jobRun || null
+      }
+    };
+  }
+}
+
+/**
+ * Settle how much of the next day's released pool employees may take.
+ *
+ * The pool itself is opened by freeze-next-day (which fixes the set of released
+ * places) and consumed by process-queue at day start. This job is the step
+ * between them: it computes, records and announces the employee capacity —
+ * everything released minus the guest reserve — so the operator can see at
+ * 19:00 how many of the queued employees will actually get a place, instead of
+ * finding out the next morning.
+ *
+ * It writes no reservations, so it is naturally replay-safe; the audit row is
+ * written once per date, which is what makes a second run a true no-op.
+ */
+async function handleAdminJobUnlockEmployeePool(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const targetDate = body.date || addDaysToIsoDate(currentDateInTimezone(appTimezone), 1);
+
+  if (!isIsoDate(targetDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  try {
+    const result = await withJobRun('unlock_employee_pool', targetDate, async () => {
+      const client = await pool.connect();
+
+      try {
+        await client.query('begin');
+        await client.query('select pg_advisory_xact_lock(hashtext($1))', [`unlock_employee_pool:${targetDate}`]);
+
+        const availableReleasedPlacesCount = await countAvailableReleasedPlaces(client, targetDate);
+        const employeePoolSize = Math.max(0, availableReleasedPlacesCount - guestReserveMinimum);
+
+        const queueSummary = await client.query(
+          `
+            select
+              count(*)::int as waiting_count,
+              count(*) filter (where qe.queue_position <= $2)::int as servable_count
+            from queue_entries qe
+            join employee_parking_requests epr on epr.id = qe.employee_parking_request_id
+            where qe.queue_date = $1::date
+              and qe.status = 'waiting'
+              and epr.status = 'queued'
+          `,
+          [targetDate, employeePoolSize]
+        );
+
+        const waitingCount = queueSummary.rows[0]?.waiting_count || 0;
+        const servableCount = Math.min(queueSummary.rows[0]?.servable_count || 0, employeePoolSize);
+
+        const alreadyUnlocked = await client.query(
+          `
+            select id
+            from audit_logs
+            where action = 'employee_pool_unlocked'
+              and metadata->>'targetDate' = $1
+            limit 1
+          `,
+          [targetDate]
+        );
+
+        if (!alreadyUnlocked.rows[0]) {
+          await client.query(
+            `
+              insert into audit_logs (
+                entity_type,
+                action,
+                actor_service,
+                metadata
+              )
+              values ('system', 'employee_pool_unlocked', 'admin-web', $1::jsonb)
+            `,
+            [
+              JSON.stringify({
+                targetDate,
+                timezone: appTimezone,
+                guestReserveMinimum,
+                availableReleasedPlacesCount,
+                employeePoolSize,
+                waitingCount,
+                servableCount
+              })
+            ]
+          );
+        }
+
+        await client.query('commit');
+
+        return {
+          date: targetDate,
+          timezone: appTimezone,
+          guestReserveMinimum,
+          availableReleasedPlacesCount,
+          employeePoolSize,
+          waitingCount,
+          servableCount,
+          unservableCount: Math.max(0, waitingCount - servableCount),
+          alreadyUnlocked: Boolean(alreadyUnlocked.rows[0])
+        };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
+
+    return {
+      statusCode: 200,
+      payload: {
+        status: 'ok',
+        service: 'api',
+        ...result
+      }
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: error.message,
+        jobRun: error.jobRun || null
+      }
+    };
+  }
+}
+
+/**
+ * Recompute the early-departure conflicts for a date.
+ *
+ * Two things drift: `departure_plans.is_early` is stamped from the cut-off rule
+ * at write time and never revisited, and the conflict set depends on line
+ * occupancy that moves during the day. Both are pure recomputations from
+ * current data, so running this twice in a row is by construction a no-op — the
+ * second run reports `changed: false` and writes no audit row.
+ */
+async function handleAdminJobRebuildConflicts(req) {
+  let body;
+
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body must be valid JSON'
+      }
+    };
+  }
+
+  const targetDate = body.date || currentDateInTimezone(appTimezone);
+
+  if (!isIsoDate(targetDate)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
+  }
+
+  try {
+    const result = await withJobRun('rebuild_conflicts', targetDate, async () => {
+      const plans = await queryMany(
+        `
+          select id, departure_time::text as departure_time, is_early
+          from departure_plans
+          where plan_date = $1::date
+        `,
+        [targetDate]
+      );
+
+      const drifted = plans.filter(
+        (plan) => isEarlyDeparture(plan.departure_time.slice(0, 5)) !== plan.is_early
+      );
+
+      for (const plan of drifted) {
+        await queryOne(
+          `
+            update departure_plans
+            set
+              is_early = $1,
+              updated_at = now()
+            where id = $2
+            returning id
+          `,
+          [isEarlyDeparture(plan.departure_time.slice(0, 5)), plan.id]
+        );
+      }
+
+      const conflicts = await getConflictsForDate(targetDate);
+      const changed = drifted.length > 0;
+
+      if (changed) {
+        await queryOne(
+          `
+            insert into audit_logs (
+              entity_type,
+              action,
+              actor_service,
+              metadata
+            )
+            values ('system', 'conflicts_rebuilt', 'admin-web', $1::jsonb)
+            returning id
+          `,
+          [
+            JSON.stringify({
+              targetDate,
+              timezone: appTimezone,
+              plansCount: plans.length,
+              recalculatedCount: drifted.length,
+              conflictCount: conflicts.length
+            })
+          ]
+        );
+      }
+
+      return {
+        date: targetDate,
+        timezone: appTimezone,
+        plansCount: plans.length,
+        recalculatedCount: drifted.length,
+        conflictCount: conflicts.length,
+        conflicts,
+        changed
       };
     });
 
@@ -5871,6 +6294,42 @@ async function handleAdminManualReservationCreate(req) {
 
     const reservation = reservationResult.rows[0];
 
+    // Serving the employee manually answers their parking request, so close it
+    // and its queue entry here. Leaving them 'queued' used to make them a
+    // candidate for the next queue run, which then tripped the one-reservation-
+    // per-user-per-day constraint and failed the whole batch.
+    const closedRequestResult = await client.query(
+      `
+        update employee_parking_requests
+        set
+          status = 'assigned',
+          assigned_reservation_id = $1,
+          updated_at = now()
+        where user_id = $2
+          and request_date = $3::date
+          and status in ('active', 'queued')
+        returning id
+      `,
+      [reservation.id, userId, reservationDate]
+    );
+    const closedRequest = closedRequestResult.rows[0] || null;
+
+    if (closedRequest) {
+      await client.query(
+        `
+          update queue_entries
+          set
+            status = 'assigned',
+            assigned_reservation_id = $1,
+            processed_at = now(),
+            updated_at = now()
+          where employee_parking_request_id = $2
+            and status = 'waiting'
+        `,
+        [reservation.id, closedRequest.id]
+      );
+    }
+
     await client.query(
       `
         insert into reservation_events (
@@ -5887,7 +6346,8 @@ async function handleAdminManualReservationCreate(req) {
           releaseId: releasedPlace.release_id,
           userId,
           parkingPlaceId,
-          reservationDate
+          reservationDate,
+          closedEmployeeRequestId: closedRequest?.id || null
         })
       ]
     );
@@ -5932,6 +6392,7 @@ async function handleAdminManualReservationCreate(req) {
           parkingPlaceId,
           parkingPlaceCode: releasedPlace.parking_place_code,
           reservationDate,
+          closedEmployeeRequestId: closedRequest?.id || null,
           warnings
         })
       ]
@@ -6476,6 +6937,7 @@ async function handleAdminPlaceReleaseCancel(req) {
           pr.user_id,
           pr.release_during,
           pr.status,
+          pr.frozen_at,
           lower(pr.release_during)::date as date_from,
           (upper(pr.release_during)::date - 1) as date_to,
           u.display_name as user_display_name,
@@ -6516,6 +6978,23 @@ async function handleAdminPlaceReleaseCancel(req) {
             dateFrom: release.date_from,
             dateTo: release.date_to
           }
+        }
+      };
+    }
+
+    // Once freeze-next-day has run for the released day, the release is part of
+    // that day's settled pool and cannot be taken back — someone may already be
+    // counting on the place.
+    if (release.frozen_at) {
+      await client.query('rollback');
+      return {
+        statusCode: 409,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Cannot cancel a release for a day that is already frozen',
+          frozenAt: release.frozen_at,
+          timezone: appTimezone
         }
       };
     }
@@ -7492,7 +7971,9 @@ const routeApiRequest = createApiRouter({
     handleAdminJobFreezeNextDay,
     handleAdminJobLockDeparturePlans,
     handleAdminJobProcessQueue,
+    handleAdminJobRebuildConflicts,
     handleAdminJobRunsList,
+    handleAdminJobUnlockEmployeePool,
     handleAdminLineGroupOccupancy,
     handleAdminLineGroupsList,
     handleAdminLineOccupancyList,

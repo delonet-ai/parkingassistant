@@ -309,8 +309,8 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     });
   });
 
-  describe('the freeze job and the (missing) 19:00 cut-off', () => {
-    it('snapshots availability without mutating any release', async () => {
+  describe('the freeze job and the 19:00 cut-off', () => {
+    it('snapshots availability and stamps the releases it froze', async () => {
       const date = '2026-11-20';
       const { release } = await fixtures.insertReleasedPlace({ date });
 
@@ -320,6 +320,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
 
       assert.equal(status, 200);
       assert.equal(payload.releaseCount, 1);
+      assert.equal(payload.frozenCount, 1);
       assert.equal(payload.frozenReleases[0].id, release.id);
       assert.equal(payload.jobRun.jobName, 'freeze_next_day');
       assert.equal(payload.jobRun.status, 'success');
@@ -330,23 +331,21 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       );
       assert.equal(audit.rowCount, 1);
 
-      // Despite the name and the payload key, nothing about the release changed.
       const stored = await db.query(
         'select status, frozen_at from place_releases where id = $1',
         [release.id]
       );
-      assert.equal(stored.rows[0].status, 'active');
+      assert.ok(stored.rows[0].frozen_at, 'Task 7 made freeze-next-day write frozen_at');
       assert.equal(
-        stored.rows[0].frozen_at,
-        null,
-        'freeze-next-day does not set frozen_at today — Task 7 should change this'
+        stored.rows[0].status,
+        'active',
+        'the release stays active — a frozen release is still handed out by the morning queue run'
       );
     });
 
-    it('CHARACTERIZATION: a release can still be cancelled after the day was frozen', async () => {
-      // The intended rule is that a frozen day refuses same-day returns. There is
-      // no such check today, so this passes — and must start failing when the
-      // cut-off is implemented in Task 7.
+    it('refuses to cancel a release after the day was frozen', async () => {
+      // Was a CHARACTERIZATION test in Task 3 (no freeze gate existed). Task 7
+      // implemented the cut-off, so the assertion is inverted here on purpose.
       const date = '2026-11-21';
       const { release } = await fixtures.insertReleasedPlace({ date });
 
@@ -357,8 +356,11 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
         releaseId: release.id
       });
 
-      assert.equal(status, 200, 'no freeze gate exists on cancel today');
-      assert.equal(payload.release.status, 'canceled');
+      assert.equal(status, 409);
+      assert.match(payload.error, /frozen/i);
+
+      const stored = await db.query('select status from place_releases where id = $1', [release.id]);
+      assert.equal(stored.rows[0].status, 'active');
     });
 
     it('CHARACTERIZATION: releases can be created for dates already in the past', async () => {

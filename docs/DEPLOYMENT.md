@@ -134,7 +134,12 @@ Internet
 - cron-like scheduler внутри приложения
 - backend job endpoints keep transactional locks and audit trail
 - default timezone: `Europe/Moscow`
-- default schedule: `07:00` lock departure editing, `08:00` process queue, `19:00` freeze next day
+- default schedule: `07:00` lock departure editing, `08:00` process queue, `08:05` rebuild conflicts,
+  `19:00` freeze next day, then `19:00` unlock employee pool
+- jobs due in the same minute run sequentially in declaration order: `freeze-next-day` settles the
+  released pool that `unlock-employee-pool` then measures
+- every job is idempotent and records each run in `job_runs` with a status and a summary; a second
+  run for the same date changes nothing and writes no duplicate audit row
 
 Почему так:
 
@@ -147,7 +152,9 @@ Internet
 - `JOBS_SCHEDULER_ENABLED`
 - `JOB_LOCK_DEPARTURE_PLANS_TIME`
 - `JOB_PROCESS_QUEUE_TIME`
+- `JOB_REBUILD_CONFLICTS_TIME`
 - `JOB_FREEZE_NEXT_DAY_TIME`
+- `JOB_UNLOCK_EMPLOYEE_POOL_TIME`
 
 ## Networking
 

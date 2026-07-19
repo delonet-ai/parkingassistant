@@ -85,11 +85,18 @@ and will fail loudly when it does — that failure is the signal, not a regressi
 
 - `POST /admin/reservations/cancel` always returns 500 (`FOR UPDATE` over a `LEFT JOIN`), so an
   assignment cannot be undone through the API at all. → Task 12.
-- `freeze-next-day` is a read-only snapshot; there is no 19:00 cut-off and no past-date gate on
-  releases, despite `place_releases.frozen_at` and the `frozen` enum value existing. → Task 7.
-- A manual reservation does not close the employee's queue request, so the next `queue/process` run
-  trips the per-user unique index and 409s the **whole batch**, starving everyone behind them.
-  → Task 7.
+- Releases can still be created for dates already in the past — no endpoint compares the requested
+  date against "now" in `APP_TIMEZONE`. → Task 12.
+
+Fixed in Task 7, and the tests that pinned them now assert the corrected behavior:
+
+- `freeze-next-day` was a read-only snapshot. It now writes `place_releases.frozen_at`, and a frozen
+  day refuses release cancellation with `409`. `status` deliberately stays `'active'` — a frozen
+  release is still a released place the next morning's queue run has to be able to hand out, so the
+  `frozen` enum value stays unused.
+- A manual reservation did not close the employee's queue request, so the next `queue/process` run
+  tripped the per-user unique index and 409'd the **whole batch**. The manual endpoint now closes the
+  request it answers, and the queue run skips anyone already holding a reservation for the date.
 
 Ephemeral database for local runs:
 

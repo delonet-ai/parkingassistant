@@ -5,11 +5,26 @@ const appTimezone = process.env.APP_TIMEZONE || 'Europe/Moscow';
 const schedulerEnabled = process.env.JOBS_SCHEDULER_ENABLED !== 'false';
 const tickIntervalMs = Number(process.env.JOBS_TICK_INTERVAL_MS || 60_000);
 
+// Declaration order is execution order within a tick: jobs due at the same
+// minute run sequentially, top to bottom. freeze_next_day must settle the
+// released pool before unlock_employee_pool measures it, and both share 19:00.
 const jobs = [
+  {
+    name: 'lock_departure_plans',
+    endpoint: '/admin/jobs/lock-departure-plans',
+    runAt: process.env.JOB_LOCK_DEPARTURE_PLANS_TIME || '07:00',
+    targetDate: (clock) => clock.date
+  },
   {
     name: 'process_queue',
     endpoint: '/admin/jobs/process-queue',
     runAt: process.env.JOB_PROCESS_QUEUE_TIME || '08:00',
+    targetDate: (clock) => clock.date
+  },
+  {
+    name: 'rebuild_conflicts',
+    endpoint: '/admin/jobs/rebuild-conflicts',
+    runAt: process.env.JOB_REBUILD_CONFLICTS_TIME || '08:05',
     targetDate: (clock) => clock.date
   },
   {
@@ -19,10 +34,10 @@ const jobs = [
     targetDate: (clock) => addDaysToIsoDate(clock.date, 1)
   },
   {
-    name: 'lock_departure_plans',
-    endpoint: '/admin/jobs/lock-departure-plans',
-    runAt: process.env.JOB_LOCK_DEPARTURE_PLANS_TIME || '07:00',
-    targetDate: (clock) => clock.date
+    name: 'unlock_employee_pool',
+    endpoint: '/admin/jobs/unlock-employee-pool',
+    runAt: process.env.JOB_UNLOCK_EMPLOYEE_POOL_TIME || '19:00',
+    targetDate: (clock) => addDaysToIsoDate(clock.date, 1)
   }
 ];
 
@@ -96,9 +111,26 @@ async function postJson(pathname, payload) {
   return data;
 }
 
+function runKeyFor(job, clock) {
+  return `${job.name}:${clock.date}`;
+}
+
+/**
+ * Forget run keys from previous days. The set only exists to stop a job firing
+ * twice within the same minute-resolution window, so anything not stamped with
+ * today's date is dead weight in a long-lived container.
+ */
+function pruneCompletedRuns(clock) {
+  for (const key of completedRuns) {
+    if (!key.endsWith(`:${clock.date}`)) {
+      completedRuns.delete(key);
+    }
+  }
+}
+
 async function runJob(job, clock) {
   const targetDate = job.targetDate(clock);
-  const runKey = `${job.name}:${clock.date}`;
+  const runKey = runKeyFor(job, clock);
 
   if (completedRuns.has(runKey) || !isDue(job, clock)) {
     return;
@@ -148,15 +180,23 @@ async function tick() {
   const clock = currentClock();
 
   try {
-    await Promise.all(jobs.map((job) => runJob(job, clock)));
+    pruneCompletedRuns(clock);
+
+    // Sequential, not Promise.all: same-minute jobs have a required order.
+    for (const job of jobs) {
+      await runJob(job, clock);
+    }
   } finally {
     tickInProgress = false;
   }
 }
 
-if (!schedulerEnabled) {
-  log('scheduler_disabled', { appTimezone });
-} else {
+function start() {
+  if (!schedulerEnabled) {
+    log('scheduler_disabled', { appTimezone });
+    return;
+  }
+
   log('scheduler_started', {
     apiBaseUrl,
     appTimezone,
@@ -168,3 +208,17 @@ if (!schedulerEnabled) {
     tick().catch((error) => log('scheduler_tick_failed', { error: error.message }));
   }, tickIntervalMs);
 }
+
+// Only self-start when run as the container entrypoint, so the schedule itself
+// can be unit-tested without spawning timers or hitting the API.
+if (require.main === module) {
+  start();
+}
+
+module.exports = {
+  addDaysToIsoDate,
+  currentClock,
+  isDue,
+  jobs,
+  start
+};

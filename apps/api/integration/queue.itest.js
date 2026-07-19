@@ -272,17 +272,14 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
       );
     });
 
-    it('CHARACTERIZATION: a manual reservation does NOT close the queue request, so the run fails with 409', async () => {
-      // This pins a real defect rather than the intended behavior.
+    it('a manual reservation closes the queue request, and the run serves everyone behind it', async () => {
+      // Was a CHARACTERIZATION test in Task 3: a manually-served employee stayed
+      // 'queued', so the next run tried to give them a second place, tripped
+      // reservations_active_user_date_uniq and 409'd the WHOLE batch — including
+      // the innocent employees queued behind them.
       //
-      // handleAdminManualReservationCreate writes a reservation but never
-      // touches employee_parking_requests, so a manually-served employee stays
-      // a queue candidate. Processing then trips
-      // reservations_active_user_date_uniq and the WHOLE batch 409s — including
-      // the innocent employees behind them in the queue.
-      //
-      // Task 7 ("Harden scheduled jobs") is where this gets fixed; when it does,
-      // this test should be rewritten to assert a skip, not a 409.
+      // Task 7 fixed both halves: the manual endpoint closes the request it just
+      // answered, and the queue run skips anyone who already holds a place.
       const date = '2026-10-09';
       const { place } = await fixtures.insertReleasedPlace({
         date,
@@ -303,36 +300,44 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
       assert.equal(assignment.status, 201);
 
       const queued = await db.query(
-        'select status from employee_parking_requests where user_id = $1 and request_date = $2::date',
+        'select status, assigned_reservation_id from employee_parking_requests where user_id = $1 and request_date = $2::date',
         [manual.id, date]
       );
       assert.equal(
         queued.rows[0].status,
-        'queued',
-        'manual assignment leaves the queue request open — this is the defect'
+        'assigned',
+        'the manual assignment answers the request, so it must close it'
       );
+      assert.equal(queued.rows[0].assigned_reservation_id, assignment.payload.reservation.id);
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
 
-      assert.equal(status, 409);
-      assert.match(payload.error, /existing active reservation for this date/i);
+      assert.equal(status, 200, 'one manually-served employee must not fail the batch');
+      assert.equal(payload.assignedCount, 1);
+      assert.equal(
+        payload.assignments[0].user.id,
+        waiting.id,
+        'the employee queued behind the manual one still gets served'
+      );
 
-      // The failure is transactional: the employee behind them got nothing.
       const reservations = await db.query(
-        "select user_id from reservations where reservation_date = $1::date and status = 'active'",
+        "select user_id from reservations where reservation_date = $1::date and status = 'active' order by created_at",
         [date]
       );
-      assert.equal(reservations.rowCount, 1);
-      assert.equal(reservations.rows[0].user_id, manual.id);
+      assert.equal(reservations.rowCount, 2);
+      assert.deepEqual(
+        reservations.rows.map((row) => row.user_id),
+        [manual.id, waiting.id],
+        'exactly one place each — nobody was assigned twice'
+      );
 
-      // The failed run is still recorded, with the error attached.
       const runs = await db.query(
         "select status, error from job_runs where job_name = 'process_queue' and target_date = $1::date",
         [date]
       );
       assert.equal(runs.rowCount, 1);
-      assert.equal(runs.rows[0].status, 'failed');
-      assert.ok(runs.rows[0].error);
+      assert.equal(runs.rows[0].status, 'success');
+      assert.equal(runs.rows[0].error, null);
     });
   });
 });

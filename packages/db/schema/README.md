@@ -4,8 +4,11 @@
 
 Начальная схема лежит в:
 
-- [001_initial_schema.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/schema/001_initial_schema.sql)
-- [002_job_runs.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/schema/002_job_runs.sql)
+- [001_initial_schema.sql](./001_initial_schema.sql)
+- [002_job_runs.sql](./002_job_runs.sql)
+- [003_infer_line_groups.sql](./003_infer_line_groups.sql)
+- [004_job_state.sql](./004_job_state.sql) — `departure_plans.locked_at` для 07:00-отсечки;
+  `place_releases.frozen_at` (колонка была с 001) начала писаться job-ом `freeze_next_day`
 
 Это foundation-миграция для:
 
@@ -22,7 +25,7 @@
 
 Bootstrap seed:
 
-- [../seeds/001_bootstrap_system_admin.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/seeds/001_bootstrap_system_admin.sql)
+- [../seeds/001_bootstrap_system_admin.sql](../seeds/001_bootstrap_system_admin.sql)
 
 ## Applying
 
