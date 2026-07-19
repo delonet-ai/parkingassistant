@@ -1,0 +1,197 @@
+[
+  {
+    "name": "POST /admin/employees (no displayName)",
+    "method": "POST",
+    "path": "/admin/employees",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "displayName is required",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (no floorLabel)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "floorLabel is required",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (slot count != capacity)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "slots must contain exactly 2 entries to match capacity",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (bad capacity)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "capacity must be 1, 2 or 3",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (no lineId)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "lineId is required",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (unknown lineId)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 404,
+    "payload": {
+      "code": "not_found",
+      "details": null,
+      "error": "Parking line not found",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/reservations/manual (no fields)",
+    "method": "POST",
+    "path": "/admin/reservations/manual",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "userId, parkingPlaceId and reservationDate are required; date must use YYYY-MM-DD format",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/reservations/cancel (no reservationId)",
+    "method": "POST",
+    "path": "/admin/reservations/cancel",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "reservationId is required",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-releases (no fields)",
+    "method": "POST",
+    "path": "/admin/place-releases",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "parkingPlaceId, dateFrom and dateTo are required; dates must use YYYY-MM-DD format",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-releases (dateFrom in the past)",
+    "method": "POST",
+    "path": "/admin/place-releases",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "dateFrom must not be in the past (today is <today> in Europe/Moscow)",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/permanent-assignments (no fields)",
+    "method": "POST",
+    "path": "/admin/permanent-assignments",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "userId, parkingPlaceId, dateFrom and optional dateTo=YYYY-MM-DD are required",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/guest-parking-requests (no fields)",
+    "method": "POST",
+    "path": "/admin/guest-parking-requests",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "hostUserId, guestName and requestDate are required; date must use YYYY-MM-DD format",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/employee-parking-requests (no fields)",
+    "method": "POST",
+    "path": "/admin/employee-parking-requests",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "userId and requestDate are required; date must use YYYY-MM-DD format",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/line-occupancy (no fields)",
+    "method": "POST",
+    "path": "/admin/line-occupancy",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "occupancyDate, lineGroupId, parkingPlaceId and position 1..3 are required",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/departure-plans (no fields)",
+    "method": "POST",
+    "path": "/admin/departure-plans",
+    "status": 400,
+    "payload": {
+      "code": "bad_request",
+      "details": null,
+      "error": "userId, planDate and departureTime HH:MM are required",
+      "service": "api",
+      "status": "error"
+    }
+  }
+]

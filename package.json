@@ -4,10 +4,11 @@
   "private": true,
   "description": "Parking Assistant monorepo",
   "scripts": {
-    "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/api/src/repositories/db.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/admin-web/src/render-place-lines.js && node --check apps/admin-web/src/render-day-map.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js && node --check packages/db/migrate.js && node --check packages/db/seed-demo.js",
+    "check": "node --check apps/api/src/server.js && node --check apps/api/src/router.js && node --check apps/api/src/repositories/db.js && node --check apps/admin-web/src/server.js && node --check apps/admin-web/src/render-modules.js && node --check apps/admin-web/src/render-place-lines.js && node --check apps/admin-web/src/render-day-map.js && node --check apps/bot-adapter/src/server.js && node --check apps/jobs/src/scheduler.js && node --check packages/db/migrate.js && node --check packages/db/seed-demo.js && node --check apps/api/testing/golden.js && node --check apps/api/testing/golden-scenarios.js",
     "test": "node --test",
     "test:watch": "node --test --watch",
     "test:integration": "node --test \"**/*.itest.js\"",
+    "test:golden": "node --test apps/api/integration/golden.itest.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "smoke:m1": "node scripts/smoke/m1.js",

@@ -1,0 +1,135 @@
+[
+  {
+    "name": "GET /admin/employee-parking-requests",
+    "method": "GET",
+    "path": "/admin/employee-parking-requests",
+    "status": 200,
+    "payload": {
+      "requests": [
+        {
+          "assignedReservation": {
+            "id": "<id:63>",
+            "parkingPlaceCode": "120"
+          },
+          "canceledAt": null,
+          "id": "<id:72>",
+          "notes": "Демо: выдано из очереди",
+          "queueEntry": {
+            "id": "<id:73>",
+            "position": 1,
+            "processedAt": "<timestamp>",
+            "status": "assigned"
+          },
+          "requestDate": "<today>T00:00:00.000Z",
+          "requestedAt": "<timestamp>",
+          "status": "assigned",
+          "user": {
+            "department": "Маркетинг",
+            "displayName": "Смирнова Ольга Андреевна",
+            "id": "<id:20>"
+          }
+        },
+        {
+          "assignedReservation": null,
+          "canceledAt": null,
+          "id": "<id:74>",
+          "notes": "Демо: ожидает в очереди",
+          "queueEntry": {
+            "id": "<id:75>",
+            "position": 2,
+            "processedAt": null,
+            "status": "waiting"
+          },
+          "requestDate": "<today>T00:00:00.000Z",
+          "requestedAt": "<timestamp>",
+          "status": "queued",
+          "user": {
+            "department": "Продажи",
+            "displayName": "Волков Артём Викторович",
+            "id": "<id:2>"
+          }
+        },
+        {
+          "assignedReservation": null,
+          "canceledAt": null,
+          "id": "<id:76>",
+          "notes": "Демо: только что подана",
+          "queueEntry": null,
+          "requestDate": "<today>T00:00:00.000Z",
+          "requestedAt": "<timestamp>",
+          "status": "active",
+          "user": {
+            "department": "HR",
+            "displayName": "Морозов Егор Николаевич",
+            "id": "<id:11>"
+          }
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/guest-parking-requests",
+    "method": "GET",
+    "path": "/admin/guest-parking-requests",
+    "status": 200,
+    "payload": {
+      "requests": [
+        {
+          "assignedReservation": null,
+          "canceledAt": null,
+          "createdAt": "<timestamp>",
+          "guest": {
+            "displayName": "Тихонова Елена",
+            "id": "<id:77>"
+          },
+          "guestName": "Тихонова Елена",
+          "guestPhone": "+7 900 100-00-02",
+          "host": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "id": "<id:5>"
+          },
+          "id": "<id:54>",
+          "notes": "Демо: гость ожидает места",
+          "requestDate": "<today>T00:00:00.000Z",
+          "status": "active",
+          "vehiclePlateNumber": "У777УУ199"
+        },
+        {
+          "assignedReservation": {
+            "id": "<id:52>",
+            "parkingPlace": {
+              "code": "110",
+              "id": "<id:19>",
+              "placeType": "triple",
+              "title": "Место 110"
+            },
+            "status": "active"
+          },
+          "canceledAt": null,
+          "createdAt": "<timestamp>",
+          "guest": {
+            "displayName": "Николаев Сергей",
+            "id": "<id:55>"
+          },
+          "guestName": "Николаев Сергей",
+          "guestPhone": "+7 900 100-00-01",
+          "host": {
+            "department": "HR",
+            "displayName": "Морозов Егор Николаевич",
+            "id": "<id:11>"
+          },
+          "id": "<id:53>",
+          "notes": "Демо: гость размещён",
+          "requestDate": "<today>T00:00:00.000Z",
+          "status": "assigned",
+          "vehiclePlateNumber": "Х555ХХ777"
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  }
+]

@@ -1,0 +1,126 @@
+[
+  {
+    "name": "GET /health",
+    "method": "GET",
+    "path": "/health",
+    "status": 200,
+    "payload": {
+      "service": "api",
+      "startedAt": "<timestamp>",
+      "status": "ok",
+      "timestamp": "<timestamp>",
+      "uptimeSeconds": "<uptimeSeconds>"
+    }
+  },
+  {
+    "name": "GET /health/db",
+    "method": "GET",
+    "path": "/health/db",
+    "status": 200,
+    "payload": {
+      "check": "db",
+      "database": "<database>",
+      "serverTime": "<timestamp>",
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET / (endpoint index)",
+    "method": "GET",
+    "path": "/",
+    "status": 200,
+    "payload": {
+      "endpoints": [
+        "/health",
+        "/health/db",
+        "/auth/bootstrap-status",
+        "/admin/users",
+        "/admin/employees",
+        "/admin/employees/update",
+        "/admin/employees/disable",
+        "/admin/employees/:id/history",
+        "/admin/places",
+        "/admin/places/update",
+        "/admin/places/:id/history",
+        "/admin/place-lines",
+        "/admin/place-lines/archive",
+        "/admin/permanent-assignments",
+        "/admin/permanent-assignments/end",
+        "/admin/audit-logs",
+        "/admin/contact-access-logs",
+        "/admin/line-groups",
+        "/admin/line-occupancy",
+        "/admin/line-groups/:id/occupancy",
+        "/bot/line/position",
+        "/bot/line/blocking-contacts",
+        "/bot/departure-plans",
+        "/admin/departure-plans",
+        "/admin/conflicts",
+        "/admin/map-diagnostics",
+        "/admin/map-backgrounds",
+        "/admin/dashboard",
+        "/admin/availability",
+        "/admin/place-releases",
+        "/admin/place-releases/cancel",
+        "/admin/employee-parking-requests",
+        "/admin/guest-parking-requests",
+        "/admin/guest-parking-requests/assign",
+        "/admin/jobs/process-queue",
+        "/admin/jobs/freeze-next-day",
+        "/admin/jobs/lock-departure-plans",
+        "/admin/jobs/unlock-employee-pool",
+        "/admin/jobs/rebuild-conflicts",
+        "/admin/jobs/runs",
+        "/admin/reservations/manual",
+        "/admin/reservations/cancel"
+      ],
+      "message": "Parking Assistant API is running",
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /auth/bootstrap-status",
+    "method": "GET",
+    "path": "/auth/bootstrap-status",
+    "status": 200,
+    "payload": {
+      "bootstrapUser": {
+        "authStatus": "invited",
+        "displayName": "Initial System Administrator",
+        "hasSystemAdminRole": true,
+        "id": "<id:1>",
+        "login": "sysadmin"
+      },
+      "bootstrapUserExists": true,
+      "check": "auth-bootstrap",
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /nope (unrouted path)",
+    "method": "GET",
+    "path": "/nope",
+    "status": 404,
+    "payload": {
+      "code": "not_found",
+      "details": null,
+      "error": "Not found",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /health (wrong method falls through)",
+    "method": "POST",
+    "path": "/health",
+    "status": 404,
+    "payload": {
+      "code": "not_found",
+      "details": null,
+      "error": "Not found",
+      "status": "error"
+    }
+  }
+]

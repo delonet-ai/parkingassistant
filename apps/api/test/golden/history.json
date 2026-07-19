@@ -1,0 +1,250 @@
+[
+  {
+    "name": "GET /admin/employees/:id/history",
+    "method": "GET",
+    "path": "/admin/employees/<id:5>/history",
+    "status": 200,
+    "payload": {
+      "employee": {
+        "createdAt": "<timestamp>",
+        "department": "ИТ",
+        "displayName": "Иванов Иван Иванович",
+        "email": "demo.001@demo.invalid",
+        "employeeNo": "DEMO-001",
+        "id": "<id:5>",
+        "phone": "+7 900 000-00-01",
+        "yandexMessengerUserId": null
+      },
+      "history": {
+        "auditLogs": [
+          {
+            "action": "permanent_assignment_created",
+            "actorAuthUser": null,
+            "actorService": "db_seed_demo",
+            "actorUser": {
+              "displayName": "Иванов Иван Иванович",
+              "id": "<uuid>"
+            },
+            "entityId": "<uuid>",
+            "entityType": "permanent_assignment",
+            "id": "<uuid>",
+            "metadata": {
+              "parkingPlaceId": "<uuid>"
+            },
+            "occurredAt": "<timestamp>"
+          }
+        ],
+        "contactAccessLogs": [
+          {
+            "createdAt": "<timestamp>",
+            "id": "<id:79>",
+            "lineGroup": {
+              "code": "demo-line-4-101",
+              "id": "<id:28>",
+              "name": "Линия G4 / 101"
+            },
+            "metadata": {
+              "blockerPosition": 1,
+              "blockerSubjectType": "employee",
+              "requesterPosition": 2
+            },
+            "occupancyDate": "<today>",
+            "requester": {
+              "department": "ИТ",
+              "displayName": "Петров Пётр Сергеевич",
+              "email": "demo.002@demo.invalid",
+              "id": "<id:16>",
+              "phone": "+7 900 000-00-02"
+            },
+            "resolution": "employee_contact_shown",
+            "targetGuestParkingRequest": null,
+            "targetUser": {
+              "department": "ИТ",
+              "displayName": "Иванов Иван Иванович",
+              "email": "demo.001@demo.invalid",
+              "id": "<id:5>",
+              "phone": "+7 900 000-00-01"
+            }
+          },
+          {
+            "createdAt": "<timestamp>",
+            "id": "<id:80>",
+            "lineGroup": {
+              "code": "demo-line-4-101",
+              "id": "<id:28>",
+              "name": "Линия G4 / 101"
+            },
+            "metadata": {
+              "reason": "early_departure",
+              "seed": "demo"
+            },
+            "occupancyDate": "<today>",
+            "requester": {
+              "department": "ИТ",
+              "displayName": "Петров Пётр Сергеевич",
+              "email": "demo.002@demo.invalid",
+              "id": "<id:16>",
+              "phone": "+7 900 000-00-02"
+            },
+            "resolution": "contact_shared",
+            "targetGuestParkingRequest": null,
+            "targetUser": {
+              "department": "ИТ",
+              "displayName": "Иванов Иван Иванович",
+              "email": "demo.001@demo.invalid",
+              "id": "<id:5>",
+              "phone": "+7 900 000-00-01"
+            }
+          }
+        ],
+        "departurePlans": [
+          {
+            "createdAt": "<timestamp>",
+            "departureTime": "19:30:00",
+            "id": "<id:71>",
+            "isEarly": false,
+            "planDate": "<today>",
+            "updatedAt": "<timestamp>"
+          }
+        ],
+        "employeeRequests": [],
+        "hostedGuestRequests": [
+          {
+            "canceledAt": null,
+            "guestName": "Тихонова Елена",
+            "guestPhone": "+7 900 100-00-02",
+            "id": "<id:54>",
+            "parkingPlaceCode": null,
+            "requestDate": "<today>",
+            "requestedAt": "<timestamp>",
+            "status": "active",
+            "vehiclePlateNumber": "У777УУ199"
+          }
+        ],
+        "lineOccupancy": [
+          {
+            "createdAt": "<timestamp>",
+            "id": "<id:65>",
+            "lineGroupCode": "demo-line-4-101",
+            "occupancyDate": "<today>",
+            "parkingPlaceCode": "101",
+            "position": 1,
+            "subjectType": "employee"
+          }
+        ],
+        "permanentAssignments": [
+          {
+            "createdAt": "<timestamp>",
+            "dateFrom": "<today-90>",
+            "dateTo": null,
+            "id": "<id:39>",
+            "notes": "Demo dataset",
+            "parkingPlace": {
+              "code": "101",
+              "id": "<id:6>",
+              "title": "Место 101"
+            }
+          }
+        ],
+        "releases": [],
+        "reservations": []
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/places/:id/history",
+    "method": "GET",
+    "path": "/admin/places/<id:6>/history",
+    "status": 200,
+    "payload": {
+      "history": {
+        "auditLogs": [
+          {
+            "action": "parking_place_created",
+            "actorAuthUser": null,
+            "actorService": "db_seed_demo",
+            "actorUser": null,
+            "entityId": "<uuid>",
+            "entityType": "parking_place",
+            "id": "<uuid>",
+            "metadata": {
+              "code": "101",
+              "placeType": "double"
+            },
+            "occurredAt": "<timestamp>"
+          },
+          {
+            "action": "permanent_assignment_created",
+            "actorAuthUser": null,
+            "actorService": "db_seed_demo",
+            "actorUser": {
+              "displayName": "Иванов Иван Иванович",
+              "id": "<uuid>"
+            },
+            "entityId": "<uuid>",
+            "entityType": "permanent_assignment",
+            "id": "<uuid>",
+            "metadata": {
+              "parkingPlaceId": "<uuid>"
+            },
+            "occurredAt": "<timestamp>"
+          }
+        ],
+        "movements": [],
+        "permanentAssignments": [
+          {
+            "createdAt": "<timestamp>",
+            "dateFrom": "<today-90>",
+            "dateTo": null,
+            "id": "<id:39>",
+            "notes": "Demo dataset",
+            "user": {
+              "department": "ИТ",
+              "displayName": "Иванов Иван Иванович",
+              "id": "<id:5>"
+            }
+          }
+        ],
+        "releases": [],
+        "reservations": []
+      },
+      "place": {
+        "code": "101",
+        "floorLabel": "4",
+        "id": "<id:6>",
+        "isActive": true,
+        "placeType": "double",
+        "title": "Место 101"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/employees/:id/history (unknown id)",
+    "method": "GET",
+    "path": "/admin/employees/<id:82>/history",
+    "status": 404,
+    "payload": {
+      "code": "not_found",
+      "details": null,
+      "error": "Employee not found",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "GET /admin/places/:id/history (malformed id — DEFECT: 500, should be 400)",
+    "method": "GET",
+    "path": "/admin/places/not-a-uuid/history",
+    "status": 500,
+    "payload": {
+      "code": "internal_error",
+      "details": null,
+      "error": "invalid input syntax for type uuid: \"not-a-uuid\"",
+      "status": "error"
+    }
+  }
+]

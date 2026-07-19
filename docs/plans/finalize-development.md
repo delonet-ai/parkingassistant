@@ -411,11 +411,28 @@ action on that tab are untouched and still work.
 - [x] Mark completed.
 
 ### Task 14: HTTP golden/characterization harness (behavior lock)
-- [ ] Golden-response test over the test DB: snapshot `(status, payload)` per endpoint group under `apps/api/test/golden/`.
-- [ ] These snapshots are the contract the split must preserve; every later Phase 3 task re-runs them and they must stay identical unless a change is explicitly intended.
-- [ ] Document how to regenerate snapshots deliberately.
-- [ ] Run `npm run test:integration`; green.
-- [ ] Mark completed.
+- [x] Golden-response test over the test DB: snapshot `(status, payload)` per endpoint group under `apps/api/test/golden/`. — 11 groups / 122 recorded requests: `health`, `catalog`, `inventory`, `day`, `requests`, `history`, `audit`, `validation-errors`, `inventory-writes`, `operational-writes`, `jobs`. The replay runs against a scratch schema loaded with the Task 5 demo dataset, so the snapshots describe realistic content rather than empty lists. Writes are covered as well as reads — creating a single/double/triple element, both archive blocker types, the manual-assignment chain (permanent assignment → release → reservation → cancel), the guest auto-assign, the undo paths, every 400 payload, and each of the five jobs plus its replay. **Snapshot files are `.json` under `test/` deliberately, and the runner is not:** `node --test` picks up every `.js` under a directory named `test/` regardless of its name, which would have dragged a Postgres-backed suite into the `npm test` gate — so the runner is `apps/api/integration/golden.itest.js`.
+- [x] These snapshots are the contract the split must preserve; every later Phase 3 task re-runs them and they must stay identical unless a change is explicitly intended. — comparison is per-request (`assert.deepEqual` on the normalized payload plus an exact status check), so a failure names the endpoint rather than the file. Normalization is in `apps/api/testing/golden.js`: uuids → `<id:N>` numbered **across the whole run**, which is what makes "the id `POST` returned is the id the later `GET` returns" an assertion rather than a coincidence; dates → `<today±N>` in `APP_TIMEZONE`; timestamps → `<timestamp>`, except a date column read back as midnight UTC, which keeps its day because for `requestDate`/`dateFrom` the day *is* the contract; object keys sorted (key order carries no HTTP meaning and reordering it during the split would be a false failure); **array order preserved**, because queue order, line positions and `display_order` are contract.
+- [x] Document how to regenerate snapshots deliberately. — `GOLDEN_UPDATE=1 npm run test:golden`, documented in `docs/TECHNICAL_README.md` → «Golden HTTP snapshots» and `AGENTS.md`, both stating that the diff must be read line by line before committing. The flag is the only write path; a normal run never rewrites a snapshot.
+- [x] Run `npm run test:integration`; green. — **266/266** (144 + 122) against a live Postgres, stable over 3 consecutive full runs, and the golden file alone stable over 4 consecutive replays against fresh scratch schemas. `npm run check` / `lint` clean, `npm test` **164** pass (149 + 15 new normalizer/scenario unit tests in `apps/api/testing/golden.test.js`, which run without a database).
+- [x] Mark completed.
+
+**One determinism defect in the API, found by building this and worked around rather than fixed:**
+`/admin/audit-logs`, the per-entity history journals and `/admin/jobs/runs` order by a timestamp with
+**no tiebreaker**, while every row a single transaction writes shares one timestamp. Postgres is
+therefore free to return tied rows in any order — and combined with `limit`, *which* rows come back
+can vary too. The first snapshot recording was flaky for exactly this reason. Those lists are marked
+`unordered` in the scenario: identity inside them is made opaque and the rows are sorted by
+normalized content, so the snapshot asserts the set and the content of the journal rows rather than
+the order Postgres happened to pick. Sorting alone was not enough and the first attempt to do it made
+things worse — identifier tokens are handed out in first-seen order, so re-ordering a list renumbered
+every id after it. Adding `, id desc` to those `order by` clauses is a one-line fix, but it is a
+behavior change and this task's job is to pin behavior, not alter it → **Task 21**.
+
+**One defect pinned, not fixed** (recorded as-is, with the scenario name saying so): `GET
+/admin/places/:id/history` with a malformed id returns **500** carrying the raw driver message
+`invalid input syntax for type uuid: "not-a-uuid"` instead of a `400`. The id is never validated
+before it reaches Postgres. → **Task 21**.
 
 ### Task 15: Extract the repository layer (isolate all SQL) — iterate per context
 - [ ] For ONE bounded context per iteration, move every SQL string into `modules/<context>/repository.js` using `queryOne`/`queryMany` and `withTransaction`. No behavior change.

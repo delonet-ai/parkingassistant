@@ -1,0 +1,730 @@
+[
+  {
+    "name": "POST /admin/employees (create)",
+    "method": "POST",
+    "path": "/admin/employees",
+    "status": 201,
+    "payload": {
+      "employee": {
+        "createdAt": "<timestamp>",
+        "department": "QA",
+        "displayName": "Голдин Голден Голденович",
+        "email": "golden@demo.invalid",
+        "employeeNo": null,
+        "id": "<id:118>",
+        "phone": "+7 900 999-00-01",
+        "yandexMessengerUserId": null
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (single)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 201,
+    "payload": {
+      "line": {
+        "capacity": 1,
+        "code": "line-9-G9-1",
+        "displayOrder": 10,
+        "floorLabel": "9",
+        "lineId": "<id:119>",
+        "name": "Линия 9 / G9-1",
+        "slots": [
+          {
+            "code": "G9-1",
+            "guestPriorityRank": null,
+            "placeId": "<id:120>",
+            "placeRole": "regular",
+            "placeType": "single",
+            "position": 1,
+            "status": "free",
+            "title": "Голден одинарное",
+            "userDisplayName": null
+          }
+        ]
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (double)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 201,
+    "payload": {
+      "line": {
+        "capacity": 2,
+        "code": "line-9-G9-2",
+        "displayOrder": 11,
+        "floorLabel": "9",
+        "lineId": "<id:121>",
+        "name": "Линия 9 / G9-2",
+        "slots": [
+          {
+            "code": "G9-2",
+            "guestPriorityRank": null,
+            "placeId": "<id:122>",
+            "placeRole": "regular",
+            "placeType": "double",
+            "position": 1,
+            "status": "free",
+            "title": "Голден двойное 1",
+            "userDisplayName": null
+          },
+          {
+            "code": "G9-3",
+            "guestPriorityRank": null,
+            "placeId": "<id:123>",
+            "placeRole": "regular",
+            "placeType": "double",
+            "position": 2,
+            "status": "free",
+            "title": "Голден двойное 2",
+            "userDisplayName": null
+          }
+        ]
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (triple, rotatable with a guest rank)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 201,
+    "payload": {
+      "line": {
+        "capacity": 3,
+        "code": "line-9-G9-4",
+        "displayOrder": 12,
+        "floorLabel": "9",
+        "lineId": "<id:124>",
+        "name": "Линия 9 / G9-4",
+        "slots": [
+          {
+            "code": "G9-4",
+            "guestPriorityRank": 1,
+            "placeId": "<id:125>",
+            "placeRole": "rotatable",
+            "placeType": "triple",
+            "position": 1,
+            "status": "rotatable",
+            "title": "Голден тройное 1",
+            "userDisplayName": null
+          },
+          {
+            "code": "G9-5",
+            "guestPriorityRank": null,
+            "placeId": "<id:126>",
+            "placeRole": "regular",
+            "placeType": "triple",
+            "position": 2,
+            "status": "free",
+            "title": "Голден тройное 2",
+            "userDisplayName": null
+          },
+          {
+            "code": "G9-6",
+            "guestPriorityRank": null,
+            "placeId": "<id:127>",
+            "placeRole": "blocked",
+            "placeType": "triple",
+            "position": 3,
+            "status": "blocked",
+            "title": "Голден тройное 3",
+            "userDisplayName": null
+          }
+        ]
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines (duplicate code)",
+    "method": "POST",
+    "path": "/admin/place-lines",
+    "status": 409,
+    "payload": {
+      "code": "conflict",
+      "details": null,
+      "error": "A parking place or line with the same code already exists",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "GET /admin/place-lines?floor=9 (after create)",
+    "method": "GET",
+    "path": "/admin/place-lines?floor=9",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "floor": "9",
+      "lines": [
+        {
+          "capacity": 1,
+          "code": "line-9-G9-1",
+          "displayOrder": 10,
+          "floorLabel": "9",
+          "lineId": "<id:119>",
+          "name": "Линия 9 / G9-1",
+          "slots": [
+            {
+              "code": "G9-1",
+              "guestPriorityRank": null,
+              "placeId": "<id:120>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "free",
+              "title": "Голден одинарное",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 2,
+          "code": "line-9-G9-2",
+          "displayOrder": 11,
+          "floorLabel": "9",
+          "lineId": "<id:121>",
+          "name": "Линия 9 / G9-2",
+          "slots": [
+            {
+              "code": "G9-2",
+              "guestPriorityRank": null,
+              "placeId": "<id:122>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "free",
+              "title": "Голден двойное 1",
+              "userDisplayName": null
+            },
+            {
+              "code": "G9-3",
+              "guestPriorityRank": null,
+              "placeId": "<id:123>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 2,
+              "status": "free",
+              "title": "Голден двойное 2",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "line-9-G9-4",
+          "displayOrder": 12,
+          "floorLabel": "9",
+          "lineId": "<id:124>",
+          "name": "Линия 9 / G9-4",
+          "slots": [
+            {
+              "code": "G9-4",
+              "guestPriorityRank": 1,
+              "placeId": "<id:125>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 1,
+              "status": "rotatable",
+              "title": "Голден тройное 1",
+              "userDisplayName": null
+            },
+            {
+              "code": "G9-5",
+              "guestPriorityRank": null,
+              "placeId": "<id:126>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "free",
+              "title": "Голден тройное 2",
+              "userDisplayName": null
+            },
+            {
+              "code": "G9-6",
+              "guestPriorityRank": null,
+              "placeId": "<id:127>",
+              "placeRole": "blocked",
+              "placeType": "triple",
+              "position": 3,
+              "status": "blocked",
+              "title": "Голден тройное 3",
+              "userDisplayName": null
+            }
+          ]
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/availability (inventory grew)",
+    "method": "GET",
+    "path": "/admin/availability",
+    "status": 200,
+    "payload": {
+      "availability": {
+        "availablePlaces": 5,
+        "byType": {
+          "double": 1,
+          "single": 3,
+          "triple": 1
+        },
+        "date": "<today>",
+        "employeeAvailability": {
+          "after19": 0,
+          "before19": 2
+        },
+        "guestReserve": {
+          "availablePlaces": 5,
+          "minimum": 5,
+          "status": "ok"
+        },
+        "releasedPlaces": 7,
+        "timezone": "Europe/Moscow"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/permanent-assignments (owner of the new double)",
+    "method": "POST",
+    "path": "/admin/permanent-assignments",
+    "status": 201,
+    "payload": {
+      "permanentAssignment": {
+        "created_at": "<timestamp>",
+        "date_from": "<today>",
+        "date_to": null,
+        "id": "<id:128>",
+        "notes": "golden snapshot",
+        "parking_place_id": "<id:122>",
+        "user_id": "<id:118>"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-releases (owner releases it for today)",
+    "method": "POST",
+    "path": "/admin/place-releases",
+    "status": 201,
+    "payload": {
+      "release": {
+        "createdAt": "<timestamp>",
+        "createdVia": "admin_web",
+        "dateFrom": "<today>T00:00:00.000Z",
+        "dateTo": "<today>T00:00:00.000Z",
+        "id": "<id:129>",
+        "parkingPlace": {
+          "code": "G9-2",
+          "id": "<id:122>"
+        },
+        "status": "active",
+        "user": {
+          "displayName": "Голдин Голден Голденович",
+          "id": "<id:118>"
+        }
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-releases (overlapping the first)",
+    "method": "POST",
+    "path": "/admin/place-releases",
+    "status": 409,
+    "payload": {
+      "code": "conflict",
+      "details": null,
+      "error": "Parking place already has an active release overlapping this date range",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "GET /admin/availability (a released place appeared)",
+    "method": "GET",
+    "path": "/admin/availability",
+    "status": 200,
+    "payload": {
+      "availability": {
+        "availablePlaces": 6,
+        "byType": {
+          "double": 2,
+          "single": 3,
+          "triple": 1
+        },
+        "date": "<today>",
+        "employeeAvailability": {
+          "after19": 1,
+          "before19": 3
+        },
+        "guestReserve": {
+          "availablePlaces": 6,
+          "minimum": 5,
+          "status": "ok"
+        },
+        "releasedPlaces": 8,
+        "timezone": "Europe/Moscow"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/places/update (place role on the triple rear slot)",
+    "method": "POST",
+    "path": "/admin/places/update",
+    "status": 200,
+    "payload": {
+      "place": {
+        "code": "G9-6",
+        "floor_label": "9",
+        "guest_priority_rank": null,
+        "id": "<id:127>",
+        "is_active": true,
+        "line_group_id": "<id:124>",
+        "line_position_hint": 3,
+        "place_role": "regular",
+        "place_type": "triple",
+        "title": "Голден тройное 3",
+        "updated_at": "<timestamp>"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/employees/update",
+    "method": "POST",
+    "path": "/admin/employees/update",
+    "status": 200,
+    "payload": {
+      "employee": {
+        "department": "QA / golden",
+        "displayName": "Голдин Голден Голденович",
+        "email": "golden@demo.invalid",
+        "employeeNo": null,
+        "id": "<id:118>",
+        "isActive": true,
+        "phone": "+7 900 999-00-01",
+        "updatedAt": "<timestamp>",
+        "yandexMessengerUserId": null
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/reservations/manual (onto the released double)",
+    "method": "POST",
+    "path": "/admin/reservations/manual",
+    "status": 201,
+    "payload": {
+      "reservation": {
+        "createdAt": "<timestamp>",
+        "id": "<id:130>",
+        "parkingPlace": {
+          "code": "G9-2",
+          "id": "<id:122>"
+        },
+        "reservationDate": "<today>T00:00:00.000Z",
+        "source": "manual",
+        "status": "active",
+        "user": {
+          "displayName": "Волков Артём Викторович",
+          "id": "<id:2>"
+        }
+      },
+      "service": "api",
+      "status": "ok",
+      "warnings": []
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (blocked: reservation + permanent assignment)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 409,
+    "payload": {
+      "blockers": [
+        {
+          "detail": "<today>",
+          "placeCode": "G9-2",
+          "type": "permanent_assignment",
+          "userDisplayName": "Голдин Голден Голденович"
+        },
+        {
+          "detail": "<today>",
+          "placeCode": "G9-2",
+          "type": "reservation",
+          "userDisplayName": "Волков Артём Викторович"
+        }
+      ],
+      "code": "conflict",
+      "details": null,
+      "error": "Parking line still has active reservations or permanent assignments",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/reservations/cancel",
+    "method": "POST",
+    "path": "/admin/reservations/cancel",
+    "status": 200,
+    "payload": {
+      "reservation": {
+        "canceledAt": "<timestamp>",
+        "id": "<id:130>",
+        "reservationDate": "<today>T00:00:00.000Z",
+        "status": "canceled"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (still blocked: the permanent assignment stands)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 409,
+    "payload": {
+      "blockers": [
+        {
+          "detail": "<today>",
+          "placeCode": "G9-2",
+          "type": "permanent_assignment",
+          "userDisplayName": "Голдин Голден Голденович"
+        }
+      ],
+      "code": "conflict",
+      "details": null,
+      "error": "Parking line still has active reservations or permanent assignments",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (single, no blockers)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 200,
+    "payload": {
+      "archivedPlaces": [
+        {
+          "code": "G9-1",
+          "placeId": "<id:120>",
+          "title": "Голден одинарное"
+        }
+      ],
+      "line": {
+        "capacity": 1,
+        "code": "line-9-G9-1",
+        "floorLabel": "9",
+        "lineId": "<id:119>"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-lines/archive (already archived)",
+    "method": "POST",
+    "path": "/admin/place-lines/archive",
+    "status": 404,
+    "payload": {
+      "code": "not_found",
+      "details": null,
+      "error": "Parking line not found",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "GET /admin/place-lines?floor=9 (after archive)",
+    "method": "GET",
+    "path": "/admin/place-lines?floor=9",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "floor": "9",
+      "lines": [
+        {
+          "capacity": 2,
+          "code": "line-9-G9-2",
+          "displayOrder": 11,
+          "floorLabel": "9",
+          "lineId": "<id:121>",
+          "name": "Линия 9 / G9-2",
+          "slots": [
+            {
+              "code": "G9-2",
+              "guestPriorityRank": null,
+              "placeId": "<id:122>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "released",
+              "title": "Голден двойное 1",
+              "userDisplayName": null
+            },
+            {
+              "code": "G9-3",
+              "guestPriorityRank": null,
+              "placeId": "<id:123>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 2,
+              "status": "free",
+              "title": "Голден двойное 2",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "line-9-G9-4",
+          "displayOrder": 12,
+          "floorLabel": "9",
+          "lineId": "<id:124>",
+          "name": "Линия 9 / G9-4",
+          "slots": [
+            {
+              "code": "G9-4",
+              "guestPriorityRank": 1,
+              "placeId": "<id:125>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 1,
+              "status": "rotatable",
+              "title": "Голден тройное 1",
+              "userDisplayName": null
+            },
+            {
+              "code": "G9-5",
+              "guestPriorityRank": null,
+              "placeId": "<id:126>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "free",
+              "title": "Голден тройное 2",
+              "userDisplayName": null
+            },
+            {
+              "code": "G9-6",
+              "guestPriorityRank": null,
+              "placeId": "<id:127>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 3,
+              "status": "free",
+              "title": "Голден тройное 3",
+              "userDisplayName": null
+            }
+          ]
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/availability (inventory shrank back)",
+    "method": "GET",
+    "path": "/admin/availability",
+    "status": 200,
+    "payload": {
+      "availability": {
+        "availablePlaces": 6,
+        "byType": {
+          "double": 2,
+          "single": 3,
+          "triple": 1
+        },
+        "date": "<today>",
+        "employeeAvailability": {
+          "after19": 1,
+          "before19": 3
+        },
+        "guestReserve": {
+          "availablePlaces": 6,
+          "minimum": 5,
+          "status": "ok"
+        },
+        "releasedPlaces": 8,
+        "timezone": "Europe/Moscow"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/map-diagnostics (after archive)",
+    "method": "GET",
+    "path": "/admin/map-diagnostics",
+    "status": 200,
+    "payload": {
+      "diagnostics": {
+        "lineCapacityMismatch": [],
+        "placeWithoutLine": []
+      },
+      "maps": [
+        {
+          "code": "g3",
+          "filePath": "parking-g3.png",
+          "fileType": "png",
+          "floorLabel": "3",
+          "id": "<id:49>",
+          "isActive": true,
+          "sourceChecksum": "demo",
+          "title": "Паркинг G3",
+          "updatedAt": "<timestamp>",
+          "version": 1
+        },
+        {
+          "code": "g4",
+          "filePath": "parking-g4.png",
+          "fileType": "png",
+          "floorLabel": "4",
+          "id": "<id:50>",
+          "isActive": true,
+          "sourceChecksum": "demo",
+          "title": "Паркинг G4",
+          "updatedAt": "<timestamp>",
+          "version": 1
+        },
+        {
+          "code": "g5",
+          "filePath": "parking-g5.png",
+          "fileType": "png",
+          "floorLabel": "5",
+          "id": "<id:51>",
+          "isActive": true,
+          "sourceChecksum": "demo",
+          "title": "Паркинг G5",
+          "updatedAt": "<timestamp>",
+          "version": 1
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  }
+]

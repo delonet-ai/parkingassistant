@@ -1,0 +1,889 @@
+[
+  {
+    "name": "GET /admin/audit-logs?limit=200",
+    "method": "GET",
+    "path": "/admin/audit-logs?limit=200",
+    "status": 200,
+    "payload": {
+      "auditLogs": [
+        {
+          "action": "bootstrap_system_admin_seeded",
+          "actorAuthUser": null,
+          "actorService": "db_seed",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "auth_user",
+          "id": "<uuid>",
+          "metadata": {
+            "login": "sysadmin",
+            "note": "Password hash is placeholder until auth implementation is finalized"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "demo_dataset_loaded",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": null,
+          "entityType": "system",
+          "id": "<uuid>",
+          "metadata": {
+            "note": "Loaded by npm run db:seed:demo"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "101",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "102",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "110",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "111",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "112",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "120",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "121",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "122",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "201",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "202",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "210",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "301",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "302",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "303",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "310",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Зайцева Дарья Сергеевна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Иванов Иван Иванович",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Кузнецов Дмитрий Олегович",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Лебедева Ксения Олеговна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Николаева Мария Ивановна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Орлов Роман Дмитриевич",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Петров Пётр Сергеевич",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Сидорова Анна Павловна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Тихонов Глеб Андреевич",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "permanent_assignment_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Фёдоров Илья Романович",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "permanent_assignment",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Зайцева Дарья Сергеевна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+7>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Кузнецов Дмитрий Олегович",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+3>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Лебедева Ксения Олеговна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+1>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Николаева Мария Ивановна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+5>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Орлов Роман Дмитриевич",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+3>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Сидорова Анна Павловна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+1>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Тихонов Глеб Андреевич",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today>,<today+2>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "place_release_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Фёдоров Илья Романович",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "place_release",
+          "id": "<uuid>",
+          "metadata": {
+            "parkingPlaceId": "<uuid>",
+            "releaseDuring": "[<today+1>,<today+4>)"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "reservation_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Николаев Сергей",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "reservation",
+          "id": "<uuid>",
+          "metadata": {
+            "reservationDate": "<today>",
+            "source": "guest"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "reservation_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": {
+            "displayName": "Смирнова Ольга Андреевна",
+            "id": "<uuid>"
+          },
+          "entityId": "<uuid>",
+          "entityType": "reservation",
+          "id": "<uuid>",
+          "metadata": {
+            "reservationDate": "<today>",
+            "source": "queue"
+          },
+          "occurredAt": "<timestamp>"
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/audit-logs?action=parking_place_created",
+    "method": "GET",
+    "path": "/admin/audit-logs?action=parking_place_created&limit=200",
+    "status": 200,
+    "payload": {
+      "auditLogs": [
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "101",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "102",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "110",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "111",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "112",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "120",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "121",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "122",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "201",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "202",
+            "placeType": "double"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "210",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "301",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "302",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "303",
+            "placeType": "triple"
+          },
+          "occurredAt": "<timestamp>"
+        },
+        {
+          "action": "parking_place_created",
+          "actorAuthUser": null,
+          "actorService": "db_seed_demo",
+          "actorUser": null,
+          "entityId": "<uuid>",
+          "entityType": "parking_place",
+          "id": "<uuid>",
+          "metadata": {
+            "code": "310",
+            "placeType": "single"
+          },
+          "occurredAt": "<timestamp>"
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/contact-access-logs",
+    "method": "GET",
+    "path": "/admin/contact-access-logs",
+    "status": 200,
+    "payload": {
+      "contactAccessLogs": [
+        {
+          "createdAt": "<timestamp>",
+          "id": "<uuid>",
+          "lineGroup": {
+            "code": "demo-line-4-101",
+            "id": "<uuid>",
+            "name": "Линия G4 / 101"
+          },
+          "metadata": {
+            "blockerPosition": 1,
+            "blockerSubjectType": "employee",
+            "requesterPosition": 2
+          },
+          "occupancyDate": "<today>",
+          "requester": {
+            "department": "ИТ",
+            "displayName": "Петров Пётр Сергеевич",
+            "email": "demo.002@demo.invalid",
+            "id": "<uuid>",
+            "phone": "+7 900 000-00-02"
+          },
+          "resolution": "employee_contact_shown",
+          "targetGuestParkingRequest": null,
+          "targetUser": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "email": "demo.001@demo.invalid",
+            "id": "<uuid>",
+            "phone": "+7 900 000-00-01"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "id": "<uuid>",
+          "lineGroup": {
+            "code": "demo-line-4-101",
+            "id": "<uuid>",
+            "name": "Линия G4 / 101"
+          },
+          "metadata": {
+            "reason": "early_departure",
+            "seed": "demo"
+          },
+          "occupancyDate": "<today>",
+          "requester": {
+            "department": "ИТ",
+            "displayName": "Петров Пётр Сергеевич",
+            "email": "demo.002@demo.invalid",
+            "id": "<uuid>",
+            "phone": "+7 900 000-00-02"
+          },
+          "resolution": "contact_shared",
+          "targetGuestParkingRequest": null,
+          "targetUser": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "email": "demo.001@demo.invalid",
+            "id": "<uuid>",
+            "phone": "+7 900 000-00-01"
+          }
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/jobs/runs (before any job ran)",
+    "method": "GET",
+    "path": "/admin/jobs/runs",
+    "status": 200,
+    "payload": {
+      "latestSuccessfulRuns": [],
+      "runs": [],
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  }
+]

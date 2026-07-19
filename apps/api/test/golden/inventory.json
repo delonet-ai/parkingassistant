@@ -1,0 +1,757 @@
+[
+  {
+    "name": "GET /admin/place-lines",
+    "method": "GET",
+    "path": "/admin/place-lines",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "floor": null,
+      "lines": [
+        {
+          "capacity": 2,
+          "code": "demo-line-3-201",
+          "displayOrder": 1,
+          "floorLabel": "3",
+          "lineId": "<id:25>",
+          "name": "Линия G3 / 201",
+          "slots": [
+            {
+              "code": "201",
+              "guestPriorityRank": null,
+              "placeId": "<id:13>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "released",
+              "title": "Место 201",
+              "userDisplayName": null
+            },
+            {
+              "code": "202",
+              "guestPriorityRank": 2,
+              "placeId": "<id:26>",
+              "placeRole": "rotatable",
+              "placeType": "double",
+              "position": 2,
+              "status": "rotatable",
+              "title": "Место 202",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-3-210",
+          "displayOrder": 2,
+          "floorLabel": "3",
+          "lineId": "<id:27>",
+          "name": "Линия G3 / 210",
+          "slots": [
+            {
+              "code": "210",
+              "guestPriorityRank": null,
+              "placeId": "<id:22>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 210",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 2,
+          "code": "demo-line-4-101",
+          "displayOrder": 3,
+          "floorLabel": "4",
+          "lineId": "<id:28>",
+          "name": "Линия G4 / 101",
+          "slots": [
+            {
+              "code": "101",
+              "guestPriorityRank": null,
+              "placeId": "<id:6>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "free",
+              "title": "Место 101",
+              "userDisplayName": null
+            },
+            {
+              "code": "102",
+              "guestPriorityRank": null,
+              "placeId": "<id:17>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 2,
+              "status": "free",
+              "title": "Место 102",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-4-110",
+          "displayOrder": 4,
+          "floorLabel": "4",
+          "lineId": "<id:29>",
+          "name": "Линия G4 / 110",
+          "slots": [
+            {
+              "code": "110",
+              "guestPriorityRank": 1,
+              "placeId": "<id:19>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 1,
+              "status": "guest",
+              "title": "Место 110",
+              "userDisplayName": "Николаев Сергей"
+            },
+            {
+              "code": "111",
+              "guestPriorityRank": null,
+              "placeId": "<id:30>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "free",
+              "title": "Место 111",
+              "userDisplayName": null
+            },
+            {
+              "code": "112",
+              "guestPriorityRank": null,
+              "placeId": "<id:31>",
+              "placeRole": "blocked",
+              "placeType": "triple",
+              "position": 3,
+              "status": "blocked",
+              "title": "Место 112",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-120",
+          "displayOrder": 5,
+          "floorLabel": "4",
+          "lineId": "<id:32>",
+          "name": "Линия G4 / 120",
+          "slots": [
+            {
+              "code": "120",
+              "guestPriorityRank": null,
+              "placeId": "<id:8>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "occupied",
+              "title": "Место 120",
+              "userDisplayName": "Смирнова Ольга Андреевна"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-121",
+          "displayOrder": 6,
+          "floorLabel": "4",
+          "lineId": "<id:33>",
+          "name": "Линия G4 / 121",
+          "slots": [
+            {
+              "code": "121",
+              "guestPriorityRank": null,
+              "placeId": "<id:4>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 121",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-122",
+          "displayOrder": 7,
+          "floorLabel": "4",
+          "lineId": "<id:34>",
+          "name": "Линия G4 / 122",
+          "slots": [
+            {
+              "code": "122",
+              "guestPriorityRank": null,
+              "placeId": "<id:10>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 122",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-5-301",
+          "displayOrder": 8,
+          "floorLabel": "5",
+          "lineId": "<id:35>",
+          "name": "Линия G5 / 301",
+          "slots": [
+            {
+              "code": "301",
+              "guestPriorityRank": null,
+              "placeId": "<id:24>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 1,
+              "status": "free",
+              "title": "Место 301",
+              "userDisplayName": null
+            },
+            {
+              "code": "302",
+              "guestPriorityRank": null,
+              "placeId": "<id:15>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "released",
+              "title": "Место 302",
+              "userDisplayName": null
+            },
+            {
+              "code": "303",
+              "guestPriorityRank": 3,
+              "placeId": "<id:36>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 3,
+              "status": "rotatable",
+              "title": "Место 303",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-5-310",
+          "displayOrder": 9,
+          "floorLabel": "5",
+          "lineId": "<id:38>",
+          "name": "Линия G5 / 310",
+          "slots": [
+            {
+              "code": "310",
+              "guestPriorityRank": null,
+              "placeId": "<id:37>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "free",
+              "title": "Место 310",
+              "userDisplayName": null
+            }
+          ]
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/place-lines?floor=4",
+    "method": "GET",
+    "path": "/admin/place-lines?floor=4",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "floor": "4",
+      "lines": [
+        {
+          "capacity": 2,
+          "code": "demo-line-4-101",
+          "displayOrder": 3,
+          "floorLabel": "4",
+          "lineId": "<id:28>",
+          "name": "Линия G4 / 101",
+          "slots": [
+            {
+              "code": "101",
+              "guestPriorityRank": null,
+              "placeId": "<id:6>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "free",
+              "title": "Место 101",
+              "userDisplayName": null
+            },
+            {
+              "code": "102",
+              "guestPriorityRank": null,
+              "placeId": "<id:17>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 2,
+              "status": "free",
+              "title": "Место 102",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-4-110",
+          "displayOrder": 4,
+          "floorLabel": "4",
+          "lineId": "<id:29>",
+          "name": "Линия G4 / 110",
+          "slots": [
+            {
+              "code": "110",
+              "guestPriorityRank": 1,
+              "placeId": "<id:19>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 1,
+              "status": "guest",
+              "title": "Место 110",
+              "userDisplayName": "Николаев Сергей"
+            },
+            {
+              "code": "111",
+              "guestPriorityRank": null,
+              "placeId": "<id:30>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "free",
+              "title": "Место 111",
+              "userDisplayName": null
+            },
+            {
+              "code": "112",
+              "guestPriorityRank": null,
+              "placeId": "<id:31>",
+              "placeRole": "blocked",
+              "placeType": "triple",
+              "position": 3,
+              "status": "blocked",
+              "title": "Место 112",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-120",
+          "displayOrder": 5,
+          "floorLabel": "4",
+          "lineId": "<id:32>",
+          "name": "Линия G4 / 120",
+          "slots": [
+            {
+              "code": "120",
+              "guestPriorityRank": null,
+              "placeId": "<id:8>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "occupied",
+              "title": "Место 120",
+              "userDisplayName": "Смирнова Ольга Андреевна"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-121",
+          "displayOrder": 6,
+          "floorLabel": "4",
+          "lineId": "<id:33>",
+          "name": "Линия G4 / 121",
+          "slots": [
+            {
+              "code": "121",
+              "guestPriorityRank": null,
+              "placeId": "<id:4>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 121",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-122",
+          "displayOrder": 7,
+          "floorLabel": "4",
+          "lineId": "<id:34>",
+          "name": "Линия G4 / 122",
+          "slots": [
+            {
+              "code": "122",
+              "guestPriorityRank": null,
+              "placeId": "<id:10>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 122",
+              "userDisplayName": null
+            }
+          ]
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/place-lines?date=<today+1>",
+    "method": "GET",
+    "path": "/admin/place-lines?date=<today+1>",
+    "status": 200,
+    "payload": {
+      "date": "<today+1>",
+      "floor": null,
+      "lines": [
+        {
+          "capacity": 2,
+          "code": "demo-line-3-201",
+          "displayOrder": 1,
+          "floorLabel": "3",
+          "lineId": "<id:25>",
+          "name": "Линия G3 / 201",
+          "slots": [
+            {
+              "code": "201",
+              "guestPriorityRank": null,
+              "placeId": "<id:13>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "released",
+              "title": "Место 201",
+              "userDisplayName": null
+            },
+            {
+              "code": "202",
+              "guestPriorityRank": 2,
+              "placeId": "<id:26>",
+              "placeRole": "rotatable",
+              "placeType": "double",
+              "position": 2,
+              "status": "rotatable",
+              "title": "Место 202",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-3-210",
+          "displayOrder": 2,
+          "floorLabel": "3",
+          "lineId": "<id:27>",
+          "name": "Линия G3 / 210",
+          "slots": [
+            {
+              "code": "210",
+              "guestPriorityRank": null,
+              "placeId": "<id:22>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 210",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 2,
+          "code": "demo-line-4-101",
+          "displayOrder": 3,
+          "floorLabel": "4",
+          "lineId": "<id:28>",
+          "name": "Линия G4 / 101",
+          "slots": [
+            {
+              "code": "101",
+              "guestPriorityRank": null,
+              "placeId": "<id:6>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 1,
+              "status": "free",
+              "title": "Место 101",
+              "userDisplayName": null
+            },
+            {
+              "code": "102",
+              "guestPriorityRank": null,
+              "placeId": "<id:17>",
+              "placeRole": "regular",
+              "placeType": "double",
+              "position": 2,
+              "status": "free",
+              "title": "Место 102",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-4-110",
+          "displayOrder": 4,
+          "floorLabel": "4",
+          "lineId": "<id:29>",
+          "name": "Линия G4 / 110",
+          "slots": [
+            {
+              "code": "110",
+              "guestPriorityRank": 1,
+              "placeId": "<id:19>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 1,
+              "status": "rotatable",
+              "title": "Место 110",
+              "userDisplayName": null
+            },
+            {
+              "code": "111",
+              "guestPriorityRank": null,
+              "placeId": "<id:30>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "free",
+              "title": "Место 111",
+              "userDisplayName": null
+            },
+            {
+              "code": "112",
+              "guestPriorityRank": null,
+              "placeId": "<id:31>",
+              "placeRole": "blocked",
+              "placeType": "triple",
+              "position": 3,
+              "status": "blocked",
+              "title": "Место 112",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-120",
+          "displayOrder": 5,
+          "floorLabel": "4",
+          "lineId": "<id:32>",
+          "name": "Линия G4 / 120",
+          "slots": [
+            {
+              "code": "120",
+              "guestPriorityRank": null,
+              "placeId": "<id:8>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 120",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-121",
+          "displayOrder": 6,
+          "floorLabel": "4",
+          "lineId": "<id:33>",
+          "name": "Линия G4 / 121",
+          "slots": [
+            {
+              "code": "121",
+              "guestPriorityRank": null,
+              "placeId": "<id:4>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "released",
+              "title": "Место 121",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-122",
+          "displayOrder": 7,
+          "floorLabel": "4",
+          "lineId": "<id:34>",
+          "name": "Линия G4 / 122",
+          "slots": [
+            {
+              "code": "122",
+              "guestPriorityRank": null,
+              "placeId": "<id:10>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "free",
+              "title": "Место 122",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-5-301",
+          "displayOrder": 8,
+          "floorLabel": "5",
+          "lineId": "<id:35>",
+          "name": "Линия G5 / 301",
+          "slots": [
+            {
+              "code": "301",
+              "guestPriorityRank": null,
+              "placeId": "<id:24>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 1,
+              "status": "released",
+              "title": "Место 301",
+              "userDisplayName": null
+            },
+            {
+              "code": "302",
+              "guestPriorityRank": null,
+              "placeId": "<id:15>",
+              "placeRole": "regular",
+              "placeType": "triple",
+              "position": 2,
+              "status": "released",
+              "title": "Место 302",
+              "userDisplayName": null
+            },
+            {
+              "code": "303",
+              "guestPriorityRank": 3,
+              "placeId": "<id:36>",
+              "placeRole": "rotatable",
+              "placeType": "triple",
+              "position": 3,
+              "status": "rotatable",
+              "title": "Место 303",
+              "userDisplayName": null
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-5-310",
+          "displayOrder": 9,
+          "floorLabel": "5",
+          "lineId": "<id:38>",
+          "name": "Линия G5 / 310",
+          "slots": [
+            {
+              "code": "310",
+              "guestPriorityRank": null,
+              "placeId": "<id:37>",
+              "placeRole": "regular",
+              "placeType": "single",
+              "position": 1,
+              "status": "free",
+              "title": "Место 310",
+              "userDisplayName": null
+            }
+          ]
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/place-lines?floor=nope (empty)",
+    "method": "GET",
+    "path": "/admin/place-lines?floor=nope",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "floor": "nope",
+      "lines": [],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/map-diagnostics",
+    "method": "GET",
+    "path": "/admin/map-diagnostics",
+    "status": 200,
+    "payload": {
+      "diagnostics": {
+        "lineCapacityMismatch": [],
+        "placeWithoutLine": []
+      },
+      "maps": [
+        {
+          "code": "g3",
+          "filePath": "parking-g3.png",
+          "fileType": "png",
+          "floorLabel": "3",
+          "id": "<id:49>",
+          "isActive": true,
+          "sourceChecksum": "demo",
+          "title": "Паркинг G3",
+          "updatedAt": "<timestamp>",
+          "version": 1
+        },
+        {
+          "code": "g4",
+          "filePath": "parking-g4.png",
+          "fileType": "png",
+          "floorLabel": "4",
+          "id": "<id:50>",
+          "isActive": true,
+          "sourceChecksum": "demo",
+          "title": "Паркинг G4",
+          "updatedAt": "<timestamp>",
+          "version": 1
+        },
+        {
+          "code": "g5",
+          "filePath": "parking-g5.png",
+          "fileType": "png",
+          "floorLabel": "5",
+          "id": "<id:51>",
+          "isActive": true,
+          "sourceChecksum": "demo",
+          "title": "Паркинг G5",
+          "updatedAt": "<timestamp>",
+          "version": 1
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  }
+]

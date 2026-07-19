@@ -76,6 +76,37 @@ The harness serializes schema application on a `pg_advisory_lock`: `node --test`
 file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same
 database-wide extension.
 
+#### Golden HTTP snapshots
+
+`apps/api/test/golden/*.json` holds a recorded `(status, payload)` per endpoint group, replayed by
+`apps/api/integration/golden.itest.js` against a scratch schema loaded with the demo dataset. These
+snapshots are the behavior contract the Phase 3 decomposition must preserve — moving SQL into a
+repository or a handler into a controller must not change one byte of them.
+
+```bash
+npm run test:golden                   # replay and compare
+GOLDEN_UPDATE=1 npm run test:golden   # rewrite the snapshots — then read the whole diff
+```
+
+Three things to know before touching it:
+
+- **Snapshot files are `.json` under `test/` on purpose.** The runner cannot live there: `node --test`
+  picks up every `.js` file under a directory named `test/`, which would drag a Postgres-backed suite
+  into the `npm test` gate.
+- **Identifier tokens are numbered across the whole run** (`<id:1>`, `<id:2>`, …), which is what makes
+  "the id `POST` returned is the id `GET` returns" assertable. Inserting a request in the middle of a
+  group renumbers the ids after it, so the diff of a regeneration is large by design — read it anyway.
+- **Lists whose SQL ordering has ties are marked `unordered` in the scenario.** `/admin/audit-logs`
+  orders by `occurred_at desc` with no tiebreaker and every row one transaction writes shares a
+  timestamp, so Postgres may return them in any order. Sorting alone does not fix it (a reshuffle
+  renumbers the id tokens), so inside those lists identity is made opaque and the rows are sorted by
+  normalized content.
+
+One defect is pinned rather than fixed, and its scenario name says so: `GET /admin/places/:id/history`
+with a malformed id returns **500** with the raw Postgres cast error (`invalid input syntax for type
+uuid`) instead of a 400. Task 14 records behavior; the fix belongs to the Task 21 review pass, and the
+snapshot will fail loudly when it lands.
+
 #### Rendering the admin UI in a test
 
 `apps/admin-web/testing/stub-api.js` boots the real `admin-web` process against a canned HTTP API,

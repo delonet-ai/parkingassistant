@@ -1,0 +1,1443 @@
+[
+  {
+    "name": "GET /admin/users",
+    "method": "GET",
+    "path": "/admin/users",
+    "status": 200,
+    "payload": {
+      "service": "api",
+      "status": "ok",
+      "users": [
+        {
+          "authStatus": "invited",
+          "createdAt": "<timestamp>",
+          "displayName": "Initial System Administrator",
+          "id": "<id:1>",
+          "lastLoginAt": null,
+          "login": "sysadmin",
+          "roles": [
+            {
+              "code": "system_admin",
+              "name": "System Administrator"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "GET /admin/employees",
+    "method": "GET",
+    "path": "/admin/employees",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "employees": [
+        {
+          "createdAt": "<timestamp>",
+          "department": "Продажи",
+          "displayName": "Волков Артём Викторович",
+          "email": "demo.006@demo.invalid",
+          "employeeNo": "DEMO-006",
+          "id": "<id:2>",
+          "isActive": true,
+          "permanentPlace": null,
+          "phone": "+7 900 000-00-06",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "ИТ",
+          "displayName": "Зайцева Дарья Сергеевна",
+          "email": "demo.010@demo.invalid",
+          "employeeNo": "DEMO-010",
+          "id": "<id:3>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "121",
+            "id": "<id:4>"
+          },
+          "phone": "+7 900 000-00-10",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "ИТ",
+          "displayName": "Иванов Иван Иванович",
+          "email": "demo.001@demo.invalid",
+          "employeeNo": "DEMO-001",
+          "id": "<id:5>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "101",
+            "id": "<id:6>"
+          },
+          "phone": "+7 900 000-00-01",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Логистика",
+          "displayName": "Кузнецов Дмитрий Олегович",
+          "email": "demo.004@demo.invalid",
+          "employeeNo": "DEMO-004",
+          "id": "<id:7>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "120",
+            "id": "<id:8>"
+          },
+          "phone": "+7 900 000-00-04",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "HR",
+          "displayName": "Лебедева Ксения Олеговна",
+          "email": "demo.012@demo.invalid",
+          "employeeNo": "DEMO-012",
+          "id": "<id:9>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "122",
+            "id": "<id:10>"
+          },
+          "phone": "+7 900 000-00-12",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "HR",
+          "displayName": "Морозов Егор Николаевич",
+          "email": "demo.007@demo.invalid",
+          "employeeNo": "DEMO-007",
+          "id": "<id:11>",
+          "isActive": true,
+          "permanentPlace": null,
+          "phone": "+7 900 000-00-07",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Финансы",
+          "displayName": "Николаева Мария Ивановна",
+          "email": "demo.008@demo.invalid",
+          "employeeNo": "DEMO-008",
+          "id": "<id:12>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "201",
+            "id": "<id:13>"
+          },
+          "phone": "+7 900 000-00-08",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Продажи",
+          "displayName": "Орлов Роман Дмитриевич",
+          "email": "demo.011@demo.invalid",
+          "employeeNo": "DEMO-011",
+          "id": "<id:14>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "302",
+            "id": "<id:15>"
+          },
+          "phone": "+7 900 000-00-11",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "ИТ",
+          "displayName": "Петров Пётр Сергеевич",
+          "email": "demo.002@demo.invalid",
+          "employeeNo": "DEMO-002",
+          "id": "<id:16>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "102",
+            "id": "<id:17>"
+          },
+          "phone": "+7 900 000-00-02",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Финансы",
+          "displayName": "Сидорова Анна Павловна",
+          "email": "demo.003@demo.invalid",
+          "employeeNo": "DEMO-003",
+          "id": "<id:18>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "110",
+            "id": "<id:19>"
+          },
+          "phone": "+7 900 000-00-03",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Маркетинг",
+          "displayName": "Смирнова Ольга Андреевна",
+          "email": "demo.005@demo.invalid",
+          "employeeNo": "DEMO-005",
+          "id": "<id:20>",
+          "isActive": true,
+          "permanentPlace": null,
+          "phone": "+7 900 000-00-05",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Логистика",
+          "displayName": "Тихонов Глеб Андреевич",
+          "email": "demo.013@demo.invalid",
+          "employeeNo": "DEMO-013",
+          "id": "<id:21>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "210",
+            "id": "<id:22>"
+          },
+          "phone": "+7 900 000-00-13",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Логистика",
+          "displayName": "Фёдоров Илья Романович",
+          "email": "demo.009@demo.invalid",
+          "employeeNo": "DEMO-009",
+          "id": "<id:23>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "301",
+            "id": "<id:24>"
+          },
+          "phone": "+7 900 000-00-09",
+          "yandexMessengerUserId": null
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/employees?search=Иванов",
+    "method": "GET",
+    "path": "/admin/employees?search=%D0%98%D0%B2%D0%B0%D0%BD%D0%BE%D0%B2",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "employees": [
+        {
+          "createdAt": "<timestamp>",
+          "department": "Продажи",
+          "displayName": "Волков Артём Викторович",
+          "email": "demo.006@demo.invalid",
+          "employeeNo": "DEMO-006",
+          "id": "<id:2>",
+          "isActive": true,
+          "permanentPlace": null,
+          "phone": "+7 900 000-00-06",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "ИТ",
+          "displayName": "Зайцева Дарья Сергеевна",
+          "email": "demo.010@demo.invalid",
+          "employeeNo": "DEMO-010",
+          "id": "<id:3>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "121",
+            "id": "<id:4>"
+          },
+          "phone": "+7 900 000-00-10",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "ИТ",
+          "displayName": "Иванов Иван Иванович",
+          "email": "demo.001@demo.invalid",
+          "employeeNo": "DEMO-001",
+          "id": "<id:5>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "101",
+            "id": "<id:6>"
+          },
+          "phone": "+7 900 000-00-01",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Логистика",
+          "displayName": "Кузнецов Дмитрий Олегович",
+          "email": "demo.004@demo.invalid",
+          "employeeNo": "DEMO-004",
+          "id": "<id:7>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "120",
+            "id": "<id:8>"
+          },
+          "phone": "+7 900 000-00-04",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "HR",
+          "displayName": "Лебедева Ксения Олеговна",
+          "email": "demo.012@demo.invalid",
+          "employeeNo": "DEMO-012",
+          "id": "<id:9>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "122",
+            "id": "<id:10>"
+          },
+          "phone": "+7 900 000-00-12",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "HR",
+          "displayName": "Морозов Егор Николаевич",
+          "email": "demo.007@demo.invalid",
+          "employeeNo": "DEMO-007",
+          "id": "<id:11>",
+          "isActive": true,
+          "permanentPlace": null,
+          "phone": "+7 900 000-00-07",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Финансы",
+          "displayName": "Николаева Мария Ивановна",
+          "email": "demo.008@demo.invalid",
+          "employeeNo": "DEMO-008",
+          "id": "<id:12>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "201",
+            "id": "<id:13>"
+          },
+          "phone": "+7 900 000-00-08",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Продажи",
+          "displayName": "Орлов Роман Дмитриевич",
+          "email": "demo.011@demo.invalid",
+          "employeeNo": "DEMO-011",
+          "id": "<id:14>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "302",
+            "id": "<id:15>"
+          },
+          "phone": "+7 900 000-00-11",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "ИТ",
+          "displayName": "Петров Пётр Сергеевич",
+          "email": "demo.002@demo.invalid",
+          "employeeNo": "DEMO-002",
+          "id": "<id:16>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "102",
+            "id": "<id:17>"
+          },
+          "phone": "+7 900 000-00-02",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Финансы",
+          "displayName": "Сидорова Анна Павловна",
+          "email": "demo.003@demo.invalid",
+          "employeeNo": "DEMO-003",
+          "id": "<id:18>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "110",
+            "id": "<id:19>"
+          },
+          "phone": "+7 900 000-00-03",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Маркетинг",
+          "displayName": "Смирнова Ольга Андреевна",
+          "email": "demo.005@demo.invalid",
+          "employeeNo": "DEMO-005",
+          "id": "<id:20>",
+          "isActive": true,
+          "permanentPlace": null,
+          "phone": "+7 900 000-00-05",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Логистика",
+          "displayName": "Тихонов Глеб Андреевич",
+          "email": "demo.013@demo.invalid",
+          "employeeNo": "DEMO-013",
+          "id": "<id:21>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "210",
+            "id": "<id:22>"
+          },
+          "phone": "+7 900 000-00-13",
+          "yandexMessengerUserId": null
+        },
+        {
+          "createdAt": "<timestamp>",
+          "department": "Логистика",
+          "displayName": "Фёдоров Илья Романович",
+          "email": "demo.009@demo.invalid",
+          "employeeNo": "DEMO-009",
+          "id": "<id:23>",
+          "isActive": true,
+          "permanentPlace": {
+            "code": "301",
+            "id": "<id:24>"
+          },
+          "phone": "+7 900 000-00-09",
+          "yandexMessengerUserId": null
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/places",
+    "method": "GET",
+    "path": "/admin/places",
+    "status": 200,
+    "payload": {
+      "places": [
+        {
+          "code": "201",
+          "floorLabel": "3",
+          "guestPriorityRank": null,
+          "id": "<id:13>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 2,
+            "code": "demo-line-3-201",
+            "id": "<id:25>",
+            "name": "Линия G3 / 201"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "Финансы",
+            "displayName": "Николаева Мария Ивановна",
+            "id": "<id:12>"
+          },
+          "placeRole": "regular",
+          "placeType": "double",
+          "title": "Место 201"
+        },
+        {
+          "code": "202",
+          "floorLabel": "3",
+          "guestPriorityRank": 2,
+          "id": "<id:26>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 2,
+            "code": "demo-line-3-201",
+            "id": "<id:25>",
+            "name": "Линия G3 / 201"
+          },
+          "linePositionHint": 2,
+          "permanentOwner": null,
+          "placeRole": "rotatable",
+          "placeType": "double",
+          "title": "Место 202"
+        },
+        {
+          "code": "210",
+          "floorLabel": "3",
+          "guestPriorityRank": null,
+          "id": "<id:22>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 1,
+            "code": "demo-line-3-210",
+            "id": "<id:27>",
+            "name": "Линия G3 / 210"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "Логистика",
+            "displayName": "Тихонов Глеб Андреевич",
+            "id": "<id:21>"
+          },
+          "placeRole": "regular",
+          "placeType": "single",
+          "title": "Место 210"
+        },
+        {
+          "code": "101",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:6>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 2,
+            "code": "demo-line-4-101",
+            "id": "<id:28>",
+            "name": "Линия G4 / 101"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "id": "<id:5>"
+          },
+          "placeRole": "regular",
+          "placeType": "double",
+          "title": "Место 101"
+        },
+        {
+          "code": "102",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:17>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 2,
+            "code": "demo-line-4-101",
+            "id": "<id:28>",
+            "name": "Линия G4 / 101"
+          },
+          "linePositionHint": 2,
+          "permanentOwner": {
+            "department": "ИТ",
+            "displayName": "Петров Пётр Сергеевич",
+            "id": "<id:16>"
+          },
+          "placeRole": "regular",
+          "placeType": "double",
+          "title": "Место 102"
+        },
+        {
+          "code": "110",
+          "floorLabel": "4",
+          "guestPriorityRank": 1,
+          "id": "<id:19>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 3,
+            "code": "demo-line-4-110",
+            "id": "<id:29>",
+            "name": "Линия G4 / 110"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "Финансы",
+            "displayName": "Сидорова Анна Павловна",
+            "id": "<id:18>"
+          },
+          "placeRole": "rotatable",
+          "placeType": "triple",
+          "title": "Место 110"
+        },
+        {
+          "code": "111",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:30>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 3,
+            "code": "demo-line-4-110",
+            "id": "<id:29>",
+            "name": "Линия G4 / 110"
+          },
+          "linePositionHint": 2,
+          "permanentOwner": null,
+          "placeRole": "regular",
+          "placeType": "triple",
+          "title": "Место 111"
+        },
+        {
+          "code": "112",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:31>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 3,
+            "code": "demo-line-4-110",
+            "id": "<id:29>",
+            "name": "Линия G4 / 110"
+          },
+          "linePositionHint": 3,
+          "permanentOwner": null,
+          "placeRole": "blocked",
+          "placeType": "triple",
+          "title": "Место 112"
+        },
+        {
+          "code": "120",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:8>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 1,
+            "code": "demo-line-4-120",
+            "id": "<id:32>",
+            "name": "Линия G4 / 120"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "Логистика",
+            "displayName": "Кузнецов Дмитрий Олегович",
+            "id": "<id:7>"
+          },
+          "placeRole": "regular",
+          "placeType": "single",
+          "title": "Место 120"
+        },
+        {
+          "code": "121",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:4>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 1,
+            "code": "demo-line-4-121",
+            "id": "<id:33>",
+            "name": "Линия G4 / 121"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "ИТ",
+            "displayName": "Зайцева Дарья Сергеевна",
+            "id": "<id:3>"
+          },
+          "placeRole": "regular",
+          "placeType": "single",
+          "title": "Место 121"
+        },
+        {
+          "code": "122",
+          "floorLabel": "4",
+          "guestPriorityRank": null,
+          "id": "<id:10>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 1,
+            "code": "demo-line-4-122",
+            "id": "<id:34>",
+            "name": "Линия G4 / 122"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "HR",
+            "displayName": "Лебедева Ксения Олеговна",
+            "id": "<id:9>"
+          },
+          "placeRole": "regular",
+          "placeType": "single",
+          "title": "Место 122"
+        },
+        {
+          "code": "301",
+          "floorLabel": "5",
+          "guestPriorityRank": null,
+          "id": "<id:24>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 3,
+            "code": "demo-line-5-301",
+            "id": "<id:35>",
+            "name": "Линия G5 / 301"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": {
+            "department": "Логистика",
+            "displayName": "Фёдоров Илья Романович",
+            "id": "<id:23>"
+          },
+          "placeRole": "regular",
+          "placeType": "triple",
+          "title": "Место 301"
+        },
+        {
+          "code": "302",
+          "floorLabel": "5",
+          "guestPriorityRank": null,
+          "id": "<id:15>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 3,
+            "code": "demo-line-5-301",
+            "id": "<id:35>",
+            "name": "Линия G5 / 301"
+          },
+          "linePositionHint": 2,
+          "permanentOwner": {
+            "department": "Продажи",
+            "displayName": "Орлов Роман Дмитриевич",
+            "id": "<id:14>"
+          },
+          "placeRole": "regular",
+          "placeType": "triple",
+          "title": "Место 302"
+        },
+        {
+          "code": "303",
+          "floorLabel": "5",
+          "guestPriorityRank": 3,
+          "id": "<id:36>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 3,
+            "code": "demo-line-5-301",
+            "id": "<id:35>",
+            "name": "Линия G5 / 301"
+          },
+          "linePositionHint": 3,
+          "permanentOwner": null,
+          "placeRole": "rotatable",
+          "placeType": "triple",
+          "title": "Место 303"
+        },
+        {
+          "code": "310",
+          "floorLabel": "5",
+          "guestPriorityRank": null,
+          "id": "<id:37>",
+          "isActive": true,
+          "lineGroup": {
+            "capacity": 1,
+            "code": "demo-line-5-310",
+            "id": "<id:38>",
+            "name": "Линия G5 / 310"
+          },
+          "linePositionHint": 1,
+          "permanentOwner": null,
+          "placeRole": "regular",
+          "placeType": "single",
+          "title": "Место 310"
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/line-groups",
+    "method": "GET",
+    "path": "/admin/line-groups",
+    "status": 200,
+    "payload": {
+      "lineGroups": [
+        {
+          "capacity": 2,
+          "code": "demo-line-3-201",
+          "floorLabel": "3",
+          "id": "<id:25>",
+          "name": "Линия G3 / 201",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "201",
+              "id": "<id:13>",
+              "placeType": "double",
+              "positionHint": 1,
+              "title": "Место 201"
+            },
+            {
+              "code": "202",
+              "id": "<id:26>",
+              "placeType": "double",
+              "positionHint": 2,
+              "title": "Место 202"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-3-210",
+          "floorLabel": "3",
+          "id": "<id:27>",
+          "name": "Линия G3 / 210",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "210",
+              "id": "<id:22>",
+              "placeType": "single",
+              "positionHint": 1,
+              "title": "Место 210"
+            }
+          ]
+        },
+        {
+          "capacity": 2,
+          "code": "demo-line-4-101",
+          "floorLabel": "4",
+          "id": "<id:28>",
+          "name": "Линия G4 / 101",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "101",
+              "id": "<id:6>",
+              "placeType": "double",
+              "positionHint": 1,
+              "title": "Место 101"
+            },
+            {
+              "code": "102",
+              "id": "<id:17>",
+              "placeType": "double",
+              "positionHint": 2,
+              "title": "Место 102"
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-4-110",
+          "floorLabel": "4",
+          "id": "<id:29>",
+          "name": "Линия G4 / 110",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "110",
+              "id": "<id:19>",
+              "placeType": "triple",
+              "positionHint": 1,
+              "title": "Место 110"
+            },
+            {
+              "code": "111",
+              "id": "<id:30>",
+              "placeType": "triple",
+              "positionHint": 2,
+              "title": "Место 111"
+            },
+            {
+              "code": "112",
+              "id": "<id:31>",
+              "placeType": "triple",
+              "positionHint": 3,
+              "title": "Место 112"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-120",
+          "floorLabel": "4",
+          "id": "<id:32>",
+          "name": "Линия G4 / 120",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "120",
+              "id": "<id:8>",
+              "placeType": "single",
+              "positionHint": 1,
+              "title": "Место 120"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-121",
+          "floorLabel": "4",
+          "id": "<id:33>",
+          "name": "Линия G4 / 121",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "121",
+              "id": "<id:4>",
+              "placeType": "single",
+              "positionHint": 1,
+              "title": "Место 121"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-4-122",
+          "floorLabel": "4",
+          "id": "<id:34>",
+          "name": "Линия G4 / 122",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "122",
+              "id": "<id:10>",
+              "placeType": "single",
+              "positionHint": 1,
+              "title": "Место 122"
+            }
+          ]
+        },
+        {
+          "capacity": 3,
+          "code": "demo-line-5-301",
+          "floorLabel": "5",
+          "id": "<id:35>",
+          "name": "Линия G5 / 301",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "301",
+              "id": "<id:24>",
+              "placeType": "triple",
+              "positionHint": 1,
+              "title": "Место 301"
+            },
+            {
+              "code": "302",
+              "id": "<id:15>",
+              "placeType": "triple",
+              "positionHint": 2,
+              "title": "Место 302"
+            },
+            {
+              "code": "303",
+              "id": "<id:36>",
+              "placeType": "triple",
+              "positionHint": 3,
+              "title": "Место 303"
+            }
+          ]
+        },
+        {
+          "capacity": 1,
+          "code": "demo-line-5-310",
+          "floorLabel": "5",
+          "id": "<id:38>",
+          "name": "Линия G5 / 310",
+          "notes": "Demo dataset",
+          "places": [
+            {
+              "code": "310",
+              "id": "<id:37>",
+              "placeType": "single",
+              "positionHint": 1,
+              "title": "Место 310"
+            }
+          ]
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/permanent-assignments",
+    "method": "GET",
+    "path": "/admin/permanent-assignments",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "filterStatus": "all",
+      "permanentAssignments": [
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:39>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "101",
+            "floorLabel": "4",
+            "id": "<id:6>",
+            "placeType": "double",
+            "title": "Место 101"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "email": "demo.001@demo.invalid",
+            "id": "<id:5>",
+            "phone": "+7 900 000-00-01"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:40>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "102",
+            "floorLabel": "4",
+            "id": "<id:17>",
+            "placeType": "double",
+            "title": "Место 102"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "ИТ",
+            "displayName": "Петров Пётр Сергеевич",
+            "email": "demo.002@demo.invalid",
+            "id": "<id:16>",
+            "phone": "+7 900 000-00-02"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:41>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "110",
+            "floorLabel": "4",
+            "id": "<id:19>",
+            "placeType": "triple",
+            "title": "Место 110"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Финансы",
+            "displayName": "Сидорова Анна Павловна",
+            "email": "demo.003@demo.invalid",
+            "id": "<id:18>",
+            "phone": "+7 900 000-00-03"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:42>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "120",
+            "floorLabel": "4",
+            "id": "<id:8>",
+            "placeType": "single",
+            "title": "Место 120"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Логистика",
+            "displayName": "Кузнецов Дмитрий Олегович",
+            "email": "demo.004@demo.invalid",
+            "id": "<id:7>",
+            "phone": "+7 900 000-00-04"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:43>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "121",
+            "floorLabel": "4",
+            "id": "<id:4>",
+            "placeType": "single",
+            "title": "Место 121"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "ИТ",
+            "displayName": "Зайцева Дарья Сергеевна",
+            "email": "demo.010@demo.invalid",
+            "id": "<id:3>",
+            "phone": "+7 900 000-00-10"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:44>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "122",
+            "floorLabel": "4",
+            "id": "<id:10>",
+            "placeType": "single",
+            "title": "Место 122"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "HR",
+            "displayName": "Лебедева Ксения Олеговна",
+            "email": "demo.012@demo.invalid",
+            "id": "<id:9>",
+            "phone": "+7 900 000-00-12"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:45>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "201",
+            "floorLabel": "3",
+            "id": "<id:13>",
+            "placeType": "double",
+            "title": "Место 201"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Финансы",
+            "displayName": "Николаева Мария Ивановна",
+            "email": "demo.008@demo.invalid",
+            "id": "<id:12>",
+            "phone": "+7 900 000-00-08"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:46>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "210",
+            "floorLabel": "3",
+            "id": "<id:22>",
+            "placeType": "single",
+            "title": "Место 210"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Логистика",
+            "displayName": "Тихонов Глеб Андреевич",
+            "email": "demo.013@demo.invalid",
+            "id": "<id:21>",
+            "phone": "+7 900 000-00-13"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:47>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "301",
+            "floorLabel": "5",
+            "id": "<id:24>",
+            "placeType": "triple",
+            "title": "Место 301"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Логистика",
+            "displayName": "Фёдоров Илья Романович",
+            "email": "demo.009@demo.invalid",
+            "id": "<id:23>",
+            "phone": "+7 900 000-00-09"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:48>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "302",
+            "floorLabel": "5",
+            "id": "<id:15>",
+            "placeType": "triple",
+            "title": "Место 302"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Продажи",
+            "displayName": "Орлов Роман Дмитриевич",
+            "email": "demo.011@demo.invalid",
+            "id": "<id:14>",
+            "phone": "+7 900 000-00-11"
+          }
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/permanent-assignments?status=active",
+    "method": "GET",
+    "path": "/admin/permanent-assignments?status=active",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "filterStatus": "active",
+      "permanentAssignments": [
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:39>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "101",
+            "floorLabel": "4",
+            "id": "<id:6>",
+            "placeType": "double",
+            "title": "Место 101"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "email": "demo.001@demo.invalid",
+            "id": "<id:5>",
+            "phone": "+7 900 000-00-01"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:40>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "102",
+            "floorLabel": "4",
+            "id": "<id:17>",
+            "placeType": "double",
+            "title": "Место 102"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "ИТ",
+            "displayName": "Петров Пётр Сергеевич",
+            "email": "demo.002@demo.invalid",
+            "id": "<id:16>",
+            "phone": "+7 900 000-00-02"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:41>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "110",
+            "floorLabel": "4",
+            "id": "<id:19>",
+            "placeType": "triple",
+            "title": "Место 110"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Финансы",
+            "displayName": "Сидорова Анна Павловна",
+            "email": "demo.003@demo.invalid",
+            "id": "<id:18>",
+            "phone": "+7 900 000-00-03"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:42>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "120",
+            "floorLabel": "4",
+            "id": "<id:8>",
+            "placeType": "single",
+            "title": "Место 120"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Логистика",
+            "displayName": "Кузнецов Дмитрий Олегович",
+            "email": "demo.004@demo.invalid",
+            "id": "<id:7>",
+            "phone": "+7 900 000-00-04"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:43>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "121",
+            "floorLabel": "4",
+            "id": "<id:4>",
+            "placeType": "single",
+            "title": "Место 121"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "ИТ",
+            "displayName": "Зайцева Дарья Сергеевна",
+            "email": "demo.010@demo.invalid",
+            "id": "<id:3>",
+            "phone": "+7 900 000-00-10"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:44>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "122",
+            "floorLabel": "4",
+            "id": "<id:10>",
+            "placeType": "single",
+            "title": "Место 122"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "HR",
+            "displayName": "Лебедева Ксения Олеговна",
+            "email": "demo.012@demo.invalid",
+            "id": "<id:9>",
+            "phone": "+7 900 000-00-12"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:45>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "201",
+            "floorLabel": "3",
+            "id": "<id:13>",
+            "placeType": "double",
+            "title": "Место 201"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Финансы",
+            "displayName": "Николаева Мария Ивановна",
+            "email": "demo.008@demo.invalid",
+            "id": "<id:12>",
+            "phone": "+7 900 000-00-08"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:46>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "210",
+            "floorLabel": "3",
+            "id": "<id:22>",
+            "placeType": "single",
+            "title": "Место 210"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Логистика",
+            "displayName": "Тихонов Глеб Андреевич",
+            "email": "demo.013@demo.invalid",
+            "id": "<id:21>",
+            "phone": "+7 900 000-00-13"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:47>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "301",
+            "floorLabel": "5",
+            "id": "<id:24>",
+            "placeType": "triple",
+            "title": "Место 301"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Логистика",
+            "displayName": "Фёдоров Илья Романович",
+            "email": "demo.009@demo.invalid",
+            "id": "<id:23>",
+            "phone": "+7 900 000-00-09"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "dateFrom": "<today-90>",
+          "dateTo": null,
+          "id": "<id:48>",
+          "notes": "Demo dataset",
+          "parkingPlace": {
+            "code": "302",
+            "floorLabel": "5",
+            "id": "<id:15>",
+            "placeType": "triple",
+            "title": "Место 302"
+          },
+          "status": "active",
+          "updatedAt": "<timestamp>",
+          "user": {
+            "department": "Продажи",
+            "displayName": "Орлов Роман Дмитриевич",
+            "email": "demo.011@demo.invalid",
+            "id": "<id:14>",
+            "phone": "+7 900 000-00-11"
+          }
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  }
+]

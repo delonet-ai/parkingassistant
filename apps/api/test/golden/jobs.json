@@ -1,0 +1,1313 @@
+[
+  {
+    "name": "POST /admin/jobs/freeze-next-day",
+    "method": "POST",
+    "path": "/admin/jobs/freeze-next-day",
+    "status": 200,
+    "payload": {
+      "alreadyFrozen": false,
+      "availability": {
+        "availablePlaces": 6,
+        "byType": {
+          "double": 1,
+          "single": 3,
+          "triple": 2
+        },
+        "date": "<today+1>",
+        "employeeAvailability": {
+          "after19": 1,
+          "before19": 3
+        },
+        "guestReserve": {
+          "availablePlaces": 6,
+          "minimum": 5,
+          "status": "ok"
+        },
+        "releasedPlaces": 6,
+        "timezone": "Europe/Moscow"
+      },
+      "date": "<today+1>",
+      "frozenCount": 6,
+      "frozenReleases": [
+        {
+          "id": "<id:57>",
+          "ownerUserId": "<id:7>",
+          "parkingPlaceCode": "120",
+          "parkingPlaceId": "<id:8>",
+          "placeType": "single"
+        },
+        {
+          "id": "<id:58>",
+          "ownerUserId": "<id:3>",
+          "parkingPlaceCode": "121",
+          "parkingPlaceId": "<id:4>",
+          "placeType": "single"
+        },
+        {
+          "id": "<id:60>",
+          "ownerUserId": "<id:12>",
+          "parkingPlaceCode": "201",
+          "parkingPlaceId": "<id:13>",
+          "placeType": "double"
+        },
+        {
+          "id": "<id:61>",
+          "ownerUserId": "<id:21>",
+          "parkingPlaceCode": "210",
+          "parkingPlaceId": "<id:22>",
+          "placeType": "single"
+        },
+        {
+          "id": "<id:64>",
+          "ownerUserId": "<id:23>",
+          "parkingPlaceCode": "301",
+          "parkingPlaceId": "<id:24>",
+          "placeType": "triple"
+        },
+        {
+          "id": "<id:62>",
+          "ownerUserId": "<id:14>",
+          "parkingPlaceCode": "302",
+          "parkingPlaceId": "<id:15>",
+          "placeType": "triple"
+        }
+      ],
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:138>",
+        "jobName": "freeze_next_day",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "alreadyFrozen": false,
+          "availability": {
+            "availablePlaces": 6,
+            "byType": {
+              "double": 1,
+              "single": 3,
+              "triple": 2
+            },
+            "date": "<today+1>",
+            "employeeAvailability": {
+              "after19": 1,
+              "before19": 3
+            },
+            "guestReserve": {
+              "availablePlaces": 6,
+              "minimum": 5,
+              "status": "ok"
+            },
+            "releasedPlaces": 6,
+            "timezone": "Europe/Moscow"
+          },
+          "date": "<today+1>",
+          "frozenCount": 6,
+          "frozenReleases": [
+            {
+              "id": "<id:57>",
+              "ownerUserId": "<id:7>",
+              "parkingPlaceCode": "120",
+              "parkingPlaceId": "<id:8>",
+              "placeType": "single"
+            },
+            {
+              "id": "<id:58>",
+              "ownerUserId": "<id:3>",
+              "parkingPlaceCode": "121",
+              "parkingPlaceId": "<id:4>",
+              "placeType": "single"
+            },
+            {
+              "id": "<id:60>",
+              "ownerUserId": "<id:12>",
+              "parkingPlaceCode": "201",
+              "parkingPlaceId": "<id:13>",
+              "placeType": "double"
+            },
+            {
+              "id": "<id:61>",
+              "ownerUserId": "<id:21>",
+              "parkingPlaceCode": "210",
+              "parkingPlaceId": "<id:22>",
+              "placeType": "single"
+            },
+            {
+              "id": "<id:64>",
+              "ownerUserId": "<id:23>",
+              "parkingPlaceCode": "301",
+              "parkingPlaceId": "<id:24>",
+              "placeType": "triple"
+            },
+            {
+              "id": "<id:62>",
+              "ownerUserId": "<id:14>",
+              "parkingPlaceCode": "302",
+              "parkingPlaceId": "<id:15>",
+              "placeType": "triple"
+            }
+          ],
+          "releaseCount": 6,
+          "timezone": "Europe/Moscow"
+        },
+        "targetDate": "<today+1>T00:00:00.000Z"
+      },
+      "releaseCount": 6,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/freeze-next-day (replay)",
+    "method": "POST",
+    "path": "/admin/jobs/freeze-next-day",
+    "status": 200,
+    "payload": {
+      "alreadyFrozen": true,
+      "availability": {
+        "availablePlaces": 6,
+        "byType": {
+          "double": 1,
+          "single": 3,
+          "triple": 2
+        },
+        "date": "<today+1>",
+        "employeeAvailability": {
+          "after19": 1,
+          "before19": 3
+        },
+        "guestReserve": {
+          "availablePlaces": 6,
+          "minimum": 5,
+          "status": "ok"
+        },
+        "releasedPlaces": 6,
+        "timezone": "Europe/Moscow"
+      },
+      "date": "<today+1>",
+      "frozenCount": 0,
+      "frozenReleases": [
+        {
+          "id": "<id:57>",
+          "ownerUserId": "<id:7>",
+          "parkingPlaceCode": "120",
+          "parkingPlaceId": "<id:8>",
+          "placeType": "single"
+        },
+        {
+          "id": "<id:58>",
+          "ownerUserId": "<id:3>",
+          "parkingPlaceCode": "121",
+          "parkingPlaceId": "<id:4>",
+          "placeType": "single"
+        },
+        {
+          "id": "<id:60>",
+          "ownerUserId": "<id:12>",
+          "parkingPlaceCode": "201",
+          "parkingPlaceId": "<id:13>",
+          "placeType": "double"
+        },
+        {
+          "id": "<id:61>",
+          "ownerUserId": "<id:21>",
+          "parkingPlaceCode": "210",
+          "parkingPlaceId": "<id:22>",
+          "placeType": "single"
+        },
+        {
+          "id": "<id:64>",
+          "ownerUserId": "<id:23>",
+          "parkingPlaceCode": "301",
+          "parkingPlaceId": "<id:24>",
+          "placeType": "triple"
+        },
+        {
+          "id": "<id:62>",
+          "ownerUserId": "<id:14>",
+          "parkingPlaceCode": "302",
+          "parkingPlaceId": "<id:15>",
+          "placeType": "triple"
+        }
+      ],
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:139>",
+        "jobName": "freeze_next_day",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "alreadyFrozen": true,
+          "availability": {
+            "availablePlaces": 6,
+            "byType": {
+              "double": 1,
+              "single": 3,
+              "triple": 2
+            },
+            "date": "<today+1>",
+            "employeeAvailability": {
+              "after19": 1,
+              "before19": 3
+            },
+            "guestReserve": {
+              "availablePlaces": 6,
+              "minimum": 5,
+              "status": "ok"
+            },
+            "releasedPlaces": 6,
+            "timezone": "Europe/Moscow"
+          },
+          "date": "<today+1>",
+          "frozenCount": 0,
+          "frozenReleases": [
+            {
+              "id": "<id:57>",
+              "ownerUserId": "<id:7>",
+              "parkingPlaceCode": "120",
+              "parkingPlaceId": "<id:8>",
+              "placeType": "single"
+            },
+            {
+              "id": "<id:58>",
+              "ownerUserId": "<id:3>",
+              "parkingPlaceCode": "121",
+              "parkingPlaceId": "<id:4>",
+              "placeType": "single"
+            },
+            {
+              "id": "<id:60>",
+              "ownerUserId": "<id:12>",
+              "parkingPlaceCode": "201",
+              "parkingPlaceId": "<id:13>",
+              "placeType": "double"
+            },
+            {
+              "id": "<id:61>",
+              "ownerUserId": "<id:21>",
+              "parkingPlaceCode": "210",
+              "parkingPlaceId": "<id:22>",
+              "placeType": "single"
+            },
+            {
+              "id": "<id:64>",
+              "ownerUserId": "<id:23>",
+              "parkingPlaceCode": "301",
+              "parkingPlaceId": "<id:24>",
+              "placeType": "triple"
+            },
+            {
+              "id": "<id:62>",
+              "ownerUserId": "<id:14>",
+              "parkingPlaceCode": "302",
+              "parkingPlaceId": "<id:15>",
+              "placeType": "triple"
+            }
+          ],
+          "releaseCount": 6,
+          "timezone": "Europe/Moscow"
+        },
+        "targetDate": "<today+1>T00:00:00.000Z"
+      },
+      "releaseCount": 6,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/unlock-employee-pool",
+    "method": "POST",
+    "path": "/admin/jobs/unlock-employee-pool",
+    "status": 200,
+    "payload": {
+      "alreadyUnlocked": false,
+      "availableReleasedPlacesCount": 6,
+      "date": "<today+1>",
+      "employeePoolSize": 1,
+      "guestReserveMinimum": 5,
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:140>",
+        "jobName": "unlock_employee_pool",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "alreadyUnlocked": false,
+          "availableReleasedPlacesCount": 6,
+          "date": "<today+1>",
+          "employeePoolSize": 1,
+          "guestReserveMinimum": 5,
+          "servableCount": 0,
+          "timezone": "Europe/Moscow",
+          "unservableCount": 0,
+          "waitingCount": 0
+        },
+        "targetDate": "<today+1>T00:00:00.000Z"
+      },
+      "servableCount": 0,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow",
+      "unservableCount": 0,
+      "waitingCount": 0
+    }
+  },
+  {
+    "name": "POST /admin/jobs/unlock-employee-pool (replay)",
+    "method": "POST",
+    "path": "/admin/jobs/unlock-employee-pool",
+    "status": 200,
+    "payload": {
+      "alreadyUnlocked": true,
+      "availableReleasedPlacesCount": 6,
+      "date": "<today+1>",
+      "employeePoolSize": 1,
+      "guestReserveMinimum": 5,
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:141>",
+        "jobName": "unlock_employee_pool",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "alreadyUnlocked": true,
+          "availableReleasedPlacesCount": 6,
+          "date": "<today+1>",
+          "employeePoolSize": 1,
+          "guestReserveMinimum": 5,
+          "servableCount": 0,
+          "timezone": "Europe/Moscow",
+          "unservableCount": 0,
+          "waitingCount": 0
+        },
+        "targetDate": "<today+1>T00:00:00.000Z"
+      },
+      "servableCount": 0,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow",
+      "unservableCount": 0,
+      "waitingCount": 0
+    }
+  },
+  {
+    "name": "POST /admin/jobs/lock-departure-plans",
+    "method": "POST",
+    "path": "/admin/jobs/lock-departure-plans",
+    "status": 200,
+    "payload": {
+      "alreadyLocked": false,
+      "date": "<today>",
+      "earlyPlansCount": 2,
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:142>",
+        "jobName": "lock_departure_plans",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "alreadyLocked": false,
+          "date": "<today>",
+          "earlyPlansCount": 2,
+          "lockedCount": 3,
+          "plansCount": 3,
+          "timezone": "Europe/Moscow"
+        },
+        "targetDate": "<today>T00:00:00.000Z"
+      },
+      "lockedCount": 3,
+      "plansCount": 3,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/lock-departure-plans (replay)",
+    "method": "POST",
+    "path": "/admin/jobs/lock-departure-plans",
+    "status": 200,
+    "payload": {
+      "alreadyLocked": true,
+      "date": "<today>",
+      "earlyPlansCount": 2,
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:143>",
+        "jobName": "lock_departure_plans",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "alreadyLocked": true,
+          "date": "<today>",
+          "earlyPlansCount": 2,
+          "lockedCount": 0,
+          "plansCount": 3,
+          "timezone": "Europe/Moscow"
+        },
+        "targetDate": "<today>T00:00:00.000Z"
+      },
+      "lockedCount": 0,
+      "plansCount": 3,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/rebuild-conflicts",
+    "method": "POST",
+    "path": "/admin/jobs/rebuild-conflicts",
+    "status": 200,
+    "payload": {
+      "changed": false,
+      "conflictCount": 1,
+      "conflicts": [
+        {
+          "blocker": {
+            "guestParkingRequest": null,
+            "parkingPlaceCode": "101",
+            "position": 1,
+            "subjectType": "employee",
+            "user": {
+              "displayName": "Иванов Иван Иванович",
+              "id": "<id:5>"
+            }
+          },
+          "earlyDeparture": {
+            "departurePlanId": "<id:69>",
+            "departureTime": "15:30",
+            "parkingPlaceCode": "102",
+            "position": 2,
+            "user": {
+              "displayName": "Петров Пётр Сергеевич",
+              "id": "<id:16>"
+            }
+          },
+          "lineGroup": {
+            "code": "demo-line-4-101",
+            "id": "<id:28>",
+            "name": "Линия G4 / 101"
+          },
+          "severity": "info",
+          "type": "employee_blocks_early_departure"
+        }
+      ],
+      "date": "<today>",
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:144>",
+        "jobName": "rebuild_conflicts",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "changed": false,
+          "conflictCount": 1,
+          "conflicts": [
+            {
+              "blocker": {
+                "guestParkingRequest": null,
+                "parkingPlaceCode": "101",
+                "position": 1,
+                "subjectType": "employee",
+                "user": {
+                  "displayName": "Иванов Иван Иванович",
+                  "id": "<id:5>"
+                }
+              },
+              "earlyDeparture": {
+                "departurePlanId": "<id:69>",
+                "departureTime": "15:30",
+                "parkingPlaceCode": "102",
+                "position": 2,
+                "user": {
+                  "displayName": "Петров Пётр Сергеевич",
+                  "id": "<id:16>"
+                }
+              },
+              "lineGroup": {
+                "code": "demo-line-4-101",
+                "id": "<id:28>",
+                "name": "Линия G4 / 101"
+              },
+              "severity": "info",
+              "type": "employee_blocks_early_departure"
+            }
+          ],
+          "date": "<today>",
+          "plansCount": 3,
+          "recalculatedCount": 0,
+          "timezone": "Europe/Moscow"
+        },
+        "targetDate": "<today>T00:00:00.000Z"
+      },
+      "plansCount": 3,
+      "recalculatedCount": 0,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/rebuild-conflicts (replay)",
+    "method": "POST",
+    "path": "/admin/jobs/rebuild-conflicts",
+    "status": 200,
+    "payload": {
+      "changed": false,
+      "conflictCount": 1,
+      "conflicts": [
+        {
+          "blocker": {
+            "guestParkingRequest": null,
+            "parkingPlaceCode": "101",
+            "position": 1,
+            "subjectType": "employee",
+            "user": {
+              "displayName": "Иванов Иван Иванович",
+              "id": "<id:5>"
+            }
+          },
+          "earlyDeparture": {
+            "departurePlanId": "<id:69>",
+            "departureTime": "15:30",
+            "parkingPlaceCode": "102",
+            "position": 2,
+            "user": {
+              "displayName": "Петров Пётр Сергеевич",
+              "id": "<id:16>"
+            }
+          },
+          "lineGroup": {
+            "code": "demo-line-4-101",
+            "id": "<id:28>",
+            "name": "Линия G4 / 101"
+          },
+          "severity": "info",
+          "type": "employee_blocks_early_departure"
+        }
+      ],
+      "date": "<today>",
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:145>",
+        "jobName": "rebuild_conflicts",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "changed": false,
+          "conflictCount": 1,
+          "conflicts": [
+            {
+              "blocker": {
+                "guestParkingRequest": null,
+                "parkingPlaceCode": "101",
+                "position": 1,
+                "subjectType": "employee",
+                "user": {
+                  "displayName": "Иванов Иван Иванович",
+                  "id": "<id:5>"
+                }
+              },
+              "earlyDeparture": {
+                "departurePlanId": "<id:69>",
+                "departureTime": "15:30",
+                "parkingPlaceCode": "102",
+                "position": 2,
+                "user": {
+                  "displayName": "Петров Пётр Сергеевич",
+                  "id": "<id:16>"
+                }
+              },
+              "lineGroup": {
+                "code": "demo-line-4-101",
+                "id": "<id:28>",
+                "name": "Линия G4 / 101"
+              },
+              "severity": "info",
+              "type": "employee_blocks_early_departure"
+            }
+          ],
+          "date": "<today>",
+          "plansCount": 3,
+          "recalculatedCount": 0,
+          "timezone": "Europe/Moscow"
+        },
+        "targetDate": "<today>T00:00:00.000Z"
+      },
+      "plansCount": 3,
+      "recalculatedCount": 0,
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/process-queue",
+    "method": "POST",
+    "path": "/admin/jobs/process-queue",
+    "status": 200,
+    "payload": {
+      "assignedCount": 0,
+      "assignments": [],
+      "availableReleasedPlacesCount": 4,
+      "date": "<today>",
+      "guestReserveMinimum": 5,
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:146>",
+        "jobName": "process_queue",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "assignedCount": 0,
+          "assignments": [],
+          "availableReleasedPlacesCount": 4,
+          "date": "<today>",
+          "guestReserveMinimum": 5,
+          "skipped": [],
+          "skippedCount": 0
+        },
+        "targetDate": "<today>T00:00:00.000Z"
+      },
+      "service": "api",
+      "skipped": [],
+      "skippedCount": 0,
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/jobs/process-queue (replay)",
+    "method": "POST",
+    "path": "/admin/jobs/process-queue",
+    "status": 200,
+    "payload": {
+      "assignedCount": 0,
+      "assignments": [],
+      "availableReleasedPlacesCount": 4,
+      "date": "<today>",
+      "guestReserveMinimum": 5,
+      "jobRun": {
+        "actorService": "admin-web",
+        "error": null,
+        "finishedAt": "<timestamp>",
+        "id": "<id:147>",
+        "jobName": "process_queue",
+        "startedAt": "<timestamp>",
+        "status": "success",
+        "summary": {
+          "assignedCount": 0,
+          "assignments": [],
+          "availableReleasedPlacesCount": 4,
+          "date": "<today>",
+          "guestReserveMinimum": 5,
+          "skipped": [],
+          "skippedCount": 0
+        },
+        "targetDate": "<today>T00:00:00.000Z"
+      },
+      "service": "api",
+      "skipped": [],
+      "skippedCount": 0,
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/jobs/runs (after every job)",
+    "method": "GET",
+    "path": "/admin/jobs/runs",
+    "status": 200,
+    "payload": {
+      "latestSuccessfulRuns": [
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "freeze_next_day",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyFrozen": true,
+            "availability": {
+              "availablePlaces": 6,
+              "byType": {
+                "double": 1,
+                "single": 3,
+                "triple": 2
+              },
+              "date": "<today+1>",
+              "employeeAvailability": {
+                "after19": 1,
+                "before19": 3
+              },
+              "guestReserve": {
+                "availablePlaces": 6,
+                "minimum": 5,
+                "status": "ok"
+              },
+              "releasedPlaces": 6,
+              "timezone": "Europe/Moscow"
+            },
+            "date": "<today+1>",
+            "frozenCount": 0,
+            "frozenReleases": [
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "120",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "121",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "201",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "double"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "210",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "301",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "triple"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "302",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "triple"
+              }
+            ],
+            "releaseCount": 6,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today+1>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "lock_departure_plans",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyLocked": true,
+            "date": "<today>",
+            "earlyPlansCount": 2,
+            "lockedCount": 0,
+            "plansCount": 3,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "process_queue",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "assignedCount": 0,
+            "assignments": [],
+            "availableReleasedPlacesCount": 4,
+            "date": "<today>",
+            "guestReserveMinimum": 5,
+            "skipped": [],
+            "skippedCount": 0
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "rebuild_conflicts",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "changed": false,
+            "conflictCount": 1,
+            "conflicts": [
+              {
+                "blocker": {
+                  "guestParkingRequest": null,
+                  "parkingPlaceCode": "101",
+                  "position": 1,
+                  "subjectType": "employee",
+                  "user": {
+                    "displayName": "Иванов Иван Иванович",
+                    "id": "<uuid>"
+                  }
+                },
+                "earlyDeparture": {
+                  "departurePlanId": "<uuid>",
+                  "departureTime": "15:30",
+                  "parkingPlaceCode": "102",
+                  "position": 2,
+                  "user": {
+                    "displayName": "Петров Пётр Сергеевич",
+                    "id": "<uuid>"
+                  }
+                },
+                "lineGroup": {
+                  "code": "demo-line-4-101",
+                  "id": "<uuid>",
+                  "name": "Линия G4 / 101"
+                },
+                "severity": "info",
+                "type": "employee_blocks_early_departure"
+              }
+            ],
+            "date": "<today>",
+            "plansCount": 3,
+            "recalculatedCount": 0,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "unlock_employee_pool",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyUnlocked": true,
+            "availableReleasedPlacesCount": 6,
+            "date": "<today+1>",
+            "employeePoolSize": 1,
+            "guestReserveMinimum": 5,
+            "servableCount": 0,
+            "timezone": "Europe/Moscow",
+            "unservableCount": 0,
+            "waitingCount": 0
+          },
+          "targetDate": "<today+1>T00:00:00.000Z"
+        }
+      ],
+      "runs": [
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "freeze_next_day",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyFrozen": false,
+            "availability": {
+              "availablePlaces": 6,
+              "byType": {
+                "double": 1,
+                "single": 3,
+                "triple": 2
+              },
+              "date": "<today+1>",
+              "employeeAvailability": {
+                "after19": 1,
+                "before19": 3
+              },
+              "guestReserve": {
+                "availablePlaces": 6,
+                "minimum": 5,
+                "status": "ok"
+              },
+              "releasedPlaces": 6,
+              "timezone": "Europe/Moscow"
+            },
+            "date": "<today+1>",
+            "frozenCount": 6,
+            "frozenReleases": [
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "120",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "121",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "201",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "double"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "210",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "301",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "triple"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "302",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "triple"
+              }
+            ],
+            "releaseCount": 6,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today+1>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "freeze_next_day",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyFrozen": true,
+            "availability": {
+              "availablePlaces": 6,
+              "byType": {
+                "double": 1,
+                "single": 3,
+                "triple": 2
+              },
+              "date": "<today+1>",
+              "employeeAvailability": {
+                "after19": 1,
+                "before19": 3
+              },
+              "guestReserve": {
+                "availablePlaces": 6,
+                "minimum": 5,
+                "status": "ok"
+              },
+              "releasedPlaces": 6,
+              "timezone": "Europe/Moscow"
+            },
+            "date": "<today+1>",
+            "frozenCount": 0,
+            "frozenReleases": [
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "120",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "121",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "201",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "double"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "210",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "single"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "301",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "triple"
+              },
+              {
+                "id": "<uuid>",
+                "ownerUserId": "<uuid>",
+                "parkingPlaceCode": "302",
+                "parkingPlaceId": "<uuid>",
+                "placeType": "triple"
+              }
+            ],
+            "releaseCount": 6,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today+1>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "lock_departure_plans",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyLocked": false,
+            "date": "<today>",
+            "earlyPlansCount": 2,
+            "lockedCount": 3,
+            "plansCount": 3,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "lock_departure_plans",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyLocked": true,
+            "date": "<today>",
+            "earlyPlansCount": 2,
+            "lockedCount": 0,
+            "plansCount": 3,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "process_queue",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "assignedCount": 0,
+            "assignments": [],
+            "availableReleasedPlacesCount": 4,
+            "date": "<today>",
+            "guestReserveMinimum": 5,
+            "skipped": [],
+            "skippedCount": 0
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "process_queue",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "assignedCount": 0,
+            "assignments": [],
+            "availableReleasedPlacesCount": 4,
+            "date": "<today>",
+            "guestReserveMinimum": 5,
+            "skipped": [],
+            "skippedCount": 0
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "rebuild_conflicts",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "changed": false,
+            "conflictCount": 1,
+            "conflicts": [
+              {
+                "blocker": {
+                  "guestParkingRequest": null,
+                  "parkingPlaceCode": "101",
+                  "position": 1,
+                  "subjectType": "employee",
+                  "user": {
+                    "displayName": "Иванов Иван Иванович",
+                    "id": "<uuid>"
+                  }
+                },
+                "earlyDeparture": {
+                  "departurePlanId": "<uuid>",
+                  "departureTime": "15:30",
+                  "parkingPlaceCode": "102",
+                  "position": 2,
+                  "user": {
+                    "displayName": "Петров Пётр Сергеевич",
+                    "id": "<uuid>"
+                  }
+                },
+                "lineGroup": {
+                  "code": "demo-line-4-101",
+                  "id": "<uuid>",
+                  "name": "Линия G4 / 101"
+                },
+                "severity": "info",
+                "type": "employee_blocks_early_departure"
+              }
+            ],
+            "date": "<today>",
+            "plansCount": 3,
+            "recalculatedCount": 0,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "rebuild_conflicts",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "changed": false,
+            "conflictCount": 1,
+            "conflicts": [
+              {
+                "blocker": {
+                  "guestParkingRequest": null,
+                  "parkingPlaceCode": "101",
+                  "position": 1,
+                  "subjectType": "employee",
+                  "user": {
+                    "displayName": "Иванов Иван Иванович",
+                    "id": "<uuid>"
+                  }
+                },
+                "earlyDeparture": {
+                  "departurePlanId": "<uuid>",
+                  "departureTime": "15:30",
+                  "parkingPlaceCode": "102",
+                  "position": 2,
+                  "user": {
+                    "displayName": "Петров Пётр Сергеевич",
+                    "id": "<uuid>"
+                  }
+                },
+                "lineGroup": {
+                  "code": "demo-line-4-101",
+                  "id": "<uuid>",
+                  "name": "Линия G4 / 101"
+                },
+                "severity": "info",
+                "type": "employee_blocks_early_departure"
+              }
+            ],
+            "date": "<today>",
+            "plansCount": 3,
+            "recalculatedCount": 0,
+            "timezone": "Europe/Moscow"
+          },
+          "targetDate": "<today>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "unlock_employee_pool",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyUnlocked": false,
+            "availableReleasedPlacesCount": 6,
+            "date": "<today+1>",
+            "employeePoolSize": 1,
+            "guestReserveMinimum": 5,
+            "servableCount": 0,
+            "timezone": "Europe/Moscow",
+            "unservableCount": 0,
+            "waitingCount": 0
+          },
+          "targetDate": "<today+1>T00:00:00.000Z"
+        },
+        {
+          "actorService": "admin-web",
+          "error": null,
+          "finishedAt": "<timestamp>",
+          "id": "<uuid>",
+          "jobName": "unlock_employee_pool",
+          "startedAt": "<timestamp>",
+          "status": "success",
+          "summary": {
+            "alreadyUnlocked": true,
+            "availableReleasedPlacesCount": 6,
+            "date": "<today+1>",
+            "employeePoolSize": 1,
+            "guestReserveMinimum": 5,
+            "servableCount": 0,
+            "timezone": "Europe/Moscow",
+            "unservableCount": 0,
+            "waitingCount": 0
+          },
+          "targetDate": "<today+1>T00:00:00.000Z"
+        }
+      ],
+      "service": "api",
+      "status": "ok",
+      "timezone": "Europe/Moscow"
+    }
+  }
+]

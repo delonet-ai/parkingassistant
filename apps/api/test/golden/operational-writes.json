@@ -1,0 +1,617 @@
+[
+  {
+    "name": "POST /admin/employee-parking-requests (for tomorrow)",
+    "method": "POST",
+    "path": "/admin/employee-parking-requests",
+    "status": 201,
+    "payload": {
+      "request": {
+        "id": "<id:131>",
+        "queueEntry": {
+          "id": "<id:132>",
+          "position": 1,
+          "status": "waiting"
+        },
+        "requestDate": "<today+1>T00:00:00.000Z",
+        "requestedAt": "<timestamp>",
+        "status": "queued",
+        "user": {
+          "displayName": "Волков Артём Викторович",
+          "id": "<id:2>"
+        }
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/employee-parking-requests (duplicate for the same date)",
+    "method": "POST",
+    "path": "/admin/employee-parking-requests",
+    "status": 409,
+    "payload": {
+      "code": "conflict",
+      "details": null,
+      "error": "Employee already has an active request for the selected date",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/guest-parking-requests (auto-assigns)",
+    "method": "POST",
+    "path": "/admin/guest-parking-requests",
+    "status": 201,
+    "payload": {
+      "request": {
+        "assignedReservation": {
+          "id": "<id:133>",
+          "parkingPlace": {
+            "code": "121",
+            "id": "<id:4>",
+            "placeType": "single",
+            "title": "Место 121"
+          },
+          "reservationDate": "<today>T00:00:00.000Z",
+          "source": "guest",
+          "status": "active"
+        },
+        "createdAt": "<timestamp>",
+        "guest": {
+          "displayName": "Голденов Гость",
+          "id": "<id:134>",
+          "phone": "+7 900 999-00-02"
+        },
+        "guestName": "Голденов Гость",
+        "guestPhone": "+7 900 999-00-02",
+        "host": {
+          "department": "QA / golden",
+          "displayName": "Голдин Голден Голденович",
+          "id": "<id:118>"
+        },
+        "id": "<id:135>",
+        "requestDate": "<today>T00:00:00.000Z",
+        "status": "assigned",
+        "vehiclePlateNumber": "А001АА777"
+      },
+      "service": "api",
+      "status": "ok",
+      "warnings": []
+    }
+  },
+  {
+    "name": "POST /admin/guest-parking-requests/assign (the demo request still waiting)",
+    "method": "POST",
+    "path": "/admin/guest-parking-requests/assign",
+    "status": 201,
+    "payload": {
+      "request": {
+        "assignedReservation": {
+          "id": "<id:136>",
+          "parkingPlace": {
+            "code": "122",
+            "id": "<id:10>",
+            "placeType": "single",
+            "title": "Место 122"
+          },
+          "reservationDate": "<today>T00:00:00.000Z",
+          "source": "guest",
+          "status": "active"
+        },
+        "guestName": "Тихонова Елена",
+        "id": "<id:54>",
+        "requestDate": "<today>T00:00:00.000Z",
+        "status": "assigned"
+      },
+      "service": "api",
+      "status": "ok",
+      "warnings": []
+    }
+  },
+  {
+    "name": "POST /admin/guest-parking-requests/assign (replay, already assigned)",
+    "method": "POST",
+    "path": "/admin/guest-parking-requests/assign",
+    "status": 409,
+    "payload": {
+      "code": "conflict",
+      "details": null,
+      "error": "Guest request is already assigned",
+      "service": "api",
+      "status": "error"
+    }
+  },
+  {
+    "name": "POST /admin/guest-parking-requests/cancel",
+    "method": "POST",
+    "path": "/admin/guest-parking-requests/cancel",
+    "status": 200,
+    "payload": {
+      "canceledReservation": {
+        "canceledAt": "<timestamp>",
+        "id": "<id:133>",
+        "reservationDate": "<today>T00:00:00.000Z",
+        "status": "canceled"
+      },
+      "request": {
+        "canceledAt": "<timestamp>",
+        "id": "<id:135>",
+        "requestDate": "<today>T00:00:00.000Z",
+        "status": "canceled"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/departure-plans",
+    "method": "POST",
+    "path": "/admin/departure-plans",
+    "status": 200,
+    "payload": {
+      "departurePlan": {
+        "createdAt": "<timestamp>",
+        "departureTime": "15:30",
+        "id": "<id:71>",
+        "isEarly": true,
+        "planDate": "<today>",
+        "updatedAt": "<timestamp>",
+        "user": {
+          "displayName": "Иванов Иван Иванович",
+          "id": "<id:5>"
+        }
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/departure-plans (upsert, same user and date)",
+    "method": "POST",
+    "path": "/admin/departure-plans",
+    "status": 200,
+    "payload": {
+      "departurePlan": {
+        "createdAt": "<timestamp>",
+        "departureTime": "20:15",
+        "id": "<id:71>",
+        "isEarly": false,
+        "planDate": "<today>",
+        "updatedAt": "<timestamp>",
+        "user": {
+          "displayName": "Иванов Иван Иванович",
+          "id": "<id:5>"
+        }
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/line-occupancy",
+    "method": "POST",
+    "path": "/admin/line-occupancy",
+    "status": 201,
+    "payload": {
+      "occupancy": {
+        "createdAt": "<timestamp>",
+        "guestParkingRequest": null,
+        "id": "<id:137>",
+        "lineGroup": {
+          "capacity": 2,
+          "code": "demo-line-3-201",
+          "id": "<id:25>",
+          "name": "Линия G3 / 201"
+        },
+        "occupancyDate": "<today>",
+        "parkingPlace": {
+          "code": "201",
+          "id": "<id:13>",
+          "placeType": "double",
+          "title": "Место 201"
+        },
+        "position": 1,
+        "reservation": null,
+        "subjectType": "employee",
+        "updatedAt": "<timestamp>",
+        "user": {
+          "department": "Продажи",
+          "displayName": "Волков Артём Викторович",
+          "email": "demo.006@demo.invalid",
+          "id": "<id:2>",
+          "phone": "+7 900 000-00-06"
+        }
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/place-releases/cancel (undo the release)",
+    "method": "POST",
+    "path": "/admin/place-releases/cancel",
+    "status": 200,
+    "payload": {
+      "release": {
+        "canceledAt": "<timestamp>",
+        "dateFrom": "<today>T00:00:00.000Z",
+        "dateTo": "<today>T00:00:00.000Z",
+        "id": "<id:129>",
+        "status": "canceled"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/permanent-assignments/end",
+    "method": "POST",
+    "path": "/admin/permanent-assignments/end",
+    "status": 200,
+    "payload": {
+      "permanentAssignment": {
+        "date_from": "<today>",
+        "date_to": "<today>",
+        "id": "<id:128>",
+        "parking_place_id": "<id:122>",
+        "updated_at": "<timestamp>",
+        "user_id": "<id:118>"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "POST /admin/employee-parking-requests/cancel",
+    "method": "POST",
+    "path": "/admin/employee-parking-requests/cancel",
+    "status": 200,
+    "payload": {
+      "request": {
+        "canceledAt": "<timestamp>",
+        "id": "<id:131>",
+        "requestDate": "<today+1>T00:00:00.000Z",
+        "status": "canceled"
+      },
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/dashboard (after the operational writes)",
+    "method": "GET",
+    "path": "/admin/dashboard",
+    "status": 200,
+    "payload": {
+      "date": "<today>",
+      "guestRequests": [
+        {
+          "assignedReservation": {
+            "id": "<id:133>",
+            "parkingPlace": {
+              "code": "121",
+              "id": "<id:4>",
+              "placeType": "single",
+              "title": "Место 121"
+            }
+          },
+          "canceledAt": "<timestamp>",
+          "createdAt": "<timestamp>",
+          "guestName": "Голденов Гость",
+          "guestPhone": "+7 900 999-00-02",
+          "host": {
+            "department": "QA / golden",
+            "displayName": "Голдин Голден Голденович",
+            "id": "<id:118>"
+          },
+          "id": "<id:135>",
+          "notes": null,
+          "requestDate": "<today>T00:00:00.000Z",
+          "status": "canceled",
+          "vehiclePlateNumber": "А001АА777"
+        },
+        {
+          "assignedReservation": {
+            "id": "<id:52>",
+            "parkingPlace": {
+              "code": "110",
+              "id": "<id:19>",
+              "placeType": "triple",
+              "title": "Место 110"
+            }
+          },
+          "canceledAt": null,
+          "createdAt": "<timestamp>",
+          "guestName": "Николаев Сергей",
+          "guestPhone": "+7 900 100-00-01",
+          "host": {
+            "department": "HR",
+            "displayName": "Морозов Егор Николаевич",
+            "id": "<id:11>"
+          },
+          "id": "<id:53>",
+          "notes": "Демо: гость размещён",
+          "requestDate": "<today>T00:00:00.000Z",
+          "status": "assigned",
+          "vehiclePlateNumber": "Х555ХХ777"
+        },
+        {
+          "assignedReservation": {
+            "id": "<id:136>",
+            "parkingPlace": {
+              "code": "122",
+              "id": "<id:10>",
+              "placeType": "single",
+              "title": "Место 122"
+            }
+          },
+          "canceledAt": null,
+          "createdAt": "<timestamp>",
+          "guestName": "Тихонова Елена",
+          "guestPhone": "+7 900 100-00-02",
+          "host": {
+            "department": "ИТ",
+            "displayName": "Иванов Иван Иванович",
+            "id": "<id:5>"
+          },
+          "id": "<id:54>",
+          "notes": "Демо: гость ожидает места",
+          "requestDate": "<today>T00:00:00.000Z",
+          "status": "assigned",
+          "vehiclePlateNumber": "У777УУ199"
+        }
+      ],
+      "guestReservations": [
+        {
+          "id": "<id:52>",
+          "parkingPlace": {
+            "code": "110",
+            "id": "<id:19>",
+            "placeType": "triple",
+            "title": "Место 110"
+          },
+          "reservationDate": "<today>T00:00:00.000Z",
+          "user": {
+            "department": null,
+            "displayName": "Николаев Сергей",
+            "id": "<id:55>"
+          }
+        },
+        {
+          "id": "<id:136>",
+          "parkingPlace": {
+            "code": "122",
+            "id": "<id:10>",
+            "placeType": "single",
+            "title": "Место 122"
+          },
+          "reservationDate": "<today>T00:00:00.000Z",
+          "user": {
+            "department": null,
+            "displayName": "Тихонова Елена",
+            "id": "<id:77>"
+          }
+        }
+      ],
+      "guestReserve": {
+        "availablePlaces": 4,
+        "minimum": 5,
+        "status": "low"
+      },
+      "releasedPlaces": [
+        {
+          "isReserved": true,
+          "owner": {
+            "department": "Финансы",
+            "displayName": "Сидорова Анна Павловна",
+            "id": "<id:18>"
+          },
+          "parkingPlace": {
+            "code": "110",
+            "id": "<id:19>",
+            "placeType": "triple",
+            "title": "Место 110"
+          },
+          "releaseId": "<id:56>",
+          "releaseNotes": "Работа из дома"
+        },
+        {
+          "isReserved": true,
+          "owner": {
+            "department": "Логистика",
+            "displayName": "Кузнецов Дмитрий Олегович",
+            "id": "<id:7>"
+          },
+          "parkingPlace": {
+            "code": "120",
+            "id": "<id:8>",
+            "placeType": "single",
+            "title": "Место 120"
+          },
+          "releaseId": "<id:57>",
+          "releaseNotes": "Командировка"
+        },
+        {
+          "isReserved": false,
+          "owner": {
+            "department": "ИТ",
+            "displayName": "Зайцева Дарья Сергеевна",
+            "id": "<id:3>"
+          },
+          "parkingPlace": {
+            "code": "121",
+            "id": "<id:4>",
+            "placeType": "single",
+            "title": "Место 121"
+          },
+          "releaseId": "<id:58>",
+          "releaseNotes": "Больничный"
+        },
+        {
+          "isReserved": true,
+          "owner": {
+            "department": "HR",
+            "displayName": "Лебедева Ксения Олеговна",
+            "id": "<id:9>"
+          },
+          "parkingPlace": {
+            "code": "122",
+            "id": "<id:10>",
+            "placeType": "single",
+            "title": "Место 122"
+          },
+          "releaseId": "<id:59>",
+          "releaseNotes": "Работа из дома"
+        },
+        {
+          "isReserved": false,
+          "owner": {
+            "department": "Финансы",
+            "displayName": "Николаева Мария Ивановна",
+            "id": "<id:12>"
+          },
+          "parkingPlace": {
+            "code": "201",
+            "id": "<id:13>",
+            "placeType": "double",
+            "title": "Место 201"
+          },
+          "releaseId": "<id:60>",
+          "releaseNotes": "Отпуск"
+        },
+        {
+          "isReserved": false,
+          "owner": {
+            "department": "Логистика",
+            "displayName": "Тихонов Глеб Андреевич",
+            "id": "<id:21>"
+          },
+          "parkingPlace": {
+            "code": "210",
+            "id": "<id:22>",
+            "placeType": "single",
+            "title": "Место 210"
+          },
+          "releaseId": "<id:61>",
+          "releaseNotes": "Работа из дома"
+        },
+        {
+          "isReserved": false,
+          "owner": {
+            "department": "Продажи",
+            "displayName": "Орлов Роман Дмитриевич",
+            "id": "<id:14>"
+          },
+          "parkingPlace": {
+            "code": "302",
+            "id": "<id:15>",
+            "placeType": "triple",
+            "title": "Место 302"
+          },
+          "releaseId": "<id:62>",
+          "releaseNotes": "Командировка"
+        }
+      ],
+      "reservations": [
+        {
+          "createdAt": "<timestamp>",
+          "id": "<id:52>",
+          "parkingPlace": {
+            "code": "110",
+            "id": "<id:19>",
+            "placeType": "triple",
+            "title": "Место 110"
+          },
+          "reason": "Guest assignment hosted by Морозов Егор Николаевич",
+          "reservationDate": "<today>T00:00:00.000Z",
+          "source": "guest",
+          "user": {
+            "department": null,
+            "displayName": "Николаев Сергей",
+            "id": "<id:55>"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "id": "<id:63>",
+          "parkingPlace": {
+            "code": "120",
+            "id": "<id:8>",
+            "placeType": "single",
+            "title": "Место 120"
+          },
+          "reason": "Queue assignment #1",
+          "reservationDate": "<today>T00:00:00.000Z",
+          "source": "queue",
+          "user": {
+            "department": "Маркетинг",
+            "displayName": "Смирнова Ольга Андреевна",
+            "id": "<id:20>"
+          }
+        },
+        {
+          "createdAt": "<timestamp>",
+          "id": "<id:136>",
+          "parkingPlace": {
+            "code": "122",
+            "id": "<id:10>",
+            "placeType": "single",
+            "title": "Место 122"
+          },
+          "reason": "Guest assignment hosted by Иванов Иван Иванович",
+          "reservationDate": "<today>T00:00:00.000Z",
+          "source": "guest",
+          "user": {
+            "department": null,
+            "displayName": "Тихонова Елена",
+            "id": "<id:77>"
+          }
+        }
+      ],
+      "service": "api",
+      "status": "ok"
+    }
+  },
+  {
+    "name": "GET /admin/conflicts (after the operational writes)",
+    "method": "GET",
+    "path": "/admin/conflicts",
+    "status": 200,
+    "payload": {
+      "conflicts": [
+        {
+          "blocker": {
+            "guestParkingRequest": null,
+            "parkingPlaceCode": "101",
+            "position": 1,
+            "subjectType": "employee",
+            "user": {
+              "displayName": "Иванов Иван Иванович",
+              "id": "<id:5>"
+            }
+          },
+          "earlyDeparture": {
+            "departurePlanId": "<id:69>",
+            "departureTime": "15:30",
+            "parkingPlaceCode": "102",
+            "position": 2,
+            "user": {
+              "displayName": "Петров Пётр Сергеевич",
+              "id": "<id:16>"
+            }
+          },
+          "lineGroup": {
+            "code": "demo-line-4-101",
+            "id": "<id:28>",
+            "name": "Линия G4 / 101"
+          },
+          "severity": "info",
+          "type": "employee_blocks_early_departure"
+        }
+      ],
+      "date": "<today>",
+      "service": "api",
+      "status": "ok"
+    }
+  }
+]
