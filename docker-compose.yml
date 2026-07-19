@@ -62,11 +62,17 @@ services:
       MAP_STORAGE_PATH: /app/storage/maps
       IMPORT_STORAGE_PATH: /app/storage/imports
     ports:
-      - "${API_PORT:-3000}:3000"
+      - "${API_PORT:-3330}:3000"
     volumes:
       - /opt/git/parkingassistant/staging/maps:/app/storage/maps
       - /opt/git/parkingassistant/staging/imports:/app/storage/imports
       - /opt/git/parkingassistant/staging/logs:/app/storage/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     command: ["npm", "run", "api:start"]
 
   admin-web:
@@ -78,7 +84,7 @@ services:
     restart: unless-stopped
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3100
@@ -86,40 +92,26 @@ services:
       API_BASE_URL: http://api:3000
       MAP_STORAGE_PATH: /app/storage/maps
     ports:
-      - "${ADMIN_WEB_PORT:-3100}:3100"
+      - "${ADMIN_WEB_PORT:-3340}:3100"
     volumes:
       - /opt/git/parkingassistant/staging/maps:/app/storage/maps
       - /opt/git/parkingassistant/staging/logs:/app/storage/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     command: ["npm", "run", "admin-web:start"]
 
-  bot-adapter:
-    build:
-      context: .
-      dockerfile: infra/docker/app.Dockerfile
-      target: runtime
-    container_name: parkingassistant-bot-adapter
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_started
-    environment:
-      APP_ROLE: bot-adapter
-      NODE_ENV: ${NODE_ENV:-development}
-      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
-      PORT: 3200
-      API_BASE_URL: http://api:3000
-      YANDEX_MESSENGER_BOT_TOKEN: ${YANDEX_MESSENGER_BOT_TOKEN:-change-me}
-      YANDEX_MESSENGER_SIGNING_SECRET: ${YANDEX_MESSENGER_SIGNING_SECRET:-change-me}
-    ports:
-      - "${BOT_ADAPTER_PORT:-3200}:3200"
-    volumes:
-      - /opt/git/parkingassistant/staging/logs:/app/storage/logs
-    command: ["npm", "run", "bot-adapter:start"]
+  # bot-adapter is intentionally absent from this stack: the Yandex Messenger phase is deferred
+  # post-MVP (see docs/plans/finalize-development.md → Deferred). The entrypoint and its
+  # `bot-adapter:start` script stay in the repo; only the deployed service is withheld.
 
   jobs:
     build:
       context: .
-      dockerfile: infra/docker/app.Dockerfile
+      dockerfile: infra/docker/jobs.Dockerfile
       target: runtime
     container_name: parkingassistant-jobs
     restart: unless-stopped
@@ -129,7 +121,7 @@ services:
       migrate:
         condition: service_completed_successfully
       api:
-        condition: service_started
+        condition: service_healthy
     environment:
       APP_ROLE: jobs
       NODE_ENV: ${NODE_ENV:-development}

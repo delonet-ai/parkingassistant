@@ -239,11 +239,23 @@ docker compose -f docker-compose.test.yml down
 харнесс сериализует применение SQL через `pg_advisory_lock`. Без этого часть наборов
 падала с `duplicate key value violates unique constraint "pg_extension_name_index"`.
 
-## Current Limitation
+## Stand deployment
 
-Сервисы `api`, `admin-web`, `bot-adapter`, `jobs` пока запускаются с placeholder-командами.
+Стек `docker-compose.yml`: `postgres`, one-shot `migrate`, `api` (`3330`), `admin-web` (`3340`),
+`jobs`. `bot-adapter` в стек не входит — фаза Yandex Messenger отложена.
 
-Это нормально на текущем этапе: инфраструктурный baseline уже зафиксирован, но реальный runtime будет подключен после выбора package manager/framework и добавления app skeleton.
+Образы собираются из `infra/docker/{app,admin-web,jobs}.Dockerfile` и самодостаточны: исходники
+копируются на этапе build, монтируется только storage (`postgres`, `maps`, `imports`, `logs`,
+`backups`). Placeholder-команд больше нет — у каждого образа реальный `CMD`.
+
+После Portainer redeploy стенд проверяется одной командой:
+
+```bash
+npm run smoke:stand                      # по умолчанию 192.168.0.100:3330 / :3340
+SMOKE_STAND_HOST=127.0.0.1 SMOKE_STAND_API_PORT=3000 SMOKE_STAND_ADMIN_PORT=3100 npm run smoke:stand
+```
+
+Подробности потока выкатки — в `docs/TECHNICAL_README.md` → Deployment.
 
 ## Next Recommended Steps
 

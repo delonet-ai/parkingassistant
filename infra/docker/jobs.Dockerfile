@@ -8,13 +8,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates dumb-init \
   && rm -rf /var/lib/apt/lists/*
 
+FROM base AS deps
+
+COPY package.json package-lock.json ./
+
+RUN npm ci --omit=dev
+
 FROM base AS runtime
 
-# admin-web is SSR over node builtins plus packages/shared only — it has no third-party
-# dependency, so this image carries no node_modules on purpose.
+COPY --from=deps /app/node_modules /app/node_modules
 COPY package.json /app/package.json
-COPY apps/admin-web /app/apps/admin-web
+COPY apps/jobs /app/apps/jobs
 COPY packages /app/packages
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["npm", "run", "admin-web:start"]
+CMD ["npm", "run", "jobs:start"]

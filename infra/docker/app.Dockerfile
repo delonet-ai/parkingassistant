@@ -10,9 +10,9 @@ RUN apt-get update \
 
 FROM base AS deps
 
-COPY package.json ./
+COPY package.json package-lock.json ./
 
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 FROM base AS runtime
 
@@ -23,4 +23,4 @@ COPY packages /app/packages
 COPY scripts /app/scripts
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["sh", "-lc", "echo 'Replace runtime command in docker-compose or Dockerfile' && sleep infinity"]
+CMD ["npm", "run", "api:start"]

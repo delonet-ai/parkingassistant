@@ -162,6 +162,48 @@ local changes
 - SSH на сервер используется только для диагностики логов, health checks и аварийного анализа.
 - В compose не нужно монтировать исходники приложения в `/app`; код должен попадать внутрь image на этапе build.
 
+### Состав стека
+
+`docker-compose.yml` описывает пять сервисов, и только их:
+
+| Сервис | Образ | Роль |
+|---|---|---|
+| `postgres` | `postgres:16-bookworm` | БД, healthcheck через `pg_isready` |
+| `migrate` | `infra/docker/app.Dockerfile` | one-shot `npm run db:migrate`, стартует после healthy `postgres` |
+| `api` | `infra/docker/app.Dockerfile` | HTTP API, порт `3330` → 3000 |
+| `admin-web` | `infra/docker/admin-web.Dockerfile` | SSR-админка, порт `3340` → 3100 |
+| `jobs` | `infra/docker/jobs.Dockerfile` | планировщик регулярных задач |
+
+`bot-adapter` в стек **намеренно не включён**: фаза Yandex Messenger отложена до финализации логики
+и UI. Entrypoint и npm-скрипт остаются в репозитории — не развёрнут только сервис.
+
+`api` и `admin-web` имеют собственный container healthcheck (`node -e fetch(/health)`), поэтому
+`admin-web` и `jobs` ждут `api: service_healthy`, а не просто «процесс запустился».
+
+Образы самодостаточны: исходники копируются на этапе build, в compose монтируется только storage.
+`app.Dockerfile` и `jobs.Dockerfile` ставят зависимости через `npm ci --omit=dev` по
+`package-lock.json`; `admin-web` живёт на builtins + `packages/shared` и не несёт `node_modules`
+вовсе. Топология закреплена тестом `infra/deployment.test.js` (он входит в `npm test`).
+
+### Redeploy и smoke-проверка стенда
+
+Штатный цикл выкатки на стенд:
+
+```text
+git push origin main
+  -> Portainer Git stack redeploy      # человек или Portainer API, не агент
+  -> migrate отрабатывает сам
+  -> npm run smoke:stand
+```
+
+`npm run smoke:stand` (`scripts/smoke/stand.js`) запускается из dev-контейнера и проверяет
+`3330/health`, `3330/health/db`, `3340/health` и рендер `3340/?view=day`. Только чтение —
+команда безопасна и против прода. Адрес переопределяется переменными
+`SMOKE_STAND_HOST`, `SMOKE_STAND_API_PORT`, `SMOKE_STAND_ADMIN_PORT`, `SMOKE_STAND_TIMEOUT_MS`
+(по умолчанию — стенд `192.168.0.100`).
+
+Сам redeploy — человеческий шаг или вызов Portainer API; агент его не выполняет.
+
 ### Schema migrations
 
 Схема БД применяется идемпотентной командой `npm run db:migrate`
@@ -242,7 +284,7 @@ Production storage mounts:
 
 ### Runtime And Deployment
 
-- Для независимости от локального Mac нужен постоянный staging/test ландшафт на OMV с отдельными volumes, ports и smoke-командой после redeploy.
+- ~~Постоянный staging/test ландшафт на OMV с отдельными volumes, ports и smoke-командой после redeploy~~ — сделано: стенд `192.168.0.100`, порты `3330`/`3340`, `npm run smoke:stand`.
 - `npm audit --omit=dev` показывает `xlsx` high severity advisories, npm сообщает `No fix available`. Риск принят для текущего offline import tooling: Excel-файлы считаются доверенными, import scripts не являются публичным web upload/runtime endpoint. Если импорт станет пользовательским или регулярным production-процессом, нужно заменить Excel dependency или вынести import tooling из основного runtime.
 
 ### Product Gaps
@@ -415,11 +457,11 @@ git diff --check
 Smoke-check после Portainer redeploy:
 
 ```bash
-curl -fsS http://192.168.0.100:3330/health
-curl -fsS http://192.168.0.100:3340/health
-curl -fsS "http://192.168.0.100:3340/?view=day"
-curl -fsS "http://192.168.0.100:3340/?view=maps"
+npm run smoke:stand
 ```
+
+Команда проверяет `3330/health`, `3330/health/db`, `3340/health` и рендер `3340/?view=day`,
+печатает построчный отчёт и завершается с ненулевым кодом при первом же провале.
 
 Диагностика на сервере:
 

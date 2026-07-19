@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "smoke:m1": "node scripts/smoke/m1.js",
+    "smoke:stand": "node scripts/smoke/stand.js",
     "api:start": "node apps/api/src/server.js",
     "admin-web:start": "node apps/admin-web/src/server.js",
     "bot-adapter:start": "node apps/bot-adapter/src/server.js",
