@@ -77,8 +77,8 @@ FROM (
 JOIN line_groups lg ON lg.code = v.line_code;
 
 -- ---------------------------------------------------------------------------
--- Floor plans. Static reference images only — the clickable zones were retired
--- with 005_place_inventory.sql and the place role now lives on parking_places.
+-- Floor plans. Static reference images only — the element list underneath them is
+-- the source of truth for what exists, and the place role lives on parking_places.
 -- ---------------------------------------------------------------------------
 
 INSERT INTO parking_place_maps (code, title, floor_label, file_type, file_path, source_checksum)

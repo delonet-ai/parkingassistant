@@ -73,8 +73,8 @@ describe('demo dataset (integration)', { skip: skipWithoutDatabase() }, () => {
     assert.equal(byType.triple, 6);
     assert.equal(await count("select count(*) from line_groups where code like 'demo-%'"), DEMO_LINE_COUNT);
 
-    // No place is group-less, and place_role carries the classification the zone
-    // geometry used to hold — the Места tab needs both to render anything.
+    // No place is group-less, and place_role carries the guest/blocked classification —
+    // the Места tab needs both to render anything.
     assert.equal(
       await count(
         "select count(*) from parking_places where catalog_source = 'demo' and line_group_id is null"

@@ -11,10 +11,9 @@ const {
 /**
  * Pure renderer for the Day tab's operational floor panel.
  *
- * It replaces the zone-drawing SVG: the floor plan is a static reference <img> and the
- * element grid underneath it is the selector. Clicking a slot does exactly what clicking a
- * zone did — select that place and swap in the place drawer without a reload — only the
- * selector changed. The panel takes data and returns HTML; it never fetches or queries.
+ * The floor plan is a static reference <img> and the element grid underneath it is the
+ * selector: clicking a slot selects that place and swaps in the place drawer without a
+ * reload. The panel takes data and returns HTML; it never fetches or queries.
  */
 
 // place_type is derived from line_groups.capacity, so the type filter is a line-level
@@ -37,9 +36,9 @@ const STATUS_FILTERS = [['', 'Все статусы']].concat(
 );
 
 /**
- * The status/type filters carried over from the zone map, applied to elements instead of
- * zones. A line survives a status filter when at least one of its slots matches — hiding a
- * whole line because its rear slot is occupied would hide the free front slot with it.
+ * The status/type filters, applied to elements. A line survives a status filter when at
+ * least one of its slots matches — hiding a whole line because its rear slot is occupied
+ * would hide the free front slot with it.
  *
  * @param {Array} lines
  * @param {{ floorLabel?: string, status?: string, type?: string }} filters

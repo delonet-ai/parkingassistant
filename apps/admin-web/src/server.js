@@ -6,18 +6,21 @@ const http = require('node:http');
 const path = require('node:path');
 const { URL } = require('node:url');
 const { escapeHtml } = require('../../../packages/shared/html');
+const { currentDateInTimezone } = require('../../../packages/shared/dates');
 const { readFormBody, readJsonBody } = require('../../../packages/shared/http');
 const { createRenderModules, renderActiveTab } = require('./render-modules');
-const { PLACE_ROLE_OPTIONS, renderPlaceLines } = require('./render-place-lines');
+const { PLACE_ROLE_OPTIONS, derivePlaceStatus, renderPlaceLines, statusLabel } = require('./render-place-lines');
+
+const PLACE_ROLE_LABELS = Object.fromEntries(PLACE_ROLE_OPTIONS);
 const { renderDayMap } = require('./render-day-map');
 
 const port = Number(process.env.PORT || 3100);
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000';
 const mapStoragePath = process.env.MAP_STORAGE_PATH || '/app/storage/maps';
+const appTimezone = process.env.APP_TIMEZONE || 'Europe/Moscow';
 
-// Static reference plans only. The pixel width/height the SVG viewBox needed are gone
-// with the zone editor — the plan is now a plain <img> and the element list is the source
-// of truth for what exists.
+// Static reference plans only: the floor plan is a plain <img>, and the element list
+// under it is the source of truth for what exists.
 const parkingMaps = [
   {
     id: 'g3',
@@ -128,8 +131,11 @@ function renderJsonPreview(value) {
   return `<code>${escapeHtml(JSON.stringify(value))}</code>`;
 }
 
+// Every parking rule runs in APP_TIMEZONE, so the UI's default date has to as well.
+// Deriving it in UTC made the whole admin UI default to *yesterday* between 21:00 and
+// 24:00 UTC — the Moscow small hours — while the API answered for the real today.
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  return currentDateInTimezone(appTimezone);
 }
 
 function filenameFromMapFilePath(filePath, fallbackFilename) {
@@ -250,7 +256,7 @@ function renderPlacesTable(places, selectedDate = todayIsoDate()) {
         place.placeType,
         place.floorLabel || 'без этажа',
         place.lineGroup ? `линия ${place.lineGroup.code}` : 'без линии',
-        place.isActive ? 'active' : 'inactive'
+        PLACE_ROLE_LABELS[place.placeRole] || PLACE_ROLE_LABELS.regular
       ]
         .map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`)
         .join('');
@@ -680,15 +686,12 @@ function getPlaceOperationalState(model, placeId) {
   const reservation = (dashboard.reservations || []).find((item) => item.parkingPlace.id === placeId) || null;
   const guestRequest = (dashboard.guestRequests || []).find((request) => request.assignedReservation?.parkingPlace?.id === placeId) || null;
   const lineOccupancy = (model.lineOccupancy?.data?.occupancy || []).find((item) => item.parkingPlace.id === placeId) || null;
-  const status = reservation
-    ? reservation.source === 'guest'
-      ? 'guest'
-      : 'occupied'
-    : release
-      ? 'released'
-      : place.isActive
-        ? 'free'
-        : 'blocked';
+  const status = derivePlaceStatus({
+    hasReservation: Boolean(reservation),
+    reservationSource: reservation?.source,
+    hasRelease: Boolean(release),
+    placeRole: place.placeRole
+  });
 
   return {
     place,
@@ -737,7 +740,7 @@ function renderOperationalPlaceCard(model) {
           <h3>${escapeHtml(place.code)} · ${escapeHtml(place.title)}</h3>
           <p class="section-copy">${escapeHtml(place.floorLabel || 'без этажа')} · ${escapeHtml(place.placeType)} · ${place.lineGroup ? escapeHtml(`линия ${place.lineGroup.code}`) : 'без линии'}</p>
         </div>
-        <span class="tag place-status-${escapeHtml(status)}">${escapeHtml(status)}</span>
+        <span class="tag place-status-${escapeHtml(status)}">${escapeHtml(statusLabel(status))}</span>
       </div>
 
       <div class="mini-grid">
@@ -807,6 +810,21 @@ function renderOperationalPlaceCard(model) {
               <input type="hidden" name="mapCode" value="${escapeHtml(selectedMapCode)}" />
               <button class="button-secondary" type="submit">Отменить назначение</button>
               <span>${escapeHtml(reservation.source)}</span>
+            </form>`
+          : ''
+      }
+
+      ${
+        release
+          ? `<form class="inline-action-form" method="post" action="/admin/place-releases/cancel">
+              <input type="hidden" name="releaseId" value="${escapeHtml(release.releaseId)}" />
+              <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+              <button class="button-secondary" type="submit"${reservation ? ' disabled' : ''}>Вернуть место владельцу</button>
+              <span>${
+                reservation
+                  ? 'Сначала отмените назначение — место уже отдано кому-то на этот день.'
+                  : 'Отменяет отдачу: место снова закреплено за владельцем.'
+              }</span>
             </form>`
           : ''
       }
@@ -902,39 +920,36 @@ function renderDateSelector(selectedDate, view = 'day', extraHidden = '') {
 
 function renderLineOccupancyPanel(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
-  const places = (model.places?.data?.places || []).filter((place) => place.lineGroup);
   const employees = model.employees?.data?.employees || [];
   const lineGroups = model.lineGroups?.data?.lineGroups || [];
 
+  if (!lineGroups.length) {
+    return '<p class="empty">Линий пока нет. Добавьте элементы на вкладке «Места».</p>';
+  }
+
+  // The line drives both other selects: which places can be picked, and how many
+  // positions the line actually has. Rendering all places against a hardcoded 1/2/3
+  // meant the operator could submit combinations the API can only reject.
   const lineGroupOptions = lineGroups
-    .map((lineGroup) => `<option value="${escapeHtml(lineGroup.id)}">${escapeHtml(`${lineGroup.code} · ${lineGroup.name}`)}</option>`)
+    .map(
+      (lineGroup) =>
+        `<option value="${escapeHtml(lineGroup.id)}" data-capacity="${escapeHtml(lineGroup.capacity)}">${escapeHtml(`${lineGroup.code} · ${lineGroup.name}`)}</option>`
+    )
     .join('');
-  const placeOptions = places
-    .map((place) => `<option value="${escapeHtml(place.id)}">${escapeHtml(`${place.code} · ${place.title} · ${place.lineGroup.code}`)}</option>`)
+  const placeOptions = lineGroups
+    .flatMap((lineGroup) =>
+      (lineGroup.places || []).map(
+        (place) =>
+          `<option value="${escapeHtml(place.id)}" data-line-id="${escapeHtml(lineGroup.id)}" hidden>${escapeHtml(`${place.code} · позиция ${place.positionHint || '—'}`)}</option>`
+      )
+    )
     .join('');
   const employeeOptions = employees
     .map((employee) => `<option value="${escapeHtml(employee.id)}">${escapeHtml(employee.displayName)}</option>`)
     .join('');
-  const lineRows = lineGroups
-    .map(
-      (lineGroup) => `
-        <tr>
-          <td>${escapeHtml(lineGroup.code)}</td>
-          <td>${escapeHtml(lineGroup.name)}</td>
-          <td>${escapeHtml(lineGroup.capacity)}</td>
-          <td>${lineGroup.floorLabel ? escapeHtml(lineGroup.floorLabel) : '—'}</td>
-          <td>${(lineGroup.places || []).map((place) => escapeHtml(`${place.code} (${place.positionHint || '—'})`)).join(', ') || '—'}</td>
-        </tr>
-      `
-    )
-    .join('');
-
-  if (!lineGroups.length) {
-    return '<p class="empty">Линии пока не настроены. Примените миграцию line groups после импорта каталога.</p>';
-  }
 
   return `
-    <form class="action-form" method="post" action="/admin/line-occupancy">
+    <form class="action-form" method="post" action="/admin/line-occupancy" id="line-occupancy-form">
       <input type="hidden" name="occupancyDate" value="${escapeHtml(selectedDate)}" />
       <label>
         <span>Линия</span>
@@ -946,16 +961,14 @@ function renderLineOccupancyPanel(model) {
       <label>
         <span>Место</span>
         <select name="parkingPlaceId" required>
-          <option value="">Выберите место линии</option>
+          <option value="">Сначала выберите линию</option>
           ${placeOptions}
         </select>
       </label>
       <label>
         <span>Позиция</span>
         <select name="position" required>
-          <option value="1">1 · первый</option>
-          <option value="2">2 · второй</option>
-          <option value="3">3 · третий</option>
+          <option value="">Сначала выберите линию</option>
         </select>
       </label>
       <label>
@@ -967,18 +980,51 @@ function renderLineOccupancyPanel(model) {
       </label>
       <button type="submit">Зафиксировать позицию</button>
     </form>
-    <table>
-      <thead>
-        <tr>
-          <th>Линия</th>
-          <th>Название</th>
-          <th>Мест</th>
-          <th>Этаж</th>
-          <th>Места</th>
-        </tr>
-      </thead>
-      <tbody>${lineRows}</tbody>
-    </table>
+    <script>
+      (function () {
+        var form = document.getElementById('line-occupancy-form');
+        if (!form) {
+          return;
+        }
+
+        var lineSelect = form.querySelector('select[name="lineGroupId"]');
+        var placeSelect = form.querySelector('select[name="parkingPlaceId"]');
+        var positionSelect = form.querySelector('select[name="position"]');
+        var positionLabels = ['первый', 'второй', 'третий'];
+
+        function syncToLine() {
+          var lineId = lineSelect.value;
+          var capacity = Number(lineSelect.selectedOptions[0] && lineSelect.selectedOptions[0].dataset.capacity) || 0;
+
+          for (var i = 0; i < placeSelect.options.length; i += 1) {
+            var option = placeSelect.options[i];
+            if (!option.value) {
+              option.textContent = lineId ? 'Выберите место линии' : 'Сначала выберите линию';
+              continue;
+            }
+            var matches = option.dataset.lineId === lineId;
+            option.hidden = !matches;
+            option.disabled = !matches;
+          }
+
+          if (placeSelect.selectedOptions[0] && placeSelect.selectedOptions[0].disabled) {
+            placeSelect.value = '';
+          }
+
+          positionSelect.innerHTML = '';
+          if (!capacity) {
+            positionSelect.append(new Option('Сначала выберите линию', ''));
+            return;
+          }
+          for (var position = 1; position <= capacity; position += 1) {
+            positionSelect.append(new Option(position + ' · ' + positionLabels[position - 1], String(position)));
+          }
+        }
+
+        lineSelect.addEventListener('change', syncToLine);
+        syncToLine();
+      })();
+    </script>
   `;
 }
 
@@ -1319,7 +1365,7 @@ function renderQueueProcessForm(model) {
   const waitingCount = requests.filter((request) => request.queueEntry?.status === 'waiting').length;
 
   return `
-    <form class="inline-action-form" method="post" action="/admin/queue/process">
+    <form class="inline-action-form" method="post" action="/admin/queue-run">
       <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
       <button type="submit" ${waitingCount ? '' : 'disabled'}>Обработать очередь</button>
       <span>${escapeHtml(waitingCount)} ожидает обработки</span>
@@ -1473,20 +1519,30 @@ function renderJobsPanel(model) {
 
   return `
     <div class="jobs-actions">
+      <form class="inline-action-form" method="post" action="/admin/jobs/lock-departure-plans">
+        <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+        <button type="submit">Job 07:00: закрыть выезды</button>
+        <span>Проставляет <code>locked_at</code>: планы выезда на дату больше не редактируются</span>
+      </form>
       <form class="inline-action-form" method="post" action="/admin/jobs/process-queue">
         <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
-        <button type="submit">Job: начало дня</button>
-        <span>Обработать очередь на выбранную дату</span>
+        <button type="submit">Job 08:00: обработать очередь</button>
+        <span>Раздаёт освобождённые места из очереди с учётом гостевого резерва</span>
+      </form>
+      <form class="inline-action-form" method="post" action="/admin/jobs/rebuild-conflicts">
+        <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
+        <button type="submit">Job 08:05: пересчитать конфликты</button>
+        <span>Чинит <code>is_early</code> по правилу отсечки и пересобирает набор конфликтов</span>
       </form>
       <form class="inline-action-form" method="post" action="/admin/jobs/freeze-next-day">
         <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
-        <button type="submit">Job: 19:00</button>
-        <span>Зафиксировать snapshot доступности на дату</span>
+        <button type="submit">Job 19:00: заморозить день</button>
+        <span>Проставляет <code>frozen_at</code>: отдачу на дату больше нельзя отозвать</span>
       </form>
-      <form class="inline-action-form" method="post" action="/admin/jobs/lock-departure-plans">
+      <form class="inline-action-form" method="post" action="/admin/jobs/unlock-employee-pool">
         <input type="hidden" name="date" value="${escapeHtml(selectedDate)}" />
-        <button type="submit">Job: 07:00</button>
-        <span>Закрыть окно редактирования выездов на дату</span>
+        <button type="submit">Job 19:00: открыть пул сотрудников</button>
+        <span>Считает, сколько мест достанется сотрудникам: всё освобождённое минус гостевой резерв</span>
       </form>
     </div>
     <h4>Последний успешный запуск</h4>
@@ -1916,7 +1972,7 @@ function renderPlaceHistoryCard(model) {
     <div class="history-head">
       <div>
         <h3>${escapeHtml(details.place.code)} · ${escapeHtml(details.place.title)}</h3>
-        <p class="section-copy">${escapeHtml(details.place.floorLabel || 'без этажа')} · ${escapeHtml(details.place.placeType)} · ${details.place.isActive ? 'active' : 'inactive'}</p>
+        <p class="section-copy">${escapeHtml(details.place.floorLabel || 'без этажа')} · ${escapeHtml(details.place.placeType)} · ${details.place.isActive === false ? 'в архиве' : 'в эксплуатации'}</p>
       </div>
       <a href="/?view=catalog&date=${encodeURIComponent(model.selectedDate || todayIsoDate())}">Сбросить выбор</a>
     </div>
@@ -2083,61 +2139,6 @@ function renderEmployeeHistoryCard(model) {
   `;
 }
 
-function renderPlaceCreateForm(model) {
-  const selectedDate = model.selectedDate || todayIsoDate();
-  const lineGroups = model.lineGroups?.data?.lineGroups || [];
-  const lineGroupOptions = lineGroups
-    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(`${group.code} · ${group.name}`)}</option>`)
-    .join('');
-
-  return `
-    <form class="action-form" method="post" action="/admin/places">
-      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
-      <label>
-        <span>Код</span>
-        <input name="code" placeholder="4019" required />
-      </label>
-      <label>
-        <span>Название</span>
-        <input name="title" placeholder="4019(заднее)" required />
-      </label>
-      <label>
-        <span>Тип</span>
-        <select name="placeType" required>
-          <option value="single">single</option>
-          <option value="double">double</option>
-          <option value="triple">triple</option>
-        </select>
-      </label>
-      <label>
-        <span>Этаж</span>
-        <input name="floorLabel" placeholder="4" />
-      </label>
-      <label>
-        <span>Линия</span>
-        <select name="lineGroupId">
-          <option value="">Без линии</option>
-          ${lineGroupOptions}
-        </select>
-      </label>
-      <label>
-        <span>Позиция в линии</span>
-        <select name="linePositionHint">
-          <option value="">—</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-        </select>
-      </label>
-      <label>
-        <span>Guest priority</span>
-        <input type="number" min="1" max="99" name="guestPriorityRank" placeholder="1" />
-      </label>
-      <button type="submit">Создать место</button>
-    </form>
-  `;
-}
-
 function renderPlaceEditForm(model) {
   const selectedDate = model.selectedDate || todayIsoDate();
   const place = model.placeHistory?.data?.place;
@@ -2179,8 +2180,7 @@ function renderPlaceEditForm(model) {
       </label>
       <label>
         <span>Линия</span>
-        <select name="lineGroupId">
-          <option value="">Без линии</option>
+        <select name="lineGroupId" required>
           ${lineGroupOptions}
         </select>
       </label>
@@ -2248,8 +2248,8 @@ function renderEmployeeEditForm(model) {
       <label>
         <span>Активен</span>
         <select name="isActive">
-          <option value="true">Да</option>
-          <option value="false">Нет</option>
+          <option value="true"${employee.isActive === false ? '' : ' selected'}>Да</option>
+          <option value="false"${employee.isActive === false ? ' selected' : ''}>Нет</option>
         </select>
       </label>
       <button type="submit">Сохранить сотрудника</button>
@@ -2393,7 +2393,12 @@ function renderCatalogTab(model) {
   return `
     <section class="card">
       <h2 class="section-title">Создать место</h2>
-      ${renderPlaceCreateForm(model)}
+      <p class="muted">
+        Места создаются только на вкладке «Места», целым элементом (линией на 1–3 места):
+        <code>capacity</code> линии — источник истины для типа места, поэтому одиночная
+        форма «создать место» неизбежно расходилась бы с составом линии.
+        Здесь карточка места только редактируется.
+      </p>
     </section>
 
     <section class="card">
@@ -2434,8 +2439,11 @@ function renderCatalogTab(model) {
 function renderLinesTab(model) {
   return `
     <section class="card">
-      <h2 class="section-title">Multi-линии и фактические позиции</h2>
-      <p class="section-copy">Фиксация позиции и структура линий на выбранную дату.</p>
+      <h2 class="section-title">Фактические позиции в линиях</h2>
+      <p class="section-copy">
+        Кто на какой позиции стоит на выбранную дату. Состав линий — какие элементы
+        существуют и сколько в них мест — живёт на вкладке «Места».
+      </p>
       ${renderLineOccupancyPanel(model)}
     </section>
 
@@ -3282,8 +3290,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const selectedDate = url.searchParams.get('date') || todayIsoDate();
       const requestedView = url.searchParams.get('view') || 'day';
-      const normalizedView = requestedView === 'dashboard' ? 'day' : requestedView;
-      const activeView = ['day', 'requests', 'catalog', 'lines', 'audit', 'places'].includes(normalizedView) ? normalizedView : 'day';
+      const activeView = ['day', 'requests', 'catalog', 'lines', 'audit', 'places'].includes(requestedView) ? requestedView : 'day';
       const placeId = url.searchParams.get('placeId');
       const employeeId = url.searchParams.get('employeeId');
       const requestedMapCode = url.searchParams.get('mapCode') || parkingMaps[0]?.id || 'g4';
@@ -3315,7 +3322,6 @@ const server = http.createServer(async (req, res) => {
         db,
         bootstrap,
         places,
-        releases,
         employees,
         permanentAssignments,
         dashboard,
@@ -3337,7 +3343,6 @@ const server = http.createServer(async (req, res) => {
         fetchJson('/health/db'),
         fetchJson('/auth/bootstrap-status'),
         fetchJson('/admin/places'),
-        fetchJson('/admin/place-releases'),
         fetchJson(`/admin/employees?date=${encodeURIComponent(selectedDate)}`),
         fetchJson(`/admin/permanent-assignments?date=${encodeURIComponent(selectedDate)}&status=${encodeURIComponent(assignmentStatusFilter)}`),
         fetchJson(`/admin/dashboard?date=${encodeURIComponent(selectedDate)}`),
@@ -3380,12 +3385,8 @@ const server = http.createServer(async (req, res) => {
             ? { type: 'ok', text: 'Сотрудник обновлен.' }
           : url.searchParams.get('employeeDisabled') === '1'
             ? { type: 'ok', text: 'Сотрудник отключен.' }
-          : url.searchParams.get('placeCreated') === '1'
-            ? { type: 'ok', text: 'Место создано.' }
           : url.searchParams.get('placeUpdated') === '1'
             ? { type: 'ok', text: 'Место обновлено.' }
-          : url.searchParams.get('placeDisabled') === '1'
-            ? { type: 'ok', text: 'Место отключено.' }
           : url.searchParams.get('assignmentCreated') === '1'
             ? { type: 'ok', text: 'Постоянное закрепление создано.' }
           : url.searchParams.get('assignmentEnded') === '1'
@@ -3412,7 +3413,6 @@ const server = http.createServer(async (req, res) => {
           db,
           bootstrap,
           places,
-          releases,
           employees,
           permanentAssignments,
           dashboard,
@@ -3451,33 +3451,6 @@ const server = http.createServer(async (req, res) => {
       res.end(`<h1>Admin Web Error</h1><pre>${escapeHtml(error.message)}</pre>`);
       return;
     }
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/places') {
-    const form = await readFormBody(req);
-    const selectedDate = form.get('selectedDate') || todayIsoDate();
-    const payload = {
-      code: form.get('code'),
-      title: form.get('title'),
-      floorLabel: form.get('floorLabel'),
-      placeType: form.get('placeType'),
-      lineGroupId: form.get('lineGroupId'),
-      linePositionHint: form.get('linePositionHint'),
-      guestPriorityRank: form.get('guestPriorityRank'),
-      isActive: true
-    };
-    const result = await postJson('/admin/places', payload);
-
-    if (result.ok) {
-      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeCreated=1&placeId=${encodeURIComponent(result.data?.place?.id || '')}` });
-      res.end();
-      return;
-    }
-
-    const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
-    res.end();
-    return;
   }
 
   if (req.method === 'POST' && url.pathname === '/admin/places/update') {
@@ -3885,10 +3858,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/admin/queue/process') {
+  if (req.method === 'POST' && url.pathname === '/admin/queue-run') {
     const form = await readFormBody(req);
     const date = form.get('date') || todayIsoDate();
-    const result = await postJson('/admin/queue/process', { date });
+    const result = await postJson('/admin/jobs/process-queue', { date });
 
     if (result.ok) {
       const assigned = result.data?.assignedCount || 0;
@@ -3906,47 +3879,24 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === '/admin/jobs/process-queue') {
+  // All five scheduled jobs are manually runnable from the Журнал tab for a chosen
+  // date. They differ only in name, so one proxy serves them instead of five copies.
+  const manualJobRoutes = new Map([
+    ['/admin/jobs/lock-departure-plans', 'lock_departure_plans'],
+    ['/admin/jobs/process-queue', 'process_queue'],
+    ['/admin/jobs/rebuild-conflicts', 'rebuild_conflicts'],
+    ['/admin/jobs/freeze-next-day', 'freeze_next_day'],
+    ['/admin/jobs/unlock-employee-pool', 'unlock_employee_pool']
+  ]);
+
+  if (req.method === 'POST' && manualJobRoutes.has(url.pathname)) {
+    const jobName = manualJobRoutes.get(url.pathname);
     const form = await readFormBody(req);
     const date = form.get('date') || todayIsoDate();
-    const result = await postJson('/admin/jobs/process-queue', { date });
+    const result = await postJson(url.pathname, { date });
 
     if (result.ok) {
-      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=process_queue` });
-      res.end();
-      return;
-    }
-
-    const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
-    res.end();
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/jobs/freeze-next-day') {
-    const form = await readFormBody(req);
-    const date = form.get('date') || todayIsoDate();
-    const result = await postJson('/admin/jobs/freeze-next-day', { date });
-
-    if (result.ok) {
-      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=freeze_next_day` });
-      res.end();
-      return;
-    }
-
-    const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&error=${encodeURIComponent(message)}` });
-    res.end();
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/jobs/lock-departure-plans') {
-    const form = await readFormBody(req);
-    const date = form.get('date') || todayIsoDate();
-    const result = await postJson('/admin/jobs/lock-departure-plans', { date });
-
-    if (result.ok) {
-      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=lock_departure_plans` });
+      res.writeHead(303, { location: `/?view=audit&date=${encodeURIComponent(date)}&jobDone=${encodeURIComponent(jobName)}` });
       res.end();
       return;
     }

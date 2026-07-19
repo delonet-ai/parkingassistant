@@ -40,6 +40,7 @@ Core parking rules and policies:
 - reservation rules
 - guest reserve
 - queue processing
+- place inventory: capacity ↔ slot count, slot position assignment, archive-blocker detection
 - line occupancy
 - departure constraints
 - conflict detection
@@ -84,7 +85,13 @@ Common DTOs, enums, time helpers, error codes, and logging primitives used acros
 
 - business logic lives only in backend and domain packages
 - admin web and bot adapter use backend API only
-- all date and cutoff rules use one explicit timezone
+- all date and cutoff rules use one explicit timezone, `APP_TIMEZONE` — including every
+  "today" default, which must never be derived in UTC
 - every important assignment change is traceable with actor and source
-- map interaction is a view layer over canonical `parking_places`
+- the floor plan is a static reference image; the element list is the view layer over
+  canonical `parking_places`, and `line_groups.capacity` is the source of truth for
+  element size
+- a place is never hard-deleted, only archived, so history stays readable
+- there is exactly one write path per concern: places are added and removed through
+  `/admin/place-lines`, and `is_active` is written only by that service
 

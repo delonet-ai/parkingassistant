@@ -20,15 +20,12 @@ erDiagram
     PARKING_PLACES ||--o{ PERMANENT_ASSIGNMENTS : assigned
     PARKING_PLACES ||--o{ RESERVATIONS : reserved
     PARKING_PLACES ||--o{ LINE_OCCUPANCY : used_in
-    PARKING_PLACES ||--o{ PARKING_PLACE_MAP_ZONES : mapped_by
 
     EMPLOYEE_PARKING_REQUESTS ||--o| QUEUE_ENTRIES : queues
     GUEST_PARKING_REQUESTS }o--|| USERS : invited_by
 
     RESERVATIONS ||--o{ RESERVATION_EVENTS : emits
     RESERVATIONS ||--o{ PARKING_MOVEMENTS : moved_by
-
-    PARKING_PLACE_MAPS ||--o{ PARKING_PLACE_MAP_ZONES : contains
 ```
 
 ## Table Notes
@@ -52,10 +49,15 @@ erDiagram
 
 ### `parking_places`
 
-- canonical place catalog
-- type: `single`, `double`, `triple`
-- optional `line_group_id`
-- map binding data
+- canonical place catalog — one row per **slot**
+- `place_type` (`single` / `double` / `triple`) is derived from the owning
+  `line_groups.capacity`, never edited independently
+- `line_group_id NOT NULL` — every place belongs to a line, even a single
+- `line_position_hint` is the slot's physical position in the line, 1 = front
+- `place_role` (`regular` / `rotatable` / `blocked`) — `rotatable` marks the
+  guest pool, `blocked` takes one slot out of service
+- `is_active` / `deleted_at` — archiving. Places are never hard-deleted, so
+  reservations, releases, occupancy and audit history stay readable.
 
 ### `permanent_assignments`
 
@@ -79,13 +81,19 @@ erDiagram
 
 ### `parking_place_maps`
 
-- floor map metadata
-- file reference, floor, version
+- floor plan metadata: file reference, floor, version
+- a **static reference image** only — it has no click targets and no link to
+  `parking_places` (see `line_groups` below)
 
-### `parking_place_map_zones`
+### `line_groups`
 
-- clickable map zones
-- zone geometry linked to `parking_places`
+- a parking **element**: one line holding 1–3 slots
+- `capacity IN (1, 2, 3)` is the source of truth for element size; every active
+  `parking_places` row belongs to exactly one group (`line_group_id NOT NULL`)
+- `parking_places.place_type` is derived from `capacity` and written by the same
+  transaction; `capacity == count(slots) == place_type` is enforced by test
+- `display_order` orders the elements in the Места tab; `archived_at` marks an
+  element whose slots were all archived
 
 ## Core Constraints
 

@@ -15,9 +15,9 @@ const { escapeHtml } = require('../../../packages/shared/html');
  *                   carries its archive button.
  */
 
-// The replacement for the old per-zone "Тип зоны" select: place_role is a first-class
-// parking_places column since 005_place_inventory.sql. 'rotatable' is the guest pool,
-// 'blocked' takes a single slot out of service without archiving the whole line.
+// place_role is a first-class parking_places column since 005_place_inventory.sql.
+// 'rotatable' is the guest pool, 'blocked' takes a single slot out of service without
+// archiving the whole line.
 const PLACE_ROLE_OPTIONS = [
   ['regular', 'Обычное'],
   ['rotatable', 'Ротируемое/гостевое'],
@@ -48,6 +48,33 @@ const POSITION_LABELS = {
   2: ['перёд', 'зад'],
   3: ['перёд', 'середина', 'зад']
 };
+
+/**
+ * Slot status in the precedence the API's `placeSlotStatus` uses:
+ * occupied → guest → released → blocked → rotatable → free.
+ *
+ * The Day tab's element grid gets its statuses from the API, while the place drawer
+ * derives its own from the dashboard payload. Both go through this function so a slot
+ * reading «недоступно» can never open a card reading «свободно».
+ *
+ * @param {{ reservationSource?: string|null, hasReservation?: boolean, hasRelease?: boolean, placeRole?: string }} state
+ * @returns {string} one of PLACE_STATUSES
+ */
+function derivePlaceStatus({ reservationSource = null, hasReservation = false, hasRelease = false, placeRole = 'regular' } = {}) {
+  if (hasReservation) {
+    return reservationSource === 'guest' ? 'guest' : 'occupied';
+  }
+
+  if (hasRelease) {
+    return 'released';
+  }
+
+  if (placeRole === 'blocked' || placeRole === 'rotatable') {
+    return placeRole;
+  }
+
+  return 'free';
+}
 
 function statusLabel(status) {
   const match = PLACE_STATUS_LABELS.find(([value]) => value === status);
@@ -108,9 +135,14 @@ function renderSlot(slot, line, index, { mode, selectedPlaceId, selectedDate, ma
   const status = normalizedStatus(slot.status);
   const position = positionLabel(line.capacity, slot.position, index);
   const selected = Boolean(selectedPlaceId) && slot.placeId === selectedPlaceId;
-  const owner = slot.userDisplayName
-    ? `<span class="place-slot-owner">${escapeHtml(slot.userDisplayName)}</span>`
-    : '';
+  // Who is parked there today is the Day tab's question. The inventory editor keeps
+  // the status word — an operator about to archive a line must see that a slot is
+  // taken — but naming the occupant would pull today's occupancy onto a tab that is
+  // only about what exists.
+  const owner =
+    mode === 'operational' && slot.userDisplayName
+      ? `<span class="place-slot-owner">${escapeHtml(slot.userDisplayName)}</span>`
+      : '';
 
   return `
     <div class="place-slot-row">
@@ -208,10 +240,10 @@ function renderPlaceLines(model = {}, { mode = 'operational' } = {}) {
 }
 
 module.exports = {
-  CAPACITY_LABELS,
   PLACE_ROLE_OPTIONS,
   PLACE_STATUSES,
   PLACE_STATUS_LABELS,
+  derivePlaceStatus,
   normalizedStatus,
   renderPlaceLines,
   statusLabel

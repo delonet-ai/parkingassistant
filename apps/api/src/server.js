@@ -295,7 +295,7 @@ async function handleAdminUsersList() {
 }
 
 async function handleAdminEmployeesList(searchParams) {
-  const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
 
   if (!isIsoDate(date)) {
     return {
@@ -813,142 +813,6 @@ async function handleAdminPlacesList() {
       }
     };
   } catch (error) {
-    return {
-      statusCode: 500,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      }
-    };
-  }
-}
-
-async function handleAdminParkingPlaceCreate(req) {
-  let body;
-
-  try {
-    body = await readJsonBody(req);
-  } catch {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'Request body must be valid JSON'
-      }
-    };
-  }
-
-  const code = typeof body.code === 'string' ? body.code.trim() : '';
-  const title = typeof body.title === 'string' ? body.title.trim() : code;
-  const floorLabel = normalizeOptionalString(body.floorLabel);
-  const placeType = body.placeType;
-  const lineGroupId = normalizeOptionalString(body.lineGroupId);
-  const linePositionHint = body.linePositionHint ? Number(body.linePositionHint) : null;
-  const guestPriorityRank = body.guestPriorityRank ? Number(body.guestPriorityRank) : null;
-  const placeRole = normalizePlaceRole(body.placeRole);
-
-  if (!code || !title || !['single', 'double', 'triple'].includes(placeType)) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'code, title and placeType(single|double|triple) are required'
-      }
-    };
-  }
-
-  if (linePositionHint !== null && (linePositionHint < 1 || linePositionHint > 3)) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'linePositionHint must be between 1 and 3'
-      }
-    };
-  }
-
-  try {
-    const place = await queryOne(
-      `
-        insert into parking_places (
-          code,
-          title,
-          floor_label,
-          place_type,
-          place_role,
-          line_group_id,
-          line_position_hint,
-          guest_priority_rank,
-          catalog_source
-        )
-        values ($1, $2, $3, $4, $5::parking_place_role, $6, $7, $8, 'admin-web')
-        returning id, code, title, floor_label, place_type, place_role, line_group_id, line_position_hint, guest_priority_rank, is_active, created_at
-      `,
-      [code, title, floorLabel, placeType, placeRole, lineGroupId, linePositionHint, guestPriorityRank]
-    );
-
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('parking_place', $1, 'parking_place_created', 'admin-web', $2::jsonb)
-        returning id
-      `,
-      [
-        place.id,
-        JSON.stringify({
-          code,
-          title,
-          floorLabel,
-          placeType,
-          lineGroupId,
-          linePositionHint,
-          guestPriorityRank,
-          placeRole
-        })
-      ]
-    );
-
-    return {
-      statusCode: 201,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        place
-      }
-    };
-  } catch (error) {
-    if (error.code === '23505') {
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking place with the same code already exists'
-        }
-      };
-    }
-
-    if (error.code === '23503') {
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Line group not found'
-        }
-      };
-    }
-
     return {
       statusCode: 500,
       payload: {
@@ -2523,10 +2387,9 @@ function mapParkingPlaceMap(row) {
 
 // Inventory diagnostics for the Места tab.
 //
-// The zone-based checks ("zone without place", "place without zone") died with the
-// geometry — the floor plan is a static reference image now and carries no data.
-// What can still drift is the line invariant: every place belongs to a line, and a
-// line's capacity equals the number of active slots in it.
+// The floor plan is a static reference image and carries no data, so nothing about it
+// can be diagnosed. What can still drift is the line invariant: every place belongs to
+// a line, and a line's capacity equals the number of active slots in it.
 async function handleAdminMapDiagnostics(searchParams) {
   const mapCode = searchParams.get('mapCode');
   const mapFilter = mapCode ? 'where ppm.code = $1' : '';
@@ -2769,9 +2632,9 @@ const PLACE_ROLES = ['regular', 'rotatable', 'blocked'];
 const PLACE_TYPE_BY_CAPACITY = { 1: 'single', 2: 'double', 3: 'triple' };
 
 /**
- * Slot status, in the precedence the map legend used:
+ * Slot status, in the precedence the legend uses:
  * occupied → guest → released → blocked → rotatable → free.
- * The only change is the source of the last two — place_role now, geometry.zoneType before.
+ * The last two come from parking_places.place_role.
  */
 function placeSlotStatus(row) {
   if (row.reservation_id) {
@@ -3368,7 +3231,7 @@ async function handleAdminPlaceLineArchive(req) {
   }
 }
 async function handleAdminDashboard(searchParams) {
-  const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
 
   if (!isIsoDate(date)) {
     return {
@@ -5386,7 +5249,7 @@ async function processQueueForDate(queueDate) {
   }
 }
 
-async function handleAdminQueueProcess(req) {
+async function handleAdminJobProcessQueue(req) {
   let body;
 
   try {
@@ -5402,7 +5265,9 @@ async function handleAdminQueueProcess(req) {
     };
   }
 
-  const queueDate = body.date;
+  // The other four job endpoints default the date; this one demanded it, so the same
+  // "run today's job" call worked against four of the five.
+  const queueDate = body.date || currentDateInTimezone(appTimezone);
 
   if (!isIsoDate(queueDate)) {
     return {
@@ -5439,9 +5304,7 @@ async function handleAdminQueueProcess(req) {
   }
 }
 
-async function handleAdminJobProcessQueue(req) {
-  return handleAdminQueueProcess(req);
-}
+
 
 async function handleAdminJobFreezeNextDay(req) {
   let body;
@@ -6399,6 +6262,22 @@ async function handleAdminPlaceReleaseCreate(req) {
     };
   }
 
+  // A release hands a place to the pool for a day that has not happened yet.
+  // Releasing a day that already ended cannot change who parked — it only
+  // pollutes availability and history with a slot nobody could ever have taken.
+  const today = currentDateInTimezone(appTimezone);
+
+  if (dateFrom < today) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: `dateFrom must not be in the past (today is ${today} in ${appTimezone})`
+      }
+    };
+  }
+
   const client = await pool.connect();
 
   try {
@@ -6611,7 +6490,7 @@ async function handleAdminReservationCancel(req) {
         join parking_places pp on pp.id = r.parking_place_id
         left join users u on u.id = r.user_id
         where r.id = $1
-        for update
+        for update of r
       `,
       [reservationId]
     );
@@ -7888,7 +7767,6 @@ const routeApiRequest = createApiRouter({
     handleAdminManualReservationCreate,
     handleAdminMapBackgroundUpdate,
     handleAdminMapDiagnostics,
-    handleAdminParkingPlaceCreate,
     handleAdminParkingPlaceUpdate,
     handleAdminPermanentAssignmentCreate,
     handleAdminPermanentAssignmentEnd,
@@ -7901,7 +7779,6 @@ const routeApiRequest = createApiRouter({
     handleAdminPlaceReleaseCreate,
     handleAdminPlaceReleasesList,
     handleAdminPlacesList,
-    handleAdminQueueProcess,
     handleAdminReservationCancel,
     handleAdminUsersList,
     handleAuthBootstrapStatus,

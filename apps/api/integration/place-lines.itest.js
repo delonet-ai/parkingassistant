@@ -523,7 +523,7 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
 
       const employee = await fixtures.insertEmployee();
       await fixtures.insertQueuedRequest({ userId: employee.id, date, position: 1 });
-      const queue = await postJson(api.baseUrl, '/admin/queue/process', { date });
+      const queue = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
       assert.equal(queue.payload.assignedCount, 0, 'the queue cannot hand out an archived place');
 
       // The place stays readable — reservations, releases and audit history are the

@@ -1,32 +1,31 @@
 'use strict';
 
-// Characterization tests for place releases and the freeze job.
+// Integration tests for place releases, reservation cancellation and the freeze
+// job.
 //
-// NOTE ON THE 19:00 CUT-OFF
+// NOTE ON THE CUT-OFF RULES
 // -------------------------
-// The plan asks this task to pin "post-19:00 same-day return rejected once the
-// day is frozen". That rule is NOT implemented today, and these tests pin what
-// the code actually does rather than what it should do:
+// These started as Task 3 characterization tests pinning three gaps. All three
+// are now closed and the assertions are inverted in place:
 //
-//   * `POST /admin/jobs/freeze-next-day` is a read-only snapshot. It writes a
-//     job_runs row and an `availability_frozen` audit row, and never sets
-//     place_releases.status = 'frozen' or place_releases.frozen_at, even though
-//     the enum value and the column both exist in the schema.
-//   * No release endpoint compares the request date against the current date or
-//     against 19:00 in APP_TIMEZONE, so a same-day — or even past-dated —
-//     release can still be created and cancelled after the freeze ran.
-//   * The only guard that actually refuses a cancel is an active reservation
-//     standing on the released place.
+//   * Task 7 made `POST /admin/jobs/freeze-next-day` write place_releases.frozen_at
+//     and made a frozen day refuse release cancellation with 409. `status` stays
+//     'active' on purpose — a frozen release is still a released place the next
+//     morning's queue run hands out; "frozen" means "cannot be withdrawn".
+//   * Task 12 added the past-date gate on release creation, so a day that has
+//     already ended can no longer be released.
+//   * Task 12 fixed `POST /admin/reservations/cancel`, which used to 500 for
+//     every reservation and left the operator with no way to undo an assignment.
 //
-// Implementing the cut-off belongs to Task 7 ("Harden scheduled jobs"). The
-// tests below are written so that they fail loudly when that lands, which is the
-// point of a characterization test.
+// Each of those tests carries a comment saying what it used to pin, so the
+// history stays readable without keeping the dead assertions around.
 
 const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 
 const { startApi } = require('../testing/boot-api');
 const { addDays, createFixtures, getJson, postJson } = require('../testing/fixtures');
+const { currentDateInTimezone } = require('../../../packages/shared/dates');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
 
 describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => {
@@ -237,19 +236,16 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       assert.equal(payload.release.status, 'canceled');
     });
 
-    it('CHARACTERIZATION: /admin/reservations/cancel is broken and always 500s', async () => {
-      // DEFECT. handleAdminReservationCancel selects with `for update` over a
-      // query that LEFT JOINs users, and Postgres refuses:
-      //   "FOR UPDATE cannot be applied to the nullable side of an outer join"
-      //
-      // Every cancel therefore fails, for every reservation. Because
-      // /admin/place-releases/cancel refuses while an active reservation stands
-      // on the place, the operator has no way to undo an assignment at all:
-      // the reservation cannot be cancelled and the release cannot be taken
-      // back. The fix is to move `users` out of the locked relation (or lock
-      // only `r`), and it belongs to the Task 12 defect sweep.
+    it('cancels a manual reservation and frees the place again', async () => {
+      // Was a CHARACTERIZATION test in Task 3: handleAdminReservationCancel
+      // selected `for update` over a query that LEFT JOINs users, which Postgres
+      // refuses ("FOR UPDATE cannot be applied to the nullable side of an outer
+      // join"), so *every* cancel 500'd. Combined with /admin/place-releases/cancel
+      // refusing while an active reservation stands on the place, the operator had
+      // no way at all to undo an assignment — both exits were closed. Task 12
+      // narrowed the lock to `for update of r`; the assertions are inverted here.
       const date = '2026-11-14';
-      const { place } = await fixtures.insertReleasedPlace({ date });
+      const { place, release } = await fixtures.insertReleasedPlace({ date });
       await fixtures.insertReleasedPlace({ date });
       const employee = await fixtures.insertEmployee();
 
@@ -264,14 +260,115 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
         reservationId: assigned.payload.reservation.id
       });
 
-      assert.equal(status, 500);
-      assert.match(payload.error, /FOR UPDATE cannot be applied to the nullable side/);
+      assert.equal(status, 200);
+      assert.equal(payload.reservation.status, 'canceled');
 
-      // The reservation is untouched, so the place stays occupied.
-      const stored = await db.query('select status from reservations where id = $1', [
+      const stored = await db.query('select status, canceled_at from reservations where id = $1', [
         assigned.payload.reservation.id
       ]);
-      assert.equal(stored.rows[0].status, 'active');
+      assert.equal(stored.rows[0].status, 'canceled');
+      assert.ok(stored.rows[0].canceled_at, 'the cancel is stamped');
+
+      // The place is released again, so it is back in availability...
+      const availability = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+      assert.equal(availability.payload.availability.availablePlaces, 2);
+
+      // ...and the other exit the defect had closed is open too: with no active
+      // reservation left, the underlying release can now be taken back.
+      const canceledRelease = await postJson(api.baseUrl, '/admin/place-releases/cancel', {
+        releaseId: release.id
+      });
+      assert.equal(canceledRelease.status, 200);
+      assert.equal(canceledRelease.payload.release.status, 'canceled');
+    });
+
+    it('cancels a guest reservation too', async () => {
+      const date = '2026-11-15';
+      await fixtures.insertReleasedPlace({ date });
+
+      const host = await fixtures.insertEmployee();
+      const guest = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
+        hostUserId: host.id,
+        requestDate: date,
+        guestName: 'Гость Отменяемый'
+      });
+      assert.equal(guest.status, 201);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/cancel', {
+        reservationId: guest.payload.request.assignedReservation.id
+      });
+
+      assert.equal(status, 200);
+      assert.equal(payload.reservation.status, 'canceled');
+    });
+
+    it('cancels a reservation whose user_id is null', async () => {
+      // This is the shape that made the defect unavoidable rather than incidental:
+      // `users` is LEFT JOINed because reservations.user_id is nullable — the
+      // schema CHECK only demands a user *or* a guest request — and `for update`
+      // over the whole join is what Postgres refused. The guest endpoint happens
+      // to mint a users row, so it does not exercise the null on its own; this
+      // test writes the legal user-less row directly and pins the narrowed lock.
+      const date = '2026-11-17';
+      const { place } = await fixtures.insertReleasedPlace({ date });
+      const host = await fixtures.insertEmployee();
+
+      const guestUser = await db.query(
+        `
+          insert into users (kind, first_name, last_name, display_name)
+          values ('guest', 'Гость', 'Без Профиля', 'Гость Без Профиля')
+          returning id
+        `
+      );
+
+      const request = await db.query(
+        `
+          insert into guest_parking_requests (guest_user_id, host_user_id, request_date, guest_name, status)
+          values ($1, $2, $3, 'Гость Без Профиля', 'assigned')
+          returning id
+        `,
+        [guestUser.rows[0].id, host.id, date]
+      );
+
+      const reservation = await db.query(
+        `
+          insert into reservations (reservation_date, parking_place_id, user_id, guest_parking_request_id, source)
+          values ($1, $2, null, $3, 'guest')
+          returning id, user_id
+        `,
+        [date, place.id, request.rows[0].id]
+      );
+      assert.equal(reservation.rows[0].user_id, null);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/cancel', {
+        reservationId: reservation.rows[0].id
+      });
+
+      assert.equal(status, 200);
+      assert.equal(payload.reservation.status, 'canceled');
+    });
+
+    it('is idempotent — cancelling a reservation twice stays 200', async () => {
+      const date = '2026-11-16';
+      const { place } = await fixtures.insertReleasedPlace({ date });
+      const employee = await fixtures.insertEmployee();
+
+      const assigned = await postJson(api.baseUrl, '/admin/reservations/manual', {
+        userId: employee.id,
+        parkingPlaceId: place.id,
+        reservationDate: date
+      });
+
+      const first = await postJson(api.baseUrl, '/admin/reservations/cancel', {
+        reservationId: assigned.payload.reservation.id
+      });
+      const second = await postJson(api.baseUrl, '/admin/reservations/cancel', {
+        reservationId: assigned.payload.reservation.id
+      });
+
+      assert.equal(first.status, 200);
+      assert.equal(second.status, 200);
+      assert.equal(second.payload.reservation.status, 'canceled');
     });
 
     it('is idempotent — cancelling twice stays 200 and writes one audit row', async () => {
@@ -363,9 +460,11 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       assert.equal(stored.rows[0].status, 'active');
     });
 
-    it('CHARACTERIZATION: releases can be created for dates already in the past', async () => {
-      // Same gap seen from the other side — no endpoint compares the requested
-      // date against today in APP_TIMEZONE.
+    it('refuses to create a release for a date already in the past', async () => {
+      // Was a CHARACTERIZATION test in Task 3: no endpoint compared the requested
+      // date against today in APP_TIMEZONE, so a place could be "released" for a
+      // day that had already ended — a slot nobody could ever have taken, which
+      // only pollutes availability and history. Task 12 added the gate.
       const pastDate = '2020-01-15';
       const { place } = await ownedPlace(pastDate);
 
@@ -374,7 +473,28 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
         dateFrom: pastDate
       });
 
-      assert.equal(status, 201, 'no past-date gate exists today');
+      assert.equal(status, 400);
+      assert.match(payload.error, /must not be in the past/);
+
+      const stored = await db.query(
+        'select count(*)::int as count from place_releases where parking_place_id = $1',
+        [place.id]
+      );
+      assert.equal(stored.rows[0].count, 0, 'nothing was written');
+    });
+
+    it('accepts a release for today, which is the common case', async () => {
+      // The gate is "before today", not "not today": releasing your place on the
+      // morning you decide to work from home is the flow the operator uses most.
+      const today = currentDateInTimezone(process.env.APP_TIMEZONE || 'Europe/Moscow');
+      const { place } = await ownedPlace(today);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases', {
+        parkingPlaceId: place.id,
+        dateFrom: today
+      });
+
+      assert.equal(status, 201);
       assert.equal(payload.release.status, 'active');
     });
 

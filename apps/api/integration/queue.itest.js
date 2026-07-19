@@ -10,6 +10,7 @@ const { after, before, describe, it } = require('node:test');
 const { startApi } = require('../testing/boot-api');
 const { createFixtures, postJson } = require('../testing/fixtures');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
+const { currentDateInTimezone } = require('../../../packages/shared/dates');
 
 describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () => {
   let db = null;
@@ -47,7 +48,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     await fixtures.insertQueuedRequest({ userId: second.id, date, position: 2 });
     await fixtures.insertQueuedRequest({ userId: first.id, date, position: 1 });
 
-    const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
+    const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
     assert.equal(status, 200);
     assert.equal(payload.assignedCount, 2);
@@ -93,7 +94,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     const employee = await fixtures.insertEmployee();
     await fixtures.insertQueuedRequest({ userId: employee.id, date, position: 1 });
 
-    const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
+    const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
     assert.equal(status, 200);
     assert.equal(payload.assignedCount, 1);
@@ -111,7 +112,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     });
     await fixtures.insertQueuedRequest({ userId: owner.id, date, position: 1 });
 
-    const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
+    const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
     assert.equal(status, 200);
     assert.equal(payload.assignedCount, 0);
@@ -150,7 +151,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
       await fixtures.insertQueuedRequest({ userId: first.id, date, position: 1 });
       await fixtures.insertQueuedRequest({ userId: second.id, date, position: 2 });
 
-      const { status, payload } = await postJson(reserved.baseUrl, '/admin/queue/process', { date });
+      const { status, payload } = await postJson(reserved.baseUrl, '/admin/jobs/process-queue', { date });
 
       assert.equal(status, 200);
       assert.equal(payload.guestReserveMinimum, 1);
@@ -170,10 +171,10 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     const employee = await fixtures.insertEmployee();
     await fixtures.insertQueuedRequest({ userId: employee.id, date, position: 1 });
 
-    const first = await postJson(api.baseUrl, '/admin/queue/process', { date });
+    const first = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
     assert.equal(first.payload.assignedCount, 1);
 
-    const second = await postJson(api.baseUrl, '/admin/queue/process', { date });
+    const second = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
     assert.equal(second.status, 200);
     assert.equal(second.payload.assignedCount, 0);
@@ -193,7 +194,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     const employee = await fixtures.insertEmployee();
     await fixtures.insertQueuedRequest({ userId: employee.id, date, position: 1 });
 
-    const { payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
+    const { payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
     assert.equal(payload.jobRun.jobName, 'process_queue');
     assert.equal(payload.jobRun.status, 'success');
@@ -214,7 +215,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     assert.equal(audit.rows[0].metadata.assignedCount, 1);
 
     // The bookkeeping row is written per run, not per date.
-    await postJson(api.baseUrl, '/admin/queue/process', { date });
+    await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
     const runsAfter = await db.query(
       "select count(*)::int as count from job_runs where job_name = 'process_queue' and target_date = $1::date",
       [date]
@@ -235,11 +236,23 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
     assert.equal(payload.jobRun.jobName, 'process_queue');
   });
 
-  it('rejects a missing or malformed date with 400', async () => {
-    const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', {});
+  it('defaults an omitted date to today, like the other four job endpoints', async () => {
+    // Task 12: this endpoint was the only one of the five that demanded an explicit
+    // date, so "run today's job" worked against four of them and 400'd on this one.
+    const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', {});
+
+    assert.equal(status, 200);
+    assert.equal(payload.jobRun.jobName, 'process_queue');
+    assert.equal(payload.date, currentDateInTimezone(process.env.APP_TIMEZONE || 'Europe/Moscow'));
+  });
+
+  it('rejects a malformed date with 400', async () => {
+    const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', {
+      date: '08.10.2026'
+    });
 
     assert.equal(status, 400);
-    assert.match(payload.error, /date is required and must use YYYY-MM-DD format/);
+    assert.match(payload.error, /YYYY-MM-DD format/);
   });
 
   describe('interaction with manual assignment', () => {
@@ -261,7 +274,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
         alreadyAssigned.request.id
       ]);
 
-      const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
+      const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
       assert.equal(status, 200);
       assert.equal(payload.assignedCount, 1);
@@ -310,7 +323,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
       );
       assert.equal(queued.rows[0].assigned_reservation_id, assignment.payload.reservation.id);
 
-      const { status, payload } = await postJson(api.baseUrl, '/admin/queue/process', { date });
+      const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
 
       assert.equal(status, 200, 'one manually-served employee must not fail the batch');
       assert.equal(payload.assignedCount, 1);

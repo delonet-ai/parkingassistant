@@ -331,16 +331,68 @@ action on that tab are untouched and still work.
 - [x] Mark completed.
 
 ### Task 12: Logic & UI finalization sweep (against the seeded stand)
-- [ ] With the demo data loaded, walk each admin tab (День, Заявки, Линии, Справочники, Журнал, Места) and its backing endpoints end-to-end; list every defect, placeholder, dead control, or incomplete flow.
-- [ ] Confirm the Линии / Места boundary holds in practice: Линии shows only today's occupancy, Места shows only what exists. If a control on one tab is really answering the other tab's question, move it.
-- [ ] Fix the defects surfaced here and by the Phase 0 tests; remove placeholder/dead UI.
-- [ ] Verify the retired code path left nothing behind: `grep -ri 'zone\|geometry\|normalizedRect\|svgPoint\|viewBox\|view=maps'` over `apps/`, `packages/`, `scripts/`, and `docs/` returns hits **only** in migration `004` and its changelog entry. Anything else is a leftover and gets deleted, not documented.
-- [ ] Add a focused test for each defect fixed so it can't regress.
-- [ ] Confirm the single operator can complete every core flow from the UI: add a single/double/triple element, archive one, create place/employee, assign permanent, release, employee request → queue process, create+assign guest (with warning), set line position, view blocking contacts, read audit/history.
-- [ ] Verify the inventory change propagates system-wide: adding and archiving elements moves dashboard totals, availability, the 5-guest reserve, and queue capacity consistently.
-- [ ] Update `docs/TECHNICAL_README.md`, `docs/ERD.md`, `docs/ARCHITECTURE.md`, and `README.md` to describe the place-inventory model, the Карта → Места rename, and drop every mention of zone geometry.
-- [ ] Run all validation commands; green.
-- [ ] Mark completed.
+- [x] With the demo data loaded, walk each admin tab (День, Заявки, Линии, Справочники, Журнал, Места) and its backing endpoints end-to-end; list every defect, placeholder, dead control, or incomplete flow. — the walk is now a **committed test** rather than a one-off: `apps/admin-web/testing/stub-api.js` boots the real admin-web against a canned API and `apps/admin-web/src/tabs.test.js` (22 tests) renders and asserts every tab. admin-web is a pure proxy over the API, so a fixed payload per path exercises the real handler, renderers and HTML with no database — which is what finally made this 4 000-line SSR file testable at all. Findings are listed below.
+- [x] Confirm the Линии / Места boundary holds in practice: Линии shows only today's occupancy, Места shows only what exists. If a control on one tab is really answering the other tab's question, move it. — it did **not** hold in either direction and both leaks are fixed. Линии rendered a full line-inventory table (code, name, `capacity`, floor, member place codes) under the heading «Multi-линии и **структура линий**» — the Места question on the occupancy tab; the table is gone and the heading is now «Фактические позиции в линиях». Места named the current occupant on every slot — the Day tab's question; `renderSlot` now emits `userDisplayName` in `'operational'` mode only, keeping the status word (an operator about to archive a line must see the slot is taken) without naming who. The other half of the boundary already held: no add/archive control ever existed on Линии.
+- [x] Fix the defects surfaced here and by the Phase 0 tests; remove placeholder/dead UI. — see the two lists below.
+- [x] Verify the retired code path left nothing behind. — the plan's grep says `004`; the migration is actually `005_place_inventory.sql` (Task 7 took `004`). Remaining hits are that migration, its integration test, the historical `001_initial_schema.sql` that created the table, the schema changelog / ADR-002 supersession note, and the render tests that assert the zone markup is **absent** — regression guards, not leftovers. Every narrating comment in live code was trimmed. **The plan's grep is Latin-only and therefore missed the Russian word**: `зон`/`зоны`/`геометрия`/`кликабельные зоны` still described live features in `README.md`, `docs/TECHNICAL_README.md` (incl. the tab list, which still said «вкладка `Карта`»), and `docs/DEPLOYMENT.md`. Re-run with a Cyrillic pattern and mind that `диапазон` and `таймзона` are false positives.
+- [x] Add a focused test for each defect fixed so it can't regress. — `tabs.test.js` (22) covers the UI defects one `it` per finding; `releases.itest.js` gained 5 for the two Phase 0 defects; `apps/api/src/today-default.test.js` (4) guards the timezone defect; `queue.itest.js` pins the date default.
+- [x] Confirm the single operator can complete every core flow from the UI: add a single/double/triple element, archive one, create place/employee, assign permanent, release, employee request → queue process, create+assign guest (with warning), set line position, view blocking contacts, read audit/history. — walked end-to-end against the seeded database: create triple → 201 with 3 slots, dashboard/place-lines 200, archive → 200, and all five jobs run. **Two flows were impossible before this task and now are not:** undoing an assignment (the reservation-cancel 500) and taking a release back (no UI control existed for `/admin/place-releases/cancel` at all, only an unreachable proxy).
+- [x] Verify the inventory change propagates system-wide: adding and archiving elements moves dashboard totals, availability, the 5-guest reserve, and queue capacity consistently. — asserted round-trip: availability is byte-identical before the add and after the archive; the propagation itself is pinned by Task 9's `place-lines.itest.js`.
+- [x] Update `docs/TECHNICAL_README.md`, `docs/ERD.md`, `docs/ARCHITECTURE.md`, and `README.md` to describe the place-inventory model, the Карта → Места rename, and drop every mention of zone geometry. — plus `docs/DEPLOYMENT.md`, `AGENTS.md` and `docs/adr/002-database-baseline.md` (a supersession note, not a rewrite — an ADR is a dated record). TECHNICAL_README gained the three-tab boundary table and an M4 «superseded» entry; ERD replaced the zone table with `line_groups` and the real `parking_places` columns; ARCHITECTURE gained the inventory rules and the one-write-path rule; README gained an «Инвентарь мест» section.
+- [x] Run all validation commands; green. — `npm run check` / `lint` clean, `npm test` **129** pass (103 + 22 tab walk + 4 timezone), `npm run test:integration` **144/144** against a live Postgres, stable over 4 consecutive full runs.
+- [x] Mark completed.
+
+**Two Phase 0 defects fixed, their `CHARACTERIZATION:` tests inverted — there are now none left in the repo:**
+
+1. `POST /admin/reservations/cancel` 500'd for *every* reservation: `for update` over a select that
+   `left join`s `users`, which Postgres refuses outright. Narrowed to `for update of r`. The nullable
+   side is not incidental — `reservations.user_id` is nullable by schema (the CHECK demands a user
+   *or* a guest request), so the join has to stay outer. A test writes that legal user-less row
+   directly, because the guest endpoint mints a `users` row and would not have exercised the null.
+2. Releases could be created for dates already past. `POST /admin/place-releases` now refuses a
+   `dateFrom` before today in `APP_TIMEZONE`; releasing *today* is still allowed, since that is the
+   flow the operator uses most.
+
+**Defects found by the sweep itself:**
+
+3. **The whole admin UI defaulted to yesterday for three hours a day.** `todayIsoDate()` in admin-web
+   and two API handlers derived today as `new Date().toISOString().slice(0, 10)` — UTC — while every
+   parking rule and every other handler uses `APP_TIMEZONE`. Between 21:00 and 24:00 UTC (the Moscow
+   small hours) the dashboard KPI panel answered for 2026-07-19 while the availability panel beside it
+   answered for 2026-07-20. This surfaced as a demo-seed integration failure that looked like a flake
+   and was not: running the suite inside that window is the only way to see it. All three now use
+   `currentDateInTimezone(appTimezone)`, and the guard asserts the UTC form is absent from the source,
+   because a faithful reproduction would pass 21 hours out of 24.
+4. **Two write paths to place creation, one of them broken.** Справочники had its own «Создать место»
+   form posting `lineGroupId: ''`; `line_group_id` has been `NOT NULL` since 005 and the handler maps
+   only `23505`/`23503`, so a `23502` fell through to a raw 500. Even with a line chosen it produced a
+   place whose free-text `placeType` broke the `capacity == slot count == place_type` invariant the
+   diagnostics then flagged. Task 9 said `/admin/place-lines` is the only way to add or remove places,
+   so the form, the admin-web proxy, `POST /admin/places`, its route and its handler are all deleted.
+5. **The place drawer and the slot you clicked disagreed.** The drawer derived status from `isActive`
+   and ignored `place_role`, so a slot reading «недоступно» opened a card reading «свободно» — and
+   `isActive` was itself dead, since `/admin/places` filters `deleted_at is null` and archiving sets
+   both together. Both now go through one exported `derivePlaceStatus()`, and the drawer prints the
+   Russian word instead of the raw English token.
+6. **The employee edit form silently reactivated disabled employees.** Neither «Активен» option
+   carried `selected`, so it always rendered «Да» and every save posted `isActive: true`.
+7. **The line-position form routinely produced API rejections.** It listed every place regardless of
+   the chosen line and offered a hardcoded 1/2/3 regardless of that line's capacity. Both selects are
+   now driven by the chosen line.
+8. **Two of the five scheduled jobs had no button.** Task 7 added `unlock-employee-pool` and
+   `rebuild-conflicts`; the Журнал panel wired three. All five are there now, labelled with their
+   schedule, and the four near-identical proxies collapsed into one route table.
+9. **`/admin/queue/process` and `/admin/jobs/process-queue` were the same handler behind two routes**,
+   and only one of them was wrapped in `job_runs` from the UI. The bare route is deleted; the Заявки
+   control keeps its in-context assigned/skipped feedback but now goes through the job endpoint, so a
+   manual run is recorded like a scheduled one. That endpoint was also the only one of the five that
+   demanded an explicit date — it now defaults to today like its siblings.
+10. **Dead UI removed:** the `placeCreated`/`placeDisabled` notices (the latter left over from the
+    deleted `/admin/places/disable`), the `?view=dashboard` → `day` alias the no-compatibility rule
+    forbids, the «Без линии» option that `NOT NULL` made impossible and `update`'s coalesce made a
+    no-op, the «Примените миграцию line groups» empty-state instructing a step that no longer exists,
+    the unreachable `place.isActive` branches, and `fetchJson('/admin/place-releases')` — fetched on
+    **every** page render, destructured, passed into `renderPage` and read by no renderer.
 
 > 🎯 **Milestone:** after Task 12 the business logic is complete for one operator and the UI is fully
 > testable on the stand. Phases 3–4 below are maintainability/hardening and can follow at any pace.

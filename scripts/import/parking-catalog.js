@@ -79,8 +79,7 @@ function rowToPlace(row) {
     title: placeRaw,
     floorLabel,
     linePositionHint,
-    // A guest place is the guest pool, which is what place_role = 'rotatable' means now
-    // that the zone geometry that used to carry it is gone.
+    // A guest place is the guest pool, which is what place_role = 'rotatable' means.
     placeRole: guest ? 'rotatable' : 'regular',
     guestPriorityRank: guest ? 1 : null,
     metadata: {

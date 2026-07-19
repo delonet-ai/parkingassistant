@@ -38,7 +38,6 @@ const rootEndpoints = [
   '/admin/employee-parking-requests',
   '/admin/guest-parking-requests',
   '/admin/guest-parking-requests/assign',
-  '/admin/queue/process',
   '/admin/jobs/process-queue',
   '/admin/jobs/freeze-next-day',
   '/admin/jobs/lock-departure-plans',
@@ -120,11 +119,6 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
 
     if (req.method === 'GET' && url.pathname === '/admin/places') {
       await dispatch(() => handlers.handleAdminPlacesList(), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/places') {
-      await dispatch(() => handlers.handleAdminParkingPlaceCreate(req), res);
       return;
     }
 
@@ -292,11 +286,6 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
 
     if (req.method === 'POST' && url.pathname === '/admin/guest-parking-requests/cancel') {
       await dispatch(() => handlers.handleAdminGuestParkingRequestCancel(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/queue/process') {
-      await dispatch(() => handlers.handleAdminQueueProcess(req), res);
       return;
     }
 

@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted. Частично заменено решением Phase 2 о place inventory: таблица
+`parking_place_map_zones` и вся геометрия кликабельных зон удалены миграцией
+`005_place_inventory.sql`. План этажа остался статичной картинкой-ориентиром, а роль
+места (`regular` / `rotatable` / `blocked`), которая жила внутри геометрии зоны, стала
+колонкой `parking_places.place_role`. Остальные решения этого ADR в силе.
 
 ## Context
 

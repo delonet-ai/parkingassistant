@@ -76,17 +76,35 @@ The harness serializes schema application on a `pg_advisory_lock`: `node --test`
 file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same
 database-wide extension.
 
+#### Rendering the admin UI in a test
+
+`apps/admin-web/testing/stub-api.js` boots the real `admin-web` process against a canned HTTP API,
+so every tab can be rendered and asserted without a database. admin-web is a pure proxy over the API
+— each tab is `fetchJson` plus a renderer — so a fixed payload per path exercises the real handler,
+the real renderers and the real HTML. `apps/admin-web/src/tabs.test.js` is the tab walk built on it,
+and it runs inside `npm test`. Use it for anything about *rendered markup*; use a `.itest.js` only
+when the assertion needs real SQL.
+
+The stub records every path the UI requested, which is how a test asserts a request is **not** made
+(e.g. no page may fetch data no renderer reads).
+
 #### Characterization tests pin defects, they do not hide them
 
-Several integration tests are prefixed `CHARACTERIZATION:` and assert behavior that is **wrong**.
-They exist because Phase 0's job is to pin current behavior before refactoring, and a defect that is
-not pinned gets silently preserved or silently changed. Each one names the task that should fix it
-and will fail loudly when it does — that failure is the signal, not a regression. Known ones:
+Phase 0's job was to pin current behavior before refactoring, because a defect that is not pinned
+gets silently preserved or silently changed. Tests prefixed `CHARACTERIZATION:` asserted behavior
+that was **wrong** and named the task that should fix it.
 
-- `POST /admin/reservations/cancel` always returns 500 (`FOR UPDATE` over a `LEFT JOIN`), so an
-  assignment cannot be undone through the API at all. → Task 12.
-- Releases can still be created for dates already in the past — no endpoint compares the requested
-  date against "now" in `APP_TIMEZONE`. → Task 12.
+**There are none left.** Every one has been inverted in place, and each carries a comment saying what
+it used to pin so the history stays readable without the dead assertions.
+
+Fixed in Task 12, and the tests that pinned them now assert the corrected behavior:
+
+- `POST /admin/reservations/cancel` always returned 500: `for update` over a select that `left join`s
+  `users`, which Postgres refuses. Combined with `/admin/place-releases/cancel` refusing while an
+  active reservation stands on the place, the operator had **no way to undo an assignment** — both
+  exits were closed. The lock is now narrowed to `for update of r`.
+- Releases could be created for dates already in the past — no endpoint compared the requested date
+  against "now" in `APP_TIMEZONE`. `POST /admin/place-releases` now refuses a `dateFrom` before today.
 
 Fixed in Task 7, and the tests that pinned them now assert the corrected behavior:
 
