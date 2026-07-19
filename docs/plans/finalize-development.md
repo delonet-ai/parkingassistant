@@ -525,15 +525,39 @@ highlight is not.
 ## Phase 4 — Wrap-up
 
 ### Task 20: End-to-end happy-path integration test
-- [ ] One integration test walking a full day: import catalog → add a triple element → permanent assignment → release → employee request → queue process → guest assignment with warning → line occupancy → contact access → archive an element → audit-trail assertions.
-- [ ] Run `npm run test:integration`; green.
-- [ ] Mark completed.
+- [x] One integration test walking a full day: import catalog → add a triple element → permanent assignment → release → employee request → queue process → guest assignment with warning → line occupancy → contact access → archive an element → audit-trail assertions. — `apps/api/integration/e2e-day.itest.js` (15 ordered steps on one scratch schema). Two rules make it a *seam* test rather than a fourteenth per-context suite: the cases share state and run in order (each `it` is a step of the same day), and **every precondition is created through the HTTP API** — not one `insert` via `fixtures.js`. That is what lets it fail on a handover the isolated suites cannot see: a catalog import producing lines the queue cannot pick from, or a release the guest allocator ignores.
+- [x] Run `npm run test:integration`; green. — **281/281** (266 + 15) against a live Postgres, stable over 4 consecutive full runs. **Not one of the 122 golden snapshots was regenerated.** `npm run check` (167 files) / `lint` clean, `npm test` **277** — the new file is a `.itest.js`, so it stays out of the `npm test` gate.
+- [x] Mark completed.
 
 ### Task 21: Lightweight review pass
 - [ ] Run `ralphex --review` on the accumulated branch; triage findings.
 - [ ] Confirm: all SQL parameterized (no string-concatenated user input), input validation on every write endpoint, consistent error payloads, boundaries still enforced.
 - [ ] Fix issues; re-run all validation commands; all green.
 - [ ] Mark completed.
+
+**The day the test walks, and why it is shaped that way.** The catalog import plants a triple
+(101/102/103) and two singles on floor 4; a second triple is added on floor 5 purely so there is an
+element the archive step may actually remove — the operational line cannot be archived, and step 13
+asserts that refusal by name. The single 110 is released alongside the rear slot 103 so the pool is
+two places wide when the queue runs against `GUEST_RESERVE_MINIMUM=1`, which pins **both** halves of
+the reserve arithmetic in one run: the queue serves exactly one employee and stops. Which place it
+picks is not left to chance — the queue prefers `double → triple → single` and the guest allocator
+prefers `single → double → triple`, so the two orderings are what make 103 the deterministic queue
+pick. The withdrawn release in step 8 (`/admin/place-releases/cancel`) then empties the pool so the
+guest in step 9 can only land on the front slot 101, which is what puts the guest **in front of** the
+16:30 early departure behind it and makes `warnings` non-empty rather than incidental.
+
+**Three things this suite deliberately does not assert:** the reserve arithmetic in detail (Task 7's
+`jobs.itest.js`), inventory propagation into availability and the dashboard (Task 9's
+`place-lines.itest.js`), and the HTTP payload contract (Task 14's golden snapshots). Duplicating them
+here would make the walk fail twice for one cause and read as coverage it is not providing.
+
+**One thing the walk needed that no fixture had:** the day begins with a *real* catalog import, so
+the test generates an `.xlsx` in a temp dir and runs `scripts/import/parking-catalog.js` as a
+subprocess against the scratch schema. That is the only place in the test suite where the import runs
+end-to-end from a file, and it is what pins the classification the import boundary used to lose —
+`Гостевое` still arriving as `place_role = 'rotatable'`, and the front/middle/rear wording deriving
+the line without ever deciding `place_type`.
 
 ---
 

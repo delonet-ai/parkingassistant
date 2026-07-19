@@ -78,6 +78,16 @@ The harness serializes schema application on a `pg_advisory_lock`: `node --test`
 file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same
 database-wide extension.
 
+#### The end-to-end day
+
+`apps/api/integration/e2e-day.itest.js` is the one suite that crosses every context: it walks a
+single operating day from an empty database (catalog import → add an element → permanent assignments
+→ releases → queue → guest assignment with a warning → line occupancy → blocking contacts → archive
+→ audit trail). Its cases are **ordered** and share state — each `it` is a step of the same day, not
+an independent scenario — and every precondition is created through the HTTP API rather than with
+fixtures, because the seams between the steps are what it exists to test. The per-context suites stay
+the right place for edge cases; add to this one only when a *flow* changes shape.
+
 #### Golden HTTP snapshots
 
 `apps/api/test/golden/*.json` holds a recorded `(status, payload)` per endpoint group, replayed by
