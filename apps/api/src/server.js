@@ -757,6 +757,7 @@ async function handleAdminPlacesList() {
           pp.title,
           pp.floor_label,
           pp.place_type,
+          pp.place_role,
           pp.line_position_hint,
           pp.guest_priority_rank,
           pp.is_active,
@@ -789,6 +790,7 @@ async function handleAdminPlacesList() {
           title: place.title,
           floorLabel: place.floor_label,
           placeType: place.place_type,
+          placeRole: place.place_role,
           linePositionHint: place.line_position_hint,
           guestPriorityRank: place.guest_priority_rank,
           isActive: place.is_active,
@@ -845,7 +847,7 @@ async function handleAdminParkingPlaceCreate(req) {
   const lineGroupId = normalizeOptionalString(body.lineGroupId);
   const linePositionHint = body.linePositionHint ? Number(body.linePositionHint) : null;
   const guestPriorityRank = body.guestPriorityRank ? Number(body.guestPriorityRank) : null;
-  const isActive = body.isActive === undefined ? true : Boolean(body.isActive);
+  const placeRole = normalizePlaceRole(body.placeRole);
 
   if (!code || !title || !['single', 'double', 'triple'].includes(placeType)) {
     return {
@@ -877,16 +879,16 @@ async function handleAdminParkingPlaceCreate(req) {
           title,
           floor_label,
           place_type,
+          place_role,
           line_group_id,
           line_position_hint,
           guest_priority_rank,
-          is_active,
           catalog_source
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, 'admin-web')
-        returning id, code, title, floor_label, place_type, line_group_id, line_position_hint, guest_priority_rank, is_active, created_at
+        values ($1, $2, $3, $4, $5::parking_place_role, $6, $7, $8, 'admin-web')
+        returning id, code, title, floor_label, place_type, place_role, line_group_id, line_position_hint, guest_priority_rank, is_active, created_at
       `,
-      [code, title, floorLabel, placeType, lineGroupId, linePositionHint, guestPriorityRank, isActive]
+      [code, title, floorLabel, placeType, placeRole, lineGroupId, linePositionHint, guestPriorityRank]
     );
 
     await queryOne(
@@ -911,7 +913,7 @@ async function handleAdminParkingPlaceCreate(req) {
           lineGroupId,
           linePositionHint,
           guestPriorityRank,
-          isActive
+          placeRole
         })
       ]
     );
@@ -982,7 +984,8 @@ async function handleAdminParkingPlaceUpdate(req) {
   const lineGroupId = normalizeOptionalString(body.lineGroupId);
   const linePositionHint = body.linePositionHint ? Number(body.linePositionHint) : null;
   const guestPriorityRank = body.guestPriorityRank ? Number(body.guestPriorityRank) : null;
-  const isActive = body.isActive === undefined ? true : Boolean(body.isActive);
+  // Absent placeRole means "leave it alone" — the field is optional on this endpoint.
+  const placeRole = PLACE_ROLES.includes(body.placeRole) ? body.placeRole : null;
 
   if (!placeId || !code || !title || !['single', 'double', 'triple'].includes(placeType)) {
     return {
@@ -1006,6 +1009,10 @@ async function handleAdminParkingPlaceUpdate(req) {
     };
   }
 
+  // is_active is deliberately NOT writable here. Removing a place from service goes
+  // through /admin/place-lines/archive and nowhere else; a single slot is taken out of
+  // rotation with place_role = 'blocked'. Two write paths to one column is the drift
+  // this endpoint used to have with the now-deleted /admin/places/disable.
   try {
     const place = await queryOne(
       `
@@ -1015,16 +1022,18 @@ async function handleAdminParkingPlaceUpdate(req) {
           title = $3,
           floor_label = $4,
           place_type = $5,
-          line_group_id = $6,
+          place_role = coalesce($9::parking_place_role, place_role),
+          -- Every place belongs to a line since 005_place_inventory.sql, so an update
+          -- that does not name one keeps the current line instead of orphaning the row.
+          line_group_id = coalesce($6, line_group_id),
           line_position_hint = $7,
           guest_priority_rank = $8,
-          is_active = $9,
           updated_at = now()
         where id = $1
           and deleted_at is null
-        returning id, code, title, floor_label, place_type, line_group_id, line_position_hint, guest_priority_rank, is_active, updated_at
+        returning id, code, title, floor_label, place_type, place_role, line_group_id, line_position_hint, guest_priority_rank, is_active, updated_at
       `,
-      [placeId, code, title, floorLabel, placeType, lineGroupId, linePositionHint, guestPriorityRank, isActive]
+      [placeId, code, title, floorLabel, placeType, lineGroupId, linePositionHint, guestPriorityRank, placeRole]
     );
 
     if (!place) {
@@ -1060,7 +1069,7 @@ async function handleAdminParkingPlaceUpdate(req) {
           lineGroupId,
           linePositionHint,
           guestPriorityRank,
-          isActive
+          placeRole
         })
       ]
     );
@@ -1105,91 +1114,6 @@ async function handleAdminParkingPlaceUpdate(req) {
       }
     };
   }
-}
-
-async function handleAdminParkingPlaceDisable(req) {
-  let body;
-
-  try {
-    body = await readJsonBody(req);
-  } catch {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'Request body must be valid JSON'
-      }
-    };
-  }
-
-  const placeId = body.placeId;
-
-  if (!placeId) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'placeId is required'
-      }
-    };
-  }
-
-  const place = await queryOne(
-    `
-      update parking_places
-      set
-        is_active = false,
-        deleted_at = now(),
-        updated_at = now()
-      where id = $1
-        and deleted_at is null
-      returning id, code, title
-    `,
-    [placeId]
-  );
-
-  if (!place) {
-    return {
-      statusCode: 404,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'Parking place not found'
-      }
-    };
-  }
-
-  await queryOne(
-    `
-      insert into audit_logs (
-        entity_type,
-        entity_id,
-        action,
-        actor_service,
-        metadata
-      )
-      values ('parking_place', $1, 'parking_place_disabled', 'admin-web', $2::jsonb)
-      returning id
-    `,
-    [
-      placeId,
-      JSON.stringify({
-        code: place.code,
-        title: place.title
-      })
-    ]
-  );
-
-  return {
-    statusCode: 200,
-    payload: {
-      status: 'ok',
-      service: 'api',
-      place
-    }
-  };
 }
 
 async function handleAdminPermanentAssignmentsList(searchParams) {
@@ -2597,6 +2521,12 @@ function mapParkingPlaceMap(row) {
   };
 }
 
+// Inventory diagnostics for the Места tab.
+//
+// The zone-based checks ("zone without place", "place without zone") died with the
+// geometry — the floor plan is a static reference image now and carries no data.
+// What can still drift is the line invariant: every place belongs to a line, and a
+// line's capacity equals the number of active slots in it.
 async function handleAdminMapDiagnostics(searchParams) {
   const mapCode = searchParams.get('mapCode');
   const mapFilter = mapCode ? 'where ppm.code = $1' : '';
@@ -2622,80 +2552,44 @@ async function handleAdminMapDiagnostics(searchParams) {
     values
   );
 
-  const zoneWithoutPlace = await queryMany(
+  // line_group_id is NOT NULL since 005_place_inventory.sql, so this should always be
+  // empty. It is checked anyway: if it ever isn't, the constraint was dropped and the
+  // operator sees it here instead of finding out through a broken element list.
+  const placeWithoutLine = await queryMany(
     `
       select
-        ppm.code as map_code,
-        ppm.title as map_title,
-        z.id as zone_id,
-        z.zone_key,
-        z.geometry,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
-        pp.deleted_at as parking_place_deleted_at
-      from parking_place_map_zones z
-      join parking_place_maps ppm on ppm.id = z.parking_place_map_id
-      left join parking_places pp on pp.id = z.parking_place_id
-      where ppm.is_active = true
-        and (pp.id is null or pp.deleted_at is not null)
-        ${mapCode ? 'and ppm.code = $1' : ''}
-      order by ppm.code, z.zone_key
-    `,
-    values
-  );
-
-  const inactivePlaceWithActiveZone = await queryMany(
-    `
-      select
-        ppm.code as map_code,
-        ppm.title as map_title,
-        z.id as zone_id,
-        z.zone_key,
-        z.geometry,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
-        pp.is_active
-      from parking_place_map_zones z
-      join parking_place_maps ppm on ppm.id = z.parking_place_map_id
-      join parking_places pp on pp.id = z.parking_place_id
-      where ppm.is_active = true
-        and pp.deleted_at is null
-        and pp.is_active = false
-        ${mapCode ? 'and ppm.code = $1' : ''}
-      order by ppm.code, pp.code
-    `,
-    values
-  );
-
-  const placeWithoutZone = await queryMany(
-    `
-      select
-        ppm.code as map_code,
-        ppm.title as map_title,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
+        pp.id,
+        pp.code,
+        pp.title,
         pp.floor_label,
         pp.place_type
-      from parking_place_maps ppm
-      join parking_places pp
-        on pp.deleted_at is null
+      from parking_places pp
+      where pp.deleted_at is null
         and pp.is_active = true
-        and (
-          pp.floor_label = ppm.floor_label
-          or pp.floor_label = regexp_replace(ppm.code, '^g', '', 'i')
-        )
-      left join parking_place_map_zones z
-        on z.parking_place_map_id = ppm.id
-        and z.parking_place_id = pp.id
-      where ppm.is_active = true
-        and z.id is null
-        ${mapCode ? 'and ppm.code = $1' : ''}
-      order by ppm.code, pp.code
-    `,
-    values
+        and pp.line_group_id is null
+      order by pp.floor_label nulls last, pp.code
+    `
+  );
+
+  const lineCapacityMismatch = await queryMany(
+    `
+      select
+        lg.id,
+        lg.code,
+        lg.name,
+        lg.floor_label,
+        lg.capacity,
+        count(pp.id)::int as slot_count
+      from line_groups lg
+      left join parking_places pp
+        on pp.line_group_id = lg.id
+        and pp.deleted_at is null
+        and pp.is_active = true
+      where lg.archived_at is null
+      group by lg.id, lg.code, lg.name, lg.floor_label, lg.capacity
+      having count(pp.id) <> lg.capacity
+      order by lg.floor_label nulls last, lg.code
+    `
   );
 
   return {
@@ -2705,44 +2599,22 @@ async function handleAdminMapDiagnostics(searchParams) {
       service: 'api',
       maps: maps.map(mapParkingPlaceMap),
       diagnostics: {
-        zoneWithoutPlace: zoneWithoutPlace.map((item) => ({
-          mapCode: item.map_code,
-          mapTitle: item.map_title,
-          zoneId: item.zone_id,
-          zoneKey: item.zone_key,
-          geometry: item.geometry,
-          parkingPlace: item.parking_place_id
-            ? {
-                id: item.parking_place_id,
-                code: item.parking_place_code,
-                title: item.parking_place_title,
-                deletedAt: item.parking_place_deleted_at
-              }
-            : null
-        })),
-        placeWithoutZone: placeWithoutZone.map((item) => ({
-          mapCode: item.map_code,
-          mapTitle: item.map_title,
+        placeWithoutLine: placeWithoutLine.map((item) => ({
           parkingPlace: {
-            id: item.parking_place_id,
-            code: item.parking_place_code,
-            title: item.parking_place_title,
+            id: item.id,
+            code: item.code,
+            title: item.title,
             floorLabel: item.floor_label,
             placeType: item.place_type
           }
         })),
-        inactivePlaceWithActiveZone: inactivePlaceWithActiveZone.map((item) => ({
-          mapCode: item.map_code,
-          mapTitle: item.map_title,
-          zoneId: item.zone_id,
-          zoneKey: item.zone_key,
-          geometry: item.geometry,
-          parkingPlace: {
-            id: item.parking_place_id,
-            code: item.parking_place_code,
-            title: item.parking_place_title,
-            isActive: item.is_active
-          }
+        lineCapacityMismatch: lineCapacityMismatch.map((item) => ({
+          lineId: item.id,
+          code: item.code,
+          name: item.name,
+          floorLabel: item.floor_label,
+          capacity: item.capacity,
+          slotCount: item.slot_count
         }))
       }
     }
@@ -2876,20 +2748,69 @@ async function handleAdminMapBackgroundUpdate(req) {
   }
 }
 
-async function handleAdminMapZonesList(searchParams) {
-  const mapCode = searchParams.get('mapCode');
-  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
+// ---------------------------------------------------------------------------
+// Place inventory (Task 9).
+//
+// An "element" is a parking line holding 1..3 slots: the line_groups row is the
+// element, its parking_places rows are the slots. line_groups.capacity is the
+// source of truth for the element size and parking_places.place_type is derived
+// from it — the derivation lives in the assign_place_lines() database function
+// (packages/db/schema/005_place_inventory.sql), shared with the catalog import,
+// so there is exactly one implementation of the rule.
+//
+// These endpoints are a line-level composition over the per-place ones, not a
+// parallel API: attribute edits still go to /admin/places/update, and taking a
+// single slot out of service is place_role = 'blocked'. Adding and removing
+// places happens here and only here — /admin/place-lines/archive is the single
+// write path to parking_places.is_active.
+// ---------------------------------------------------------------------------
 
-  if (!mapCode) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'mapCode is required'
-      }
-    };
+const PLACE_ROLES = ['regular', 'rotatable', 'blocked'];
+const PLACE_TYPE_BY_CAPACITY = { 1: 'single', 2: 'double', 3: 'triple' };
+
+/**
+ * Slot status, in the precedence the map legend used:
+ * occupied → guest → released → blocked → rotatable → free.
+ * The only change is the source of the last two — place_role now, geometry.zoneType before.
+ */
+function placeSlotStatus(row) {
+  if (row.reservation_id) {
+    return row.reservation_source === 'guest' ? 'guest' : 'occupied';
   }
+
+  if (row.release_id) {
+    return 'released';
+  }
+
+  if (row.place_role === 'blocked') {
+    return 'blocked';
+  }
+
+  if (row.place_role === 'rotatable') {
+    return 'rotatable';
+  }
+
+  return 'free';
+}
+
+function normalizePlaceRole(value, fallback = 'regular') {
+  return PLACE_ROLES.includes(value) ? value : fallback;
+}
+
+/** Guest priority is a smallint rank; an empty value means "not in the guest pool". */
+function normalizeGuestPriorityRank(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const rank = Number(value);
+
+  return Number.isInteger(rank) && rank >= 1 && rank <= 99 ? rank : undefined;
+}
+
+async function handleAdminPlaceLinesList(searchParams) {
+  const floor = normalizeOptionalString(searchParams.get('floor'));
+  const date = searchParams.get('date') || currentDateInTimezone(appTimezone);
 
   if (!isIsoDate(date)) {
     return {
@@ -2902,59 +2823,87 @@ async function handleAdminMapZonesList(searchParams) {
     };
   }
 
-  const map = await queryOne(
-    `
-      select id, code, title, floor_label, file_type, file_path, source_checksum, version, is_active, updated_at
-      from parking_place_maps
-      where code = $1
-        and is_active = true
-    `,
-    [mapCode]
-  );
-
-  if (!map) {
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        map: null,
-        zones: []
-      }
-    };
-  }
-
-  const zones = await queryMany(
+  const rows = await queryMany(
     `
       select
-        z.id,
-        z.zone_key,
-        z.geometry,
-        z.label_x,
-        z.label_y,
-        z.created_at,
-        z.updated_at,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
+        lg.id as line_id,
+        lg.code as line_code,
+        lg.name as line_name,
+        lg.capacity,
+        lg.floor_label,
+        lg.display_order,
+        pp.id as place_id,
+        pp.code as place_code,
+        pp.title as place_title,
         pp.place_type,
+        pp.place_role,
+        pp.line_position_hint,
         pp.guest_priority_rank,
         r.id as reservation_id,
         r.source as reservation_source,
-        r.status as reservation_status,
-        u.display_name as reserved_user_display_name
-      from parking_place_map_zones z
-      join parking_places pp on pp.id = z.parking_place_id
+        u.display_name as user_display_name,
+        rel.id as release_id
+      from line_groups lg
+      join parking_places pp
+        on pp.line_group_id = lg.id
+        and pp.deleted_at is null
+        and pp.is_active = true
       left join reservations r
         on r.parking_place_id = pp.id
-        and r.reservation_date = $2::date
+        and r.reservation_date = $1::date
         and r.status = 'active'
       left join users u on u.id = r.user_id
-      where z.parking_place_map_id = $1
-      order by pp.code
+      left join lateral (
+        select pr.id
+        from place_releases pr
+        where pr.parking_place_id = pp.id
+          and pr.status = 'active'
+          and pr.release_during @> $1::date
+        limit 1
+      ) rel on true
+      where lg.archived_at is null
+        and ($2::text is null or lg.floor_label = $2::text)
+      order by
+        lg.display_order nulls last,
+        lg.code,
+        pp.line_position_hint nulls last,
+        pp.code
     `,
-    [map.id, date]
+    [date, floor]
   );
+
+  const lines = [];
+  const byLineId = new Map();
+
+  for (const row of rows) {
+    let line = byLineId.get(row.line_id);
+
+    if (!line) {
+      line = {
+        lineId: row.line_id,
+        code: row.line_code,
+        name: row.line_name,
+        capacity: row.capacity,
+        floorLabel: row.floor_label,
+        displayOrder: row.display_order,
+        slots: []
+      };
+      byLineId.set(row.line_id, line);
+      lines.push(line);
+    }
+
+    line.slots.push({
+      placeId: row.place_id,
+      code: row.place_code,
+      title: row.place_title,
+      placeType: row.place_type,
+      position: row.line_position_hint,
+      placeRole: row.place_role,
+      guestPriorityRank: row.guest_priority_rank,
+      status: placeSlotStatus(row),
+      userDisplayName: row.user_display_name || null
+    });
+  }
 
   return {
     statusCode: 200,
@@ -2962,46 +2911,13 @@ async function handleAdminMapZonesList(searchParams) {
       status: 'ok',
       service: 'api',
       date,
-      map: {
-        id: map.id,
-        ...mapParkingPlaceMap(map)
-      },
-      zones: zones.map((zone) => ({
-        id: zone.id,
-        zoneKey: zone.zone_key,
-        geometry: zone.geometry,
-        labelX: zone.label_x,
-        labelY: zone.label_y,
-        createdAt: zone.created_at,
-        updatedAt: zone.updated_at,
-        parkingPlace: {
-          id: zone.parking_place_id,
-          code: zone.parking_place_code,
-          title: zone.parking_place_title,
-          placeType: zone.place_type,
-          guestPriorityRank: zone.guest_priority_rank
-        },
-        status: zone.reservation_id
-          ? 'occupied'
-          : zone.geometry?.zoneType === 'blocked'
-            ? 'blocked'
-            : zone.geometry?.zoneType === 'rotatable'
-              ? 'rotatable'
-              : 'free',
-        reservation: zone.reservation_id
-          ? {
-              id: zone.reservation_id,
-              source: zone.reservation_source,
-              status: zone.reservation_status,
-              userDisplayName: zone.reserved_user_display_name
-            }
-          : null
-      }))
+      floor: floor || null,
+      lines
     }
   };
 }
 
-async function handleAdminMapZoneSave(req) {
+async function handleAdminPlaceLineCreate(req) {
   let body;
 
   try {
@@ -3017,173 +2933,219 @@ async function handleAdminMapZoneSave(req) {
     };
   }
 
-  const mapCode = typeof body.mapCode === 'string' ? body.mapCode.trim().toLowerCase() : '';
-  const mapTitle = typeof body.mapTitle === 'string' ? body.mapTitle.trim() : mapCode.toUpperCase();
-  const floorLabel = typeof body.floorLabel === 'string' ? body.floorLabel.trim() : mapCode.replace(/^g/, '');
-  const filePath = typeof body.filePath === 'string' ? body.filePath.trim() : `/maps/parking-${mapCode}.png`;
-  const parkingPlaceId = body.parkingPlaceId;
-  const zoneType = ['regular', 'rotatable', 'blocked'].includes(body.zoneType) ? body.zoneType : 'regular';
-  const geometry = body.geometry;
+  const floorLabel = normalizeOptionalString(body.floorLabel);
+  const capacity = Number(body.capacity);
+  const rawSlots = Array.isArray(body.slots) ? body.slots : [];
 
-  if (!mapCode || !parkingPlaceId || !geometry) {
+  if (!floorLabel) {
     return {
       statusCode: 400,
       payload: {
         status: 'error',
         service: 'api',
-        error: 'mapCode, parkingPlaceId and geometry are required'
+        error: 'floorLabel is required'
       }
     };
   }
 
-  const x = Number(geometry.x);
-  const y = Number(geometry.y);
-  const width = Number(geometry.width);
-  const height = Number(geometry.height);
-
-  if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1 || y + height > 1) {
+  if (![1, 2, 3].includes(capacity)) {
     return {
       statusCode: 400,
       payload: {
         status: 'error',
         service: 'api',
-        error: 'geometry must contain normalized x, y, width and height values between 0 and 1'
+        error: 'capacity must be 1, 2 or 3'
       }
     };
   }
 
+  if (rawSlots.length !== capacity) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: `slots must contain exactly ${capacity} entries to match capacity`
+      }
+    };
+  }
+
+  const slots = [];
+
+  for (const rawSlot of rawSlots) {
+    const code = typeof rawSlot?.code === 'string' ? rawSlot.code.trim() : '';
+    const title = typeof rawSlot?.title === 'string' && rawSlot.title.trim() ? rawSlot.title.trim() : code;
+    const guestPriorityRank = normalizeGuestPriorityRank(rawSlot?.guestPriorityRank);
+
+    if (!code) {
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'every slot needs a code'
+        }
+      };
+    }
+
+    if (guestPriorityRank === undefined) {
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'guestPriorityRank must be an integer between 1 and 99'
+        }
+      };
+    }
+
+    slots.push({
+      code,
+      title,
+      placeRole: normalizePlaceRole(rawSlot?.placeRole),
+      guestPriorityRank
+    });
+  }
+
+  const duplicate = slots.find((slot, index) => slots.findIndex((other) => other.code === slot.code) !== index);
+
+  if (duplicate) {
+    return {
+      statusCode: 409,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: `Duplicate place code in request: ${duplicate.code}`
+      }
+    };
+  }
+
+  const lineCode = `line-${floorLabel}-${slots[0].code}`;
   const client = await pool.connect();
 
   try {
     await client.query('begin');
 
-    const mapResult = await client.query(
+    const lineResult = await client.query(
       `
-        insert into parking_place_maps (
-          code,
-          title,
-          floor_label,
-          file_type,
-          file_path
-        )
-        values ($1, $2, $3, 'png', $4)
-        on conflict (code)
-        do update set
-          title = excluded.title,
-          floor_label = excluded.floor_label,
-          file_type = excluded.file_type,
-          file_path = excluded.file_path,
-          is_active = true,
-          updated_at = now()
-        returning id, code, title, floor_label, file_type, file_path
-      `,
-      [mapCode, mapTitle || mapCode.toUpperCase(), floorLabel || null, filePath]
-    );
-    const map = mapResult.rows[0];
-
-    const placeResult = await client.query(
-      `
-        select id, code, title, place_type, guest_priority_rank
-        from parking_places
-        where id = $1
-          and deleted_at is null
-      `,
-      [parkingPlaceId]
-    );
-    const place = placeResult.rows[0];
-
-    if (!place) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking place not found'
-        }
-      };
-    }
-
-    const zoneKey = `${mapCode}:${place.code}`;
-    const zoneResult = await client.query(
-      `
-        insert into parking_place_map_zones (
-          parking_place_map_id,
-          parking_place_id,
-          zone_key,
-          geometry,
-          label_x,
-          label_y
-        )
-        values ($1, $2, $3, $4::jsonb, $5, $6)
-        on conflict (parking_place_map_id, parking_place_id)
-        do update set
-          zone_key = excluded.zone_key,
-          geometry = excluded.geometry,
-          label_x = excluded.label_x,
-          label_y = excluded.label_y,
-          updated_at = now()
-        returning id, zone_key, geometry, label_x, label_y, created_at, updated_at
+        insert into line_groups (code, name, capacity, floor_label, notes)
+        values ($1, $2, $3, $4, $5)
+        returning id, code, name, capacity, floor_label, display_order, archived_at
       `,
       [
-        map.id,
-        place.id,
-        zoneKey,
-        JSON.stringify({ type: 'rect', zoneType, x, y, width, height }),
-        x + width / 2,
-        y + height / 2
+        lineCode,
+        `Линия ${floorLabel} / ${slots[0].code}`,
+        capacity,
+        floorLabel,
+        `${PLACE_TYPE_BY_CAPACITY[capacity]} element`
       ]
     );
-    const zone = zoneResult.rows[0];
+    const line = lineResult.rows[0];
+
+    for (const [index, slot] of slots.entries()) {
+      await client.query(
+        `
+          insert into parking_places (
+            code,
+            title,
+            floor_label,
+            place_type,
+            place_role,
+            line_group_id,
+            line_position_hint,
+            guest_priority_rank,
+            catalog_source
+          )
+          values ($1, $2, $3, $4::parking_place_type, $5::parking_place_role, $6, $7, $8, 'admin-web')
+        `,
+        [
+          slot.code,
+          slot.title,
+          floorLabel,
+          PLACE_TYPE_BY_CAPACITY[capacity],
+          slot.placeRole,
+          line.id,
+          index + 1,
+          slot.guestPriorityRank
+        ]
+      );
+    }
+
+    // The one implementation of "place_type follows capacity" — it also refreshes
+    // display_order so the new element sorts into the list where it belongs.
+    await client.query('select assign_place_lines()');
 
     await client.query(
       `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('parking_place_map_zone', $1, 'parking_place_map_zone_saved', 'admin-web', $2::jsonb)
+        insert into audit_logs (entity_type, entity_id, action, actor_service, metadata)
+        values ('parking_place', $1, 'place_line_created', 'admin-web', $2::jsonb)
       `,
       [
-        zone.id,
+        line.id,
         JSON.stringify({
-          mapCode,
-          parkingPlaceId: place.id,
-          parkingPlaceCode: place.code,
-          geometry: zone.geometry,
-          zoneType
+          lineCode,
+          capacity,
+          floorLabel,
+          slots: slots.map((slot) => ({
+            code: slot.code,
+            placeRole: slot.placeRole,
+            guestPriorityRank: slot.guestPriorityRank
+          }))
         })
       ]
     );
 
+    const storedResult = await client.query(
+      `
+        select
+          lg.id as line_id,
+          lg.code as line_code,
+          lg.name as line_name,
+          lg.capacity,
+          lg.floor_label,
+          lg.display_order,
+          pp.id as place_id,
+          pp.code as place_code,
+          pp.title as place_title,
+          pp.place_type,
+          pp.place_role,
+          pp.line_position_hint,
+          pp.guest_priority_rank
+        from line_groups lg
+        join parking_places pp on pp.line_group_id = lg.id and pp.deleted_at is null
+        where lg.id = $1
+        order by pp.line_position_hint nulls last, pp.code
+      `,
+      [line.id]
+    );
+
     await client.query('commit');
+
+    const stored = storedResult.rows;
 
     return {
       statusCode: 201,
       payload: {
         status: 'ok',
         service: 'api',
-        zone: {
-          id: zone.id,
-          zoneKey: zone.zone_key,
-          geometry: zone.geometry,
-          labelX: zone.label_x,
-          labelY: zone.label_y,
-          parkingPlace: {
-            id: place.id,
-            code: place.code,
-            title: place.title,
-            placeType: place.place_type,
-            guestPriorityRank: place.guest_priority_rank
-          },
-          map: {
-            id: map.id,
-            code: map.code,
-            title: map.title
-          }
+        line: {
+          lineId: stored[0].line_id,
+          code: stored[0].line_code,
+          name: stored[0].line_name,
+          capacity: stored[0].capacity,
+          floorLabel: stored[0].floor_label,
+          displayOrder: stored[0].display_order,
+          slots: stored.map((row) => ({
+            placeId: row.place_id,
+            code: row.place_code,
+            title: row.place_title,
+            placeType: row.place_type,
+            position: row.line_position_hint,
+            placeRole: row.place_role,
+            guestPriorityRank: row.guest_priority_rank,
+            status: placeSlotStatus(row),
+            userDisplayName: null
+          }))
         }
       }
     };
@@ -3196,7 +3158,7 @@ async function handleAdminMapZoneSave(req) {
         payload: {
           status: 'error',
           service: 'api',
-          error: 'Map zone conflicts with an existing zone key or place mapping'
+          error: 'A parking place or line with the same code already exists'
         }
       };
     }
@@ -3214,7 +3176,7 @@ async function handleAdminMapZoneSave(req) {
   }
 }
 
-async function handleAdminMapZoneUpdate(req) {
+async function handleAdminPlaceLineArchive(req) {
   let body;
 
   try {
@@ -3230,89 +3192,142 @@ async function handleAdminMapZoneUpdate(req) {
     };
   }
 
-  const zoneId = body.zoneId;
-  const zoneType = ['regular', 'rotatable', 'blocked'].includes(body.zoneType) ? body.zoneType : null;
+  const lineId = normalizeOptionalString(body.lineId);
 
-  if (!zoneId || !zoneType) {
+  if (!lineId) {
     return {
       statusCode: 400,
       payload: {
         status: 'error',
         service: 'api',
-        error: 'zoneId and valid zoneType are required'
+        error: 'lineId is required'
       }
     };
   }
 
+  const today = currentDateInTimezone(appTimezone);
   const client = await pool.connect();
 
   try {
     await client.query('begin');
 
-    const zoneResult = await client.query(
+    const lineResult = await client.query(
+      `
+        select id, code, name, capacity, floor_label, archived_at
+        from line_groups
+        where id = $1
+        for update
+      `,
+      [lineId]
+    );
+    const line = lineResult.rows[0];
+
+    if (!line || line.archived_at) {
+      await client.query('rollback');
+
+      return {
+        statusCode: 404,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Parking line not found'
+        }
+      };
+    }
+
+    // A place with a reservation for today or later, or a live permanent owner, is
+    // still in use — archiving it would strand a person, so the operator has to clear
+    // the blocker first and the response names every one of them.
+    const blockerResult = await client.query(
       `
         select
-          z.id,
-          z.geometry,
-          pp.code as parking_place_code,
-          ppm.code as map_code
-        from parking_place_map_zones z
-        join parking_places pp on pp.id = z.parking_place_id
-        join parking_place_maps ppm on ppm.id = z.parking_place_map_id
-        where z.id = $1
-        for update of z
-      `,
-      [zoneId]
-    );
-    const existingZone = zoneResult.rows[0];
+          'reservation' as blocker_type,
+          pp.code as place_code,
+          to_char(r.reservation_date, 'YYYY-MM-DD') as detail,
+          u.display_name as user_display_name
+        from reservations r
+        join parking_places pp on pp.id = r.parking_place_id
+        left join users u on u.id = r.user_id
+        where pp.line_group_id = $1
+          and r.status = 'active'
+          and r.reservation_date >= $2::date
 
-    if (!existingZone) {
+        union all
+
+        select
+          'permanent_assignment' as blocker_type,
+          pp.code as place_code,
+          to_char(lower(pa.valid_during), 'YYYY-MM-DD') as detail,
+          u.display_name as user_display_name
+        from permanent_assignments pa
+        join parking_places pp on pp.id = pa.parking_place_id
+        join users u on u.id = pa.user_id
+        where pp.line_group_id = $1
+          and (upper(pa.valid_during) is null or upper(pa.valid_during) > $2::date)
+
+        order by place_code, blocker_type
+      `,
+      [lineId, today]
+    );
+
+    if (blockerResult.rowCount > 0) {
       await client.query('rollback');
+
+      const blockers = blockerResult.rows.map((row) => ({
+        type: row.blocker_type,
+        placeCode: row.place_code,
+        detail: row.detail,
+        userDisplayName: row.user_display_name || null
+      }));
+
       return {
-        statusCode: 404,
+        statusCode: 409,
         payload: {
           status: 'error',
           service: 'api',
-          error: 'Map zone not found'
+          error: 'Parking line still has active reservations or permanent assignments',
+          blockers
         }
       };
     }
 
-    const nextGeometry = {
-      ...(existingZone.geometry || {}),
-      zoneType
-    };
-
-    const updatedResult = await client.query(
+    const archivedResult = await client.query(
       `
-        update parking_place_map_zones
+        update parking_places
         set
-          geometry = $1::jsonb,
+          is_active = false,
+          deleted_at = now(),
           updated_at = now()
-        where id = $2
-        returning id, zone_key, geometry, label_x, label_y, updated_at
+        where line_group_id = $1
+          and deleted_at is null
+        returning id, code, title
       `,
-      [JSON.stringify(nextGeometry), zoneId]
+      [lineId]
     );
-    const updatedZone = updatedResult.rows[0];
 
     await client.query(
       `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('parking_place_map_zone', $1, 'parking_place_map_zone_type_changed', 'admin-web', $2::jsonb)
+        update line_groups
+        set
+          archived_at = now(),
+          updated_at = now()
+        where id = $1
+      `,
+      [lineId]
+    );
+
+    await client.query(
+      `
+        insert into audit_logs (entity_type, entity_id, action, actor_service, metadata)
+        values ('parking_place', $1, 'place_line_archived', 'admin-web', $2::jsonb)
       `,
       [
-        zoneId,
+        lineId,
         JSON.stringify({
-          mapCode: existingZone.map_code,
-          parkingPlaceCode: existingZone.parking_place_code,
-          zoneType
+          lineCode: line.code,
+          capacity: line.capacity,
+          floorLabel: line.floor_label,
+          archivedPlaceCodes: archivedResult.rows.map((row) => row.code)
         })
       ]
     );
@@ -3324,14 +3339,17 @@ async function handleAdminMapZoneUpdate(req) {
       payload: {
         status: 'ok',
         service: 'api',
-        zone: {
-          id: updatedZone.id,
-          zoneKey: updatedZone.zone_key,
-          geometry: updatedZone.geometry,
-          labelX: updatedZone.label_x,
-          labelY: updatedZone.label_y,
-          updatedAt: updatedZone.updated_at
-        }
+        line: {
+          lineId: line.id,
+          code: line.code,
+          capacity: line.capacity,
+          floorLabel: line.floor_label
+        },
+        archivedPlaces: archivedResult.rows.map((row) => ({
+          placeId: row.id,
+          code: row.code,
+          title: row.title
+        }))
       }
     };
   } catch (error) {
@@ -3349,124 +3367,6 @@ async function handleAdminMapZoneUpdate(req) {
     client.release();
   }
 }
-
-async function handleAdminMapZoneDelete(req) {
-  let body;
-
-  try {
-    body = await readJsonBody(req);
-  } catch {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'Request body must be valid JSON'
-      }
-    };
-  }
-
-  const zoneId = body.zoneId;
-
-  if (!zoneId) {
-    return {
-      statusCode: 400,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: 'zoneId is required'
-      }
-    };
-  }
-
-  const client = await pool.connect();
-
-  try {
-    await client.query('begin');
-
-    const deletedResult = await client.query(
-      `
-        delete from parking_place_map_zones z
-        using parking_places pp, parking_place_maps ppm
-        where z.parking_place_id = pp.id
-          and z.parking_place_map_id = ppm.id
-          and z.id = $1
-        returning
-          z.id,
-          z.zone_key,
-          z.geometry,
-          pp.code as parking_place_code,
-          ppm.code as map_code
-      `,
-      [zoneId]
-    );
-    const deletedZone = deletedResult.rows[0];
-
-    if (!deletedZone) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Map zone not found'
-        }
-      };
-    }
-
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('parking_place_map_zone', $1, 'parking_place_map_zone_deleted', 'admin-web', $2::jsonb)
-      `,
-      [
-        zoneId,
-        JSON.stringify({
-          mapCode: deletedZone.map_code,
-          parkingPlaceCode: deletedZone.parking_place_code,
-          zoneKey: deletedZone.zone_key,
-          geometry: deletedZone.geometry
-        })
-      ]
-    );
-
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        deletedZone: {
-          id: deletedZone.id,
-          zoneKey: deletedZone.zone_key,
-          mapCode: deletedZone.map_code,
-          parkingPlaceCode: deletedZone.parking_place_code
-        }
-      }
-    };
-  } catch (error) {
-    await client.query('rollback');
-
-    return {
-      statusCode: 500,
-      payload: {
-        status: 'error',
-        service: 'api',
-        error: error.message
-      }
-    };
-  } finally {
-    client.release();
-  }
-}
-
 async function handleAdminDashboard(searchParams) {
   const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
 
@@ -3498,6 +3398,7 @@ async function handleAdminDashboard(searchParams) {
         from place_releases pr
         join users u on u.id = pr.user_id
         join parking_places pp on pp.id = pr.parking_place_id
+          and pp.deleted_at is null
         left join reservations r
           on r.parking_place_id = pp.id
           and r.reservation_date = $1::date
@@ -3566,6 +3467,7 @@ async function handleAdminDashboard(searchParams) {
         select count(*)::int as available_places
         from place_releases pr
         join parking_places pp on pp.id = pr.parking_place_id
+          and pp.deleted_at is null
         left join reservations r
           on r.parking_place_id = pp.id
           and r.reservation_date = $1::date
@@ -4399,6 +4301,7 @@ async function handleAdminGuestParkingRequestCreate(req) {
           pp.place_type
         from place_releases pr
         join parking_places pp on pp.id = pr.parking_place_id
+          and pp.deleted_at is null
         left join reservations r
           on r.parking_place_id = pp.id
           and r.reservation_date = $1::date
@@ -4749,6 +4652,7 @@ async function handleAdminGuestParkingRequestAssign(req) {
           pp.place_type
         from place_releases pr
         join parking_places pp on pp.id = pr.parking_place_id
+          and pp.deleted_at is null
         left join reservations r
           on r.parking_place_id = pp.id
           and r.reservation_date = $1::date
@@ -5196,6 +5100,7 @@ async function processQueueForDate(queueDate) {
           pr.user_id as owner_user_id
         from place_releases pr
         join parking_places pp on pp.id = pr.parking_place_id
+          and pp.deleted_at is null
         left join reservations r
           on r.parking_place_id = pp.id
           and r.reservation_date = $1::date
@@ -6195,6 +6100,7 @@ async function handleAdminManualReservationCreate(req) {
           pp.code as parking_place_code
         from place_releases pr
         join parking_places pp on pp.id = pr.parking_place_id
+          and pp.deleted_at is null
         where pr.parking_place_id = $1
           and pr.status = 'active'
           and pr.release_during @> $2::date
@@ -7403,10 +7309,12 @@ async function handleAdminLineOccupancyList(searchParams) {
 async function handleAdminPlaceHistory(placeId) {
   const place = await queryOne(
     `
+      -- Archived places stay readable on purpose: archiving is how a place leaves
+      -- service, and its reservations, releases and audit trail are exactly what the
+      -- operator comes here to read afterwards.
       select id, code, title, floor_label, place_type, is_active
       from parking_places
       where id = $1
-        and deleted_at is null
     `,
     [placeId]
   );
@@ -7978,19 +7886,17 @@ const routeApiRequest = createApiRouter({
     handleAdminLineGroupsList,
     handleAdminLineOccupancyList,
     handleAdminManualReservationCreate,
-    handleAdminMapZoneDelete,
     handleAdminMapBackgroundUpdate,
     handleAdminMapDiagnostics,
-    handleAdminMapZoneSave,
-    handleAdminMapZonesList,
-    handleAdminMapZoneUpdate,
     handleAdminParkingPlaceCreate,
-    handleAdminParkingPlaceDisable,
     handleAdminParkingPlaceUpdate,
     handleAdminPermanentAssignmentCreate,
     handleAdminPermanentAssignmentEnd,
     handleAdminPermanentAssignmentsList,
     handleAdminPlaceHistory,
+    handleAdminPlaceLineArchive,
+    handleAdminPlaceLineCreate,
+    handleAdminPlaceLinesList,
     handleAdminPlaceReleaseCancel,
     handleAdminPlaceReleaseCreate,
     handleAdminPlaceReleasesList,

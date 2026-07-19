@@ -6,6 +6,7 @@ async function countAvailableReleasedPlaces(client, date) {
       select count(*)::int as count
       from place_releases pr
       join parking_places pp on pp.id = pr.parking_place_id
+        and pp.deleted_at is null
       left join reservations r
         on r.parking_place_id = pp.id
         and r.reservation_date = $1::date
@@ -34,6 +35,7 @@ async function calculateAvailabilitySnapshot(client, date, options) {
         count(*) filter (where r.id is null and pp.place_type = 'triple')::int as available_triple_places
       from place_releases pr
       join parking_places pp on pp.id = pr.parking_place_id
+        and pp.deleted_at is null
       left join reservations r
         on r.parking_place_id = pp.id
         and r.reservation_date = $1::date

@@ -40,6 +40,15 @@ const parkingMaps = [
   }
 ];
 
+// The replacement for the old per-zone "Тип зоны" select: place_role is a first-class
+// parking_places column since 005_place_inventory.sql. 'rotatable' is the guest pool,
+// 'blocked' takes a single slot out of service without archiving the whole line.
+const PLACE_ROLE_OPTIONS = [
+  ['regular', 'Обычное'],
+  ['rotatable', 'Ротируемое/гостевое'],
+  ['blocked', 'Недоступное']
+];
+
 const allowedMapExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg']);
 
 function contentTypeForMap(filename) {
@@ -357,35 +366,24 @@ function renderMapEditorTab(model) {
     .join('');
   const diagnosticGroups = [
     {
-      title: 'Зона без места',
-      rows: diagnostics.zoneWithoutPlace || [],
+      title: 'Место без линии',
+      rows: diagnostics.placeWithoutLine || [],
       render: (item) => `
         <tr>
-          <td>${escapeHtml(item.mapCode || '—')}</td>
-          <td>${escapeHtml(item.zoneKey || item.zoneId || '—')}</td>
-          <td>${item.parkingPlace ? escapeHtml(`${item.parkingPlace.code} · удалено`) : 'нет связи'}</td>
-        </tr>
-      `
-    },
-    {
-      title: 'Место без зоны',
-      rows: diagnostics.placeWithoutZone || [],
-      render: (item) => `
-        <tr>
-          <td>${escapeHtml(item.mapCode || '—')}</td>
           <td>${escapeHtml(item.parkingPlace?.code || '—')}</td>
           <td>${escapeHtml(item.parkingPlace?.title || '—')}</td>
+          <td>${escapeHtml(item.parkingPlace?.floorLabel || '—')}</td>
         </tr>
       `
     },
     {
-      title: 'Неактивное место с активной зоной',
-      rows: diagnostics.inactivePlaceWithActiveZone || [],
+      title: 'Размер линии не совпадает с числом мест',
+      rows: diagnostics.lineCapacityMismatch || [],
       render: (item) => `
         <tr>
-          <td>${escapeHtml(item.mapCode || '—')}</td>
-          <td>${escapeHtml(item.parkingPlace?.code || '—')}</td>
-          <td>${escapeHtml(item.zoneKey || '—')}</td>
+          <td>${escapeHtml(item.code || '—')}</td>
+          <td>${escapeHtml(item.floorLabel || '—')}</td>
+          <td>${escapeHtml(`${item.slotCount} из ${item.capacity}`)}</td>
         </tr>
       `
     }
@@ -2687,20 +2685,20 @@ function renderPlaceEditForm(model) {
         <input type="number" min="1" max="99" name="guestPriorityRank" value="${escapeHtml(fullPlace.guestPriorityRank || '')}" />
       </label>
       <label>
-        <span>Активно</span>
-        <select name="isActive">
-          <option value="true"${fullPlace.isActive ? ' selected' : ''}>Да</option>
-          <option value="false"${!fullPlace.isActive ? ' selected' : ''}>Нет</option>
+        <span>Роль места</span>
+        <select name="placeRole">
+          ${PLACE_ROLE_OPTIONS.map(
+            ([value, label]) =>
+              `<option value="${value}"${(fullPlace.placeRole || 'regular') === value ? ' selected' : ''}>${escapeHtml(label)}</option>`
+          ).join('')}
         </select>
       </label>
       <button type="submit">Сохранить место</button>
     </form>
-    <form class="inline-action-form" method="post" action="/admin/places/disable">
-      <input type="hidden" name="selectedDate" value="${escapeHtml(selectedDate)}" />
-      <input type="hidden" name="placeId" value="${escapeHtml(place.id)}" />
-      <button class="button-secondary" type="submit">Отключить место</button>
-      <span>Мягко скрывает место из каталога.</span>
-    </form>
+    <p class="muted">
+      Место выводится из эксплуатации ролью «Недоступное», а удаляется вместе со всей
+      линией на вкладке «Места» — отдельного «Отключить место» больше нет.
+    </p>
   `;
 }
 
@@ -3946,7 +3944,7 @@ const server = http.createServer(async (req, res) => {
       lineGroupId: form.get('lineGroupId'),
       linePositionHint: form.get('linePositionHint'),
       guestPriorityRank: form.get('guestPriorityRank'),
-      isActive: form.get('isActive') !== 'false'
+      placeRole: form.get('placeRole')
     };
     const result = await postJson('/admin/places/update', payload);
 
@@ -3958,26 +3956,6 @@ const server = http.createServer(async (req, res) => {
 
     const message = result.data?.error || `API error ${result.status}`;
     res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeId=${encodeURIComponent(placeId || '')}&error=${encodeURIComponent(message)}` });
-    res.end();
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/admin/places/disable') {
-    const form = await readFormBody(req);
-    const selectedDate = form.get('selectedDate') || todayIsoDate();
-    const payload = {
-      placeId: form.get('placeId')
-    };
-    const result = await postJson('/admin/places/disable', payload);
-
-    if (result.ok) {
-      res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&placeDisabled=1` });
-      res.end();
-      return;
-    }
-
-    const message = result.data?.error || `API error ${result.status}`;
-    res.writeHead(303, { location: `/?view=catalog&date=${encodeURIComponent(selectedDate)}&error=${encodeURIComponent(message)}` });
     res.end();
     return;
   }

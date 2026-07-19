@@ -14,8 +14,9 @@ const rootEndpoints = [
   '/admin/employees/:id/history',
   '/admin/places',
   '/admin/places/update',
-  '/admin/places/disable',
   '/admin/places/:id/history',
+  '/admin/place-lines',
+  '/admin/place-lines/archive',
   '/admin/permanent-assignments',
   '/admin/permanent-assignments/end',
   '/admin/audit-logs',
@@ -28,9 +29,6 @@ const rootEndpoints = [
   '/bot/departure-plans',
   '/admin/departure-plans',
   '/admin/conflicts',
-  '/admin/map-zones',
-  '/admin/map-zones/update',
-  '/admin/map-zones/delete',
   '/admin/map-diagnostics',
   '/admin/map-backgrounds',
   '/admin/dashboard',
@@ -135,8 +133,18 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
       return;
     }
 
-    if (req.method === 'POST' && url.pathname === '/admin/places/disable') {
-      await dispatch(() => handlers.handleAdminParkingPlaceDisable(req), res);
+    if (req.method === 'GET' && url.pathname === '/admin/place-lines') {
+      await dispatchSafely(() => handlers.handleAdminPlaceLinesList(url.searchParams), res);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/admin/place-lines') {
+      await dispatch(() => handlers.handleAdminPlaceLineCreate(req), res);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/admin/place-lines/archive') {
+      await dispatch(() => handlers.handleAdminPlaceLineArchive(req), res);
       return;
     }
 
@@ -217,33 +225,13 @@ function createApiRouter({ handlers, sendJson, startedAt }) {
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/admin/map-zones') {
-      await dispatchSafely(() => handlers.handleAdminMapZonesList(url.searchParams), res);
-      return;
-    }
-
     if (req.method === 'GET' && url.pathname === '/admin/map-diagnostics') {
       await dispatchSafely(() => handlers.handleAdminMapDiagnostics(url.searchParams), res);
       return;
     }
 
-    if (req.method === 'POST' && url.pathname === '/admin/map-zones') {
-      await dispatch(() => handlers.handleAdminMapZoneSave(req), res);
-      return;
-    }
-
     if (req.method === 'POST' && url.pathname === '/admin/map-backgrounds') {
       await dispatch(() => handlers.handleAdminMapBackgroundUpdate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/map-zones/update') {
-      await dispatch(() => handlers.handleAdminMapZoneUpdate(req), res);
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/admin/map-zones/delete') {
-      await dispatch(() => handlers.handleAdminMapZoneDelete(req), res);
       return;
     }
 
