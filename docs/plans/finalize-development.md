@@ -435,11 +435,19 @@ behavior change and this task's job is to pin behavior, not alter it → **Task 
 before it reaches Postgres. → **Task 21**.
 
 ### Task 15: Extract the repository layer (isolate all SQL) — iterate per context
-- [ ] For ONE bounded context per iteration, move every SQL string into `modules/<context>/repository.js` using `queryOne`/`queryMany` and `withTransaction`. No behavior change.
-- [ ] Convert `services/availability.js` inline SQL into the repositories.
-- [ ] Re-run golden + integration tests after each context; keep green.
-- [ ] When done, no raw SQL remains outside `repository.js` files. All validation commands green.
-- [ ] Mark completed.
+- [x] For ONE bounded context per iteration, move every SQL string into `modules/<context>/repository.js` using `queryOne`/`queryMany` and `withTransaction`. No behavior change. — all 17 repositories landed in one pass rather than one per loop iteration, because the golden snapshots made each batch verifiable in ~3 s and stopping half-way would have left `server.js` holding two access patterns at once. Order: system/employees/places/audit/jobs → permanent-assignments/line-occupancy/contact-access/departure-plans/conflicts → maps/place-lines/dashboard/availability/place-releases → employee-requests/queue/guest-requests/reservations → the history journals. The full suite was re-run green after every batch, not just at the end.
+- [x] Convert `services/availability.js` inline SQL into the repositories. — as ADR 003 requires, availability is **not** given a repository of its own: both queries are properties of released places, so they became `countUnreservedReleasedPlaces` and `summarizeAvailability` in `place-releases`, and `availability.js` is now a pure fold over one row. Its existing unit tests were re-pointed at the `queryOne`/`queryMany` surface instead of a raw pg client; the SQL-text assertions still hold, because the repository is what runs it now. The dashboard's own copy of the count query collapsed into `countUnreservedReleasedPlaces` — it was the same query under a different column alias.
+- [x] Re-run golden + integration tests after each context; keep green. — the 122 golden snapshots are byte-identical throughout: not one was regenerated, which is the strongest available evidence that nothing about the HTTP contract changed. Two behavior-preservation decisions worth naming: (1) the 19 hand-rolled `pool.connect()` + `begin`/`rollback` blocks became `withTransaction`, and since the helper never inspects the return value, the abort paths that used to `rollback` and *return* a 404/409 payload now throw an `AbortTransaction` carrying that payload, which the caller unwraps — same status, same body, same rollback; (2) `handleBotBlockingContacts` was left **outside** a transaction on purpose. It held a pooled client but never issued `begin`, so each contact-access log row committed on its own; wrapping it would have made a mid-loop failure discard rows that previously survived.
+- [x] When done, no raw SQL remains outside `repository.js` files. All validation commands green. — `apps/api/src/server.js` is down from 7 820 to 4 960 lines and contains no SQL, no `client.query`, and no `pool.connect`. `apps/api/src/repository-boundary.test.js` (3 tests) asserts all three repo-wide rather than leaving it to a code review; it was verified to actually fail by planting a `select` in `server.js`. `npm run check` / `lint` clean, `npm test` **167** (164 + 3), `npm run test:integration` **266/266** including the golden replay, stable over 3 consecutive full runs.
+- [x] Mark completed.
+
+**Two contexts the ADR 003 list did not survive contact with:** `dashboard` is in the list
+but ended up owning **no repository** — after the extraction its handler is a `Promise.all`
+over three other contexts' reads, so the file would have been empty. And two reads belong to
+no business context at all — the `/health/db` probe and the `auth_users` bootstrap state —
+which had nowhere to go once no SQL was allowed to remain in `server.js`; they became a new
+`system` context. ADR 003, `docs/ARCHITECTURE.md` and the module-map test were updated
+together, so the enumerated list and the code still agree.
 
 ### Task 16: Extract pure business rules into packages/domain
 - [ ] Move scheduling/reserve/queue/early-departure/line-ordering/conflict rules into `packages/domain` as pure functions with no I/O imports; services call them with data from repositories.

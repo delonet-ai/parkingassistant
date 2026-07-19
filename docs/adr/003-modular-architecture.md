@@ -58,7 +58,7 @@ layer simply does not have that file. Tests live next to the code they cover
 
 ### Bounded contexts
 
-The split is by the question the operator is answering, not by table. Seventeen contexts:
+The split is by the question the operator is answering, not by table. Eighteen contexts:
 
 | Context | Owns |
 |---|---|
@@ -79,9 +79,17 @@ The split is by the question the operator is answering, not by table. Seventeen 
 | `dashboard` | cross-context read model for the KPI panel |
 | `audit` | audit log reads |
 | `jobs` | the five scheduled runs and `job_runs` bookkeeping |
+| `system` | the database health probe and `auth_users` bootstrap state |
 
 `availability` is deliberately not a context: it is a read model over `place-releases`,
-`places` and `reservations`, and its SQL moves into those repositories (Task 15).
+`places` and `reservations`, and its SQL lives in those repositories (done in Task 15 —
+`countUnreservedReleasedPlaces` and `summarizeAvailability` in `place-releases`).
+
+`dashboard` is a context in the list but owns **no repository**: after Task 15 its handler
+is a `Promise.all` over three other contexts' reads, so a `dashboard/repository.js` would
+have held nothing. `system` was added in Task 15 for the two reads that belong to no
+business context — the `/health/db` probe and the `auth_users` bootstrap state — which had
+nowhere else to go once no SQL was allowed to remain in `server.js`.
 
 ### One database pattern
 

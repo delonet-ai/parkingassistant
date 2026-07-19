@@ -5,7 +5,24 @@ const { Pool } = require('pg');
 const { addDaysToIsoDate, currentDateInTimezone, currentTimeInTimezone, formatDateForSql, isEarlyDeparture, isIsoDate, isValidTime } = require('../../../packages/shared/dates');
 const { normalizeApiErrorPayload } = require('../../../packages/shared/errors');
 const { readJsonBody, sendJson: writeJson } = require('../../../packages/shared/http');
-const { createDbRepository } = require('./repositories/db');
+const { createDbRepository, withTransaction } = require('./repositories/db');
+const auditRepository = require('./modules/audit/repository');
+const conflictsRepository = require('./modules/conflicts/repository');
+const contactAccessRepository = require('./modules/contact-access/repository');
+const departurePlansRepository = require('./modules/departure-plans/repository');
+const employeeRequestsRepository = require('./modules/employee-requests/repository');
+const employeesRepository = require('./modules/employees/repository');
+const jobsRepository = require('./modules/jobs/repository');
+const lineOccupancyRepository = require('./modules/line-occupancy/repository');
+const mapsRepository = require('./modules/maps/repository');
+const permanentAssignmentsRepository = require('./modules/permanent-assignments/repository');
+const guestRequestsRepository = require('./modules/guest-requests/repository');
+const placeLinesRepository = require('./modules/place-lines/repository');
+const placeReleasesRepository = require('./modules/place-releases/repository');
+const placesRepository = require('./modules/places/repository');
+const queueRepository = require('./modules/queue/repository');
+const reservationsRepository = require('./modules/reservations/repository');
+const systemRepository = require('./modules/system/repository');
 const { createApiRouter } = require('./router');
 const { mapJobRun } = require('./serializers/job-runs');
 const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require('./services/availability');
@@ -24,6 +41,29 @@ const pool = databaseUrl
 const guestReserveMinimum = Number(process.env.GUEST_RESERVE_MINIMUM || 5);
 const dbRepository = createDbRepository(pool);
 
+// `withTransaction` never inspects what the callback returns, so a handler that wants to
+// roll back and still answer with a normal payload throws this instead of returning it.
+// The caller re-reads the payload off the error; every other error keeps its own mapping.
+class AbortTransaction extends Error {
+  constructor(result) {
+    super('transaction aborted');
+    this.name = 'AbortTransaction';
+    this.result = result;
+  }
+}
+
+function abortWith(statusCode, error, extra = {}) {
+  return new AbortTransaction({
+    statusCode,
+    payload: {
+      status: 'error',
+      service: 'api',
+      error,
+      ...extra
+    }
+  });
+}
+
 function sendJson(res, statusCode, payload) {
   writeJson(res, statusCode, normalizeApiErrorPayload(payload, statusCode));
 }
@@ -41,108 +81,52 @@ function normalizeOptionalString(value) {
 }
 
 async function withJobRun(jobName, targetDate, runner) {
-  const started = await queryOne(
-    `
-      insert into job_runs (
-        job_name,
-        target_date,
-        status,
-        actor_service
-      )
-      values ($1, $2::date, 'running', 'admin-web')
-      returning id, job_name, target_date, status, started_at
-    `,
-    [jobName, targetDate]
-  );
+  const started = await jobsRepository.startJobRun(dbRepository, { jobName, targetDate });
 
   try {
     const payload = await runner();
-    const finished = await queryOne(
-      `
-        update job_runs
-        set
-          status = 'success',
-          finished_at = now(),
-          summary = $1::jsonb
-        where id = $2
-        returning id, job_name, target_date, status, started_at, finished_at, actor_service, summary, error
-      `,
-      [JSON.stringify(payload), started.id]
-    );
+    const finished = await jobsRepository.markJobRunSucceeded(dbRepository, {
+      jobRunId: started.id,
+      summary: payload
+    });
 
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('system', $1, 'admin-web', $2::jsonb)
-        returning id
-      `,
-      [
-        `job_${jobName}_success`,
-        JSON.stringify({
-          jobRunId: started.id,
-          jobName,
-          targetDate,
-          summary: payload
-        })
-      ]
-    );
+    await auditRepository.insertAuditLog(dbRepository, {
+      entityType: 'system',
+      action: `job_${jobName}_success`,
+      actorService: 'admin-web',
+      metadata: {
+        jobRunId: started.id,
+        jobName,
+        targetDate,
+        summary: payload
+      }
+    });
 
     return {
       ...payload,
       jobRun: mapJobRun(finished)
     };
   } catch (error) {
-    const failed = await queryOne(
-      `
-        update job_runs
-        set
-          status = 'failed',
-          finished_at = now(),
-          error = $1
-        where id = $2
-        returning id, job_name, target_date, status, started_at, finished_at, actor_service, summary, error
-      `,
-      [error.message, started.id]
-    );
+    const failed = await jobsRepository.markJobRunFailed(dbRepository, {
+      jobRunId: started.id,
+      error: error.message
+    });
 
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('system', $1, 'admin-web', $2::jsonb)
-        returning id
-      `,
-      [
-        `job_${jobName}_failed`,
-        JSON.stringify({
-          jobRunId: started.id,
-          jobName,
-          targetDate,
-          error: error.message
-        })
-      ]
-    );
+    await auditRepository.insertAuditLog(dbRepository, {
+      entityType: 'system',
+      action: `job_${jobName}_failed`,
+      actorService: 'admin-web',
+      metadata: {
+        jobRunId: started.id,
+        jobName,
+        targetDate,
+        error: error.message
+      }
+    });
 
     error.jobRun = mapJobRun(failed);
     throw error;
   }
-}
-
-async function queryOne(text, params = []) {
-  return dbRepository.queryOne(text, params);
-}
-
-async function queryMany(text, params = []) {
-  return dbRepository.queryMany(text, params);
 }
 
 async function handleDbHealth() {
@@ -160,7 +144,7 @@ async function handleDbHealth() {
   }
 
   try {
-    const result = await pool.query('select current_database() as database, now() as server_time, 1 as ok');
+    const identity = await systemRepository.selectDatabaseIdentity(dbRepository);
 
     return {
       ok: true,
@@ -169,8 +153,8 @@ async function handleDbHealth() {
         status: 'ok',
         service: 'api',
         check: 'db',
-        database: result.rows[0].database,
-        serverTime: result.rows[0].server_time
+        database: identity.database,
+        serverTime: identity.server_time
       }
     };
   } catch (error) {
@@ -189,21 +173,7 @@ async function handleDbHealth() {
 
 async function handleAuthBootstrapStatus() {
   try {
-    const sysadmin = await queryOne(
-      `
-        select
-          au.id,
-          au.login,
-          au.display_name,
-          au.status,
-          count(aur.id) filter (where ar.code = 'system_admin') as system_admin_role_count
-        from auth_users au
-        left join auth_user_roles aur on aur.auth_user_id = au.id
-        left join auth_roles ar on ar.id = aur.auth_role_id
-        where lower(au.login) = 'sysadmin'
-        group by au.id, au.login, au.display_name, au.status
-      `
-    );
+    const sysadmin = await systemRepository.findBootstrapSysadmin(dbRepository);
 
     return {
       statusCode: 200,
@@ -238,33 +208,7 @@ async function handleAuthBootstrapStatus() {
 
 async function handleAdminUsersList() {
   try {
-    const users = await queryMany(
-      `
-        select
-          au.id,
-          au.login,
-          au.display_name,
-          au.status,
-          au.last_login_at,
-          au.created_at,
-          coalesce(
-            json_agg(
-              json_build_object(
-                'code', ar.code,
-                'name', ar.name
-              )
-              order by ar.code
-            ) filter (where ar.id is not null),
-            '[]'::json
-          ) as roles
-        from auth_users au
-        left join auth_user_roles aur on aur.auth_user_id = au.id
-        left join auth_roles ar on ar.id = aur.auth_role_id
-        where au.deleted_at is null
-        group by au.id, au.login, au.display_name, au.status, au.last_login_at, au.created_at
-        order by lower(au.login)
-      `
-    );
+    const users = await systemRepository.listAuthUsers(dbRepository);
 
     return {
       statusCode: 200,
@@ -309,31 +253,7 @@ async function handleAdminEmployeesList(searchParams) {
   }
 
   try {
-    const employees = await queryMany(
-      `
-        select
-          u.id,
-          u.employee_no,
-          u.display_name,
-          u.email,
-          u.phone,
-          u.yandex_messenger_user_id,
-          u.department,
-          u.is_active,
-          u.created_at,
-          pp.id as permanent_place_id,
-          pp.code as permanent_place_code
-        from users u
-        left join permanent_assignments pa
-          on pa.user_id = u.id
-          and pa.valid_during @> $1::date
-        left join parking_places pp on pp.id = pa.parking_place_id
-        where u.kind = 'employee'
-          and u.deleted_at is null
-        order by lower(u.display_name)
-      `,
-      [date]
-    );
+    const employees = await employeesRepository.listEmployeesWithPermanentPlace(dbRepository, date);
 
     return {
       statusCode: 200,
@@ -409,70 +329,29 @@ async function handleAdminEmployeeCreate(req) {
   const { firstName, lastName } = splitDisplayName(displayName);
 
   try {
-    const employee = await queryOne(
-      `
-        insert into users (
-          kind,
-          first_name,
-          last_name,
-          display_name,
-          email,
-          phone,
-          department,
-          yandex_messenger_user_id
-        )
-        values (
-          'employee',
-          $1,
-          $2,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7
-        )
-        returning
-          id,
-          employee_no,
-          display_name,
-          email,
-          phone,
-          department,
-          yandex_messenger_user_id,
-          created_at
-      `,
-      [firstName, lastName, displayName, email, phone, department, yandexMessengerUserId]
-    );
+    const employee = await employeesRepository.insertEmployee(dbRepository, {
+      firstName,
+      lastName,
+      displayName,
+      email,
+      phone,
+      department,
+      yandexMessengerUserId
+    });
 
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'user',
-          $1,
-          'employee_created',
-          'admin-web',
-          $2::jsonb
-        )
-        returning id
-      `,
-      [
-        employee.id,
-        JSON.stringify({
-          displayName,
-          email,
-          phone,
-          department,
-          yandexMessengerUserId
-        })
-      ]
-    );
+    await auditRepository.insertAuditLog(dbRepository, {
+      entityType: 'user',
+      entityId: employee.id,
+      action: 'employee_created',
+      actorService: 'admin-web',
+      metadata: {
+        displayName,
+        email,
+        phone,
+        department,
+        yandexMessengerUserId
+      }
+    });
 
     return {
       statusCode: 201,
@@ -552,35 +431,17 @@ async function handleAdminEmployeeUpdate(req) {
   const { firstName, lastName } = splitDisplayName(displayName);
 
   try {
-    const employee = await queryOne(
-      `
-        update users
-        set
-          first_name = $2,
-          last_name = $3,
-          display_name = $4,
-          email = $5,
-          phone = $6,
-          department = $7,
-          yandex_messenger_user_id = $8,
-          is_active = $9,
-          updated_at = now()
-        where id = $1
-          and kind = 'employee'
-          and deleted_at is null
-        returning
-          id,
-          employee_no,
-          display_name,
-          email,
-          phone,
-          department,
-          yandex_messenger_user_id,
-          is_active,
-          updated_at
-      `,
-      [employeeId, firstName, lastName, displayName, email, phone, department, yandexMessengerUserId, isActive]
-    );
+    const employee = await employeesRepository.updateEmployee(dbRepository, {
+      employeeId,
+      firstName,
+      lastName,
+      displayName,
+      email,
+      phone,
+      department,
+      yandexMessengerUserId,
+      isActive
+    });
 
     if (!employee) {
       return {
@@ -593,30 +454,20 @@ async function handleAdminEmployeeUpdate(req) {
       };
     }
 
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('user', $1, 'employee_updated', 'admin-web', $2::jsonb)
-        returning id
-      `,
-      [
-        employeeId,
-        JSON.stringify({
-          displayName,
-          email,
-          phone,
-          department,
-          yandexMessengerUserId,
-          isActive
-        })
-      ]
-    );
+    await auditRepository.insertAuditLog(dbRepository, {
+      entityType: 'user',
+      entityId: employeeId,
+      action: 'employee_updated',
+      actorService: 'admin-web',
+      metadata: {
+        displayName,
+        email,
+        phone,
+        department,
+        yandexMessengerUserId,
+        isActive
+      }
+    });
 
     return {
       statusCode: 200,
@@ -688,20 +539,7 @@ async function handleAdminEmployeeDisable(req) {
     };
   }
 
-  const employee = await queryOne(
-    `
-      update users
-      set
-        is_active = false,
-        deleted_at = now(),
-        updated_at = now()
-      where id = $1
-        and kind = 'employee'
-        and deleted_at is null
-      returning id, display_name
-    `,
-    [employeeId]
-  );
+  const employee = await employeesRepository.disableEmployee(dbRepository, employeeId);
 
   if (!employee) {
     return {
@@ -714,25 +552,15 @@ async function handleAdminEmployeeDisable(req) {
     };
   }
 
-  await queryOne(
-    `
-      insert into audit_logs (
-        entity_type,
-        entity_id,
-        action,
-        actor_service,
-        metadata
-      )
-      values ('user', $1, 'employee_disabled', 'admin-web', $2::jsonb)
-      returning id
-    `,
-    [
-      employeeId,
-      JSON.stringify({
-        displayName: employee.display_name
-      })
-    ]
-  );
+  await auditRepository.insertAuditLog(dbRepository, {
+    entityType: 'user',
+    entityId: employeeId,
+    action: 'employee_disabled',
+    actorService: 'admin-web',
+    metadata: {
+      displayName: employee.display_name
+    }
+  });
 
   return {
     statusCode: 200,
@@ -749,35 +577,7 @@ async function handleAdminEmployeeDisable(req) {
 
 async function handleAdminPlacesList() {
   try {
-    const places = await queryMany(
-      `
-        select
-          pp.id,
-          pp.code,
-          pp.title,
-          pp.floor_label,
-          pp.place_type,
-          pp.place_role,
-          pp.line_position_hint,
-          pp.guest_priority_rank,
-          pp.is_active,
-          u.id as owner_user_id,
-          u.display_name as owner_display_name,
-          u.department as owner_department,
-          lg.id as line_group_id,
-          lg.code as line_group_code,
-          lg.name as line_group_name,
-          lg.capacity as line_group_capacity
-        from parking_places pp
-        left join permanent_assignments pa
-          on pa.parking_place_id = pp.id
-          and pa.valid_during @> current_date
-        left join users u on u.id = pa.user_id
-        left join line_groups lg on lg.id = pp.line_group_id
-        where pp.deleted_at is null
-        order by pp.floor_label nulls last, pp.code
-      `
-    );
+    const places = await placesRepository.listPlacesWithOwnerAndLine(dbRepository);
 
     return {
       statusCode: 200,
@@ -878,27 +678,17 @@ async function handleAdminParkingPlaceUpdate(req) {
   // rotation with place_role = 'blocked'. Two write paths to one column is the drift
   // this endpoint used to have with the now-deleted /admin/places/disable.
   try {
-    const place = await queryOne(
-      `
-        update parking_places
-        set
-          code = $2,
-          title = $3,
-          floor_label = $4,
-          place_type = $5,
-          place_role = coalesce($9::parking_place_role, place_role),
-          -- Every place belongs to a line since 005_place_inventory.sql, so an update
-          -- that does not name one keeps the current line instead of orphaning the row.
-          line_group_id = coalesce($6, line_group_id),
-          line_position_hint = $7,
-          guest_priority_rank = $8,
-          updated_at = now()
-        where id = $1
-          and deleted_at is null
-        returning id, code, title, floor_label, place_type, place_role, line_group_id, line_position_hint, guest_priority_rank, is_active, updated_at
-      `,
-      [placeId, code, title, floorLabel, placeType, lineGroupId, linePositionHint, guestPriorityRank, placeRole]
-    );
+    const place = await placesRepository.updatePlace(dbRepository, {
+      placeId,
+      code,
+      title,
+      floorLabel,
+      placeType,
+      lineGroupId,
+      linePositionHint,
+      guestPriorityRank,
+      placeRole
+    });
 
     if (!place) {
       return {
@@ -911,32 +701,22 @@ async function handleAdminParkingPlaceUpdate(req) {
       };
     }
 
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('parking_place', $1, 'parking_place_updated', 'admin-web', $2::jsonb)
-        returning id
-      `,
-      [
-        placeId,
-        JSON.stringify({
-          code,
-          title,
-          floorLabel,
-          placeType,
-          lineGroupId,
-          linePositionHint,
-          guestPriorityRank,
-          placeRole
-        })
-      ]
-    );
+    await auditRepository.insertAuditLog(dbRepository, {
+      entityType: 'parking_place',
+      entityId: placeId,
+      action: 'parking_place_updated',
+      actorService: 'admin-web',
+      metadata: {
+        code,
+        title,
+        floorLabel,
+        placeType,
+        lineGroupId,
+        linePositionHint,
+        guestPriorityRank,
+        placeRole
+      }
+    });
 
     return {
       statusCode: 200,
@@ -1006,51 +786,7 @@ async function handleAdminPermanentAssignmentsList(searchParams) {
     };
   }
 
-  const rows = await queryMany(
-    `
-      with assignment_statuses as (
-        select
-          pa.id,
-          pa.user_id,
-          pa.parking_place_id,
-          lower(pa.valid_during)::text as date_from,
-          (upper(pa.valid_during) - interval '1 day')::date::text as date_to,
-          pa.notes,
-          pa.created_at,
-          pa.updated_at,
-          u.display_name as user_display_name,
-          u.department as user_department,
-          u.email as user_email,
-          u.phone as user_phone,
-          pp.code as parking_place_code,
-          pp.title as parking_place_title,
-          pp.floor_label as parking_place_floor_label,
-          pp.place_type as parking_place_type,
-          case
-            when pa.valid_during @> $1::date then 'active'
-            when lower(pa.valid_during) > $1::date then 'future'
-            else 'ended'
-          end as assignment_status
-        from permanent_assignments pa
-        join users u on u.id = pa.user_id
-        join parking_places pp on pp.id = pa.parking_place_id
-        where u.deleted_at is null
-          and pp.deleted_at is null
-      )
-      select *
-      from assignment_statuses
-      where ($2::text = 'all' or assignment_status = $2::text)
-      order by
-        case assignment_status
-          when 'active' then 1
-          when 'future' then 2
-          else 3
-        end,
-        date_from desc,
-        parking_place_code
-    `,
-    [date, status]
-  );
+  const rows = await permanentAssignmentsRepository.listPermanentAssignments(dbRepository, { date, status });
 
   return {
     statusCode: 200,
@@ -1120,48 +856,27 @@ async function handleAdminPermanentAssignmentCreate(req) {
   }
 
   try {
-    const assignment = await queryOne(
-      `
-        insert into permanent_assignments (
-          user_id,
-          parking_place_id,
-          valid_during,
-          notes
-        )
-        values (
-          $1,
-          $2,
-          daterange($3::date, coalesce(($4::date + interval '1 day')::date, null), '[)'),
-          $5
-        )
-        returning id, user_id, parking_place_id, lower(valid_during)::text as date_from, (upper(valid_during) - interval '1 day')::date::text as date_to, notes, created_at
-      `,
-      [userId, parkingPlaceId, dateFrom, dateTo, notes]
-    );
+    const assignment = await permanentAssignmentsRepository.insertPermanentAssignment(dbRepository, {
+      userId,
+      parkingPlaceId,
+      dateFrom,
+      dateTo,
+      notes
+    });
 
-    await queryOne(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('permanent_assignment', $1, 'permanent_assignment_created', 'admin-web', $2::jsonb)
-        returning id
-      `,
-      [
-        assignment.id,
-        JSON.stringify({
-          userId,
-          parkingPlaceId,
-          dateFrom,
-          dateTo,
-          notes
-        })
-      ]
-    );
+    await auditRepository.insertAuditLog(dbRepository, {
+      entityType: 'permanent_assignment',
+      entityId: assignment.id,
+      action: 'permanent_assignment_created',
+      actorService: 'admin-web',
+      metadata: {
+        userId,
+        parkingPlaceId,
+        dateFrom,
+        dateTo,
+        notes
+      }
+    });
 
     return {
       statusCode: 201,
@@ -1235,18 +950,7 @@ async function handleAdminPermanentAssignmentEnd(req) {
     };
   }
 
-  const assignment = await queryOne(
-    `
-      update permanent_assignments
-      set
-        valid_during = daterange(lower(valid_during), ($2::date + interval '1 day')::date, '[)'),
-        updated_at = now()
-      where id = $1
-        and lower(valid_during) <= $2::date
-      returning id, user_id, parking_place_id, lower(valid_during)::text as date_from, (upper(valid_during) - interval '1 day')::date::text as date_to, updated_at
-    `,
-    [assignmentId, dateTo]
-  );
+  const assignment = await permanentAssignmentsRepository.endPermanentAssignment(dbRepository, { assignmentId, dateTo });
 
   if (!assignment) {
     return {
@@ -1259,27 +963,17 @@ async function handleAdminPermanentAssignmentEnd(req) {
     };
   }
 
-  await queryOne(
-    `
-      insert into audit_logs (
-        entity_type,
-        entity_id,
-        action,
-        actor_service,
-        metadata
-      )
-      values ('permanent_assignment', $1, 'permanent_assignment_ended', 'admin-web', $2::jsonb)
-      returning id
-    `,
-    [
-      assignmentId,
-      JSON.stringify({
-        userId: assignment.user_id,
-        parkingPlaceId: assignment.parking_place_id,
-        dateTo
-      })
-    ]
-  );
+  await auditRepository.insertAuditLog(dbRepository, {
+    entityType: 'permanent_assignment',
+    entityId: assignmentId,
+    action: 'permanent_assignment_ended',
+    actorService: 'admin-web',
+    metadata: {
+      userId: assignment.user_id,
+      parkingPlaceId: assignment.parking_place_id,
+      dateTo
+    }
+  });
 
   return {
     statusCode: 200,
@@ -1339,36 +1033,7 @@ function mapLineOccupancy(row) {
 }
 
 async function handleAdminLineGroupsList() {
-  const groups = await queryMany(
-    `
-      select
-        lg.id,
-        lg.code,
-        lg.name,
-        lg.capacity,
-        lg.floor_label,
-        lg.notes,
-        coalesce(
-          jsonb_agg(
-            jsonb_build_object(
-              'id', pp.id,
-              'code', pp.code,
-              'title', pp.title,
-              'placeType', pp.place_type,
-              'positionHint', pp.line_position_hint
-            )
-            order by pp.line_position_hint nulls last, pp.code
-          ) filter (where pp.id is not null),
-          '[]'::jsonb
-        ) as places
-      from line_groups lg
-      left join parking_places pp
-        on pp.line_group_id = lg.id
-        and pp.deleted_at is null
-      group by lg.id
-      order by lg.floor_label nulls last, lg.code
-    `
-  );
+  const groups = await placeLinesRepository.listLineGroupsWithPlaces(dbRepository);
 
   return {
     statusCode: 200,
@@ -1389,48 +1054,7 @@ async function handleAdminLineGroupsList() {
 }
 
 async function getLineOccupancyRows(lineGroupId, occupancyDate) {
-  return queryMany(
-    `
-      select
-        lo.id as occupancy_id,
-        lo.occupancy_date::text as occupancy_date,
-        lo.position,
-        lo.subject_type,
-        lo.created_at as occupancy_created_at,
-        lo.updated_at as occupancy_updated_at,
-        lg.id as line_group_id,
-        lg.code as line_group_code,
-        lg.name as line_group_name,
-        lg.capacity as line_group_capacity,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
-        pp.place_type as parking_place_type,
-        u.id as user_id,
-        u.display_name as user_display_name,
-        u.department as user_department,
-        u.email as user_email,
-        u.phone as user_phone,
-        gpr.id as guest_parking_request_id,
-        gpr.guest_name,
-        gpr.guest_phone,
-        gpr.host_user_id,
-        host.display_name as host_display_name,
-        r.id as reservation_id,
-        r.source as reservation_source
-      from line_occupancy lo
-      join line_groups lg on lg.id = lo.line_group_id
-      join parking_places pp on pp.id = lo.parking_place_id
-      left join users u on u.id = lo.user_id
-      left join guest_parking_requests gpr on gpr.id = lo.guest_parking_request_id
-      left join users host on host.id = gpr.host_user_id
-      left join reservations r on r.id = lo.reservation_id
-      where lo.line_group_id = $1
-        and lo.occupancy_date = $2::date
-      order by lo.position
-    `,
-    [lineGroupId, occupancyDate]
-  );
+  return lineOccupancyRepository.listOccupancyForLineAndDate(dbRepository, { lineGroupId, occupancyDate });
 }
 
 async function handleAdminLineGroupOccupancy(lineGroupId, searchParams) {
@@ -1447,7 +1071,7 @@ async function handleAdminLineGroupOccupancy(lineGroupId, searchParams) {
     };
   }
 
-  const lineGroup = await queryOne('select id, code, name, capacity, floor_label from line_groups where id = $1', [lineGroupId]);
+  const lineGroup = await placeLinesRepository.findLineGroupById(dbRepository, lineGroupId);
 
   if (!lineGroup) {
     return {
@@ -1526,121 +1150,42 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
-    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`line_occupancy:${occupancyDate}:${lineGroupId}`]);
+    const occupancyId = await withTransaction(pool, async (repo) => {
+      await lineOccupancyRepository.lockLineForDate(repo, { lineGroupId, occupancyDate });
 
-    const placeResult = await client.query(
-      `
-        select
-          pp.id,
-          pp.code,
-          pp.title,
-          pp.line_group_id,
-          lg.capacity
-        from parking_places pp
-        join line_groups lg on lg.id = pp.line_group_id
-        where pp.id = $1
-          and pp.line_group_id = $2
-          and pp.deleted_at is null
-        for update of pp
-      `,
-      [parkingPlaceId, lineGroupId]
-    );
-    const place = placeResult.rows[0];
+      const place = await placesRepository.findPlaceInLineForUpdate(repo, { parkingPlaceId, lineGroupId });
 
-    if (!place) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking place is not attached to the selected line group'
-        }
-      };
-    }
+      if (!place) {
+        throw abortWith(404, 'Parking place is not attached to the selected line group');
+      }
 
-    if (position > place.capacity) {
-      await client.query('rollback');
-      return {
-        statusCode: 400,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: `Position ${position} exceeds line capacity ${place.capacity}`
-        }
-      };
-    }
+      if (position > place.capacity) {
+        throw abortWith(400, `Position ${position} exceeds line capacity ${place.capacity}`);
+      }
 
-    const reservationResult = await client.query(
-      `
-        select id, user_id, guest_parking_request_id, source
-        from reservations
-        where parking_place_id = $1
-          and reservation_date = $2::date
-          and status = 'active'
-        limit 1
-      `,
-      [parkingPlaceId, occupancyDate]
-    );
-    const reservation = reservationResult.rows[0] || null;
+      const reservation = await reservationsRepository.findActiveReservationOnPlaceDate(repo, {
+        parkingPlaceId,
+        reservationDate: occupancyDate
+      });
 
-    if (reservation && subjectType === 'employee' && reservation.user_id && reservation.user_id !== userId) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Active reservation on this place belongs to another user'
-        }
-      };
-    }
+      if (reservation && subjectType === 'employee' && reservation.user_id && reservation.user_id !== userId) {
+        throw abortWith(409, 'Active reservation on this place belongs to another user');
+      }
 
-    if (reservation && subjectType === 'guest' && reservation.guest_parking_request_id && reservation.guest_parking_request_id !== guestParkingRequestId) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Active reservation on this place belongs to another guest request'
-        }
-      };
-    }
+      if (reservation && subjectType === 'guest' && reservation.guest_parking_request_id && reservation.guest_parking_request_id !== guestParkingRequestId) {
+        throw abortWith(409, 'Active reservation on this place belongs to another guest request');
+      }
 
-    await client.query(
-      `
-        delete from line_occupancy
-        where occupancy_date = $1::date
-          and (
-            ($2 = 'employee' and subject_type = 'employee' and user_id = $3)
-            or
-            ($2 = 'guest' and subject_type = 'guest' and guest_parking_request_id = $4)
-          )
-      `,
-      [occupancyDate, subjectType, userId, guestParkingRequestId]
-    );
+      await lineOccupancyRepository.deleteOccupancyForSubject(repo, {
+        occupancyDate,
+        subjectType,
+        userId,
+        guestParkingRequestId
+      });
 
-    const occupancyResult = await client.query(
-      `
-        insert into line_occupancy (
-          occupancy_date,
-          line_group_id,
-          parking_place_id,
-          position,
-          subject_type,
-          user_id,
-          guest_parking_request_id,
-          reservation_id
-        )
-        values ($1::date, $2, $3, $4, $5, $6, $7, $8)
-        returning id
-      `,
-      [
+      const reservationId = reservation?.id || body.reservationId || null;
+      const occupancy = await lineOccupancyRepository.insertOccupancy(repo, {
         occupancyDate,
         lineGroupId,
         parkingPlaceId,
@@ -1648,26 +1193,15 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
         subjectType,
         userId,
         guestParkingRequestId,
-        reservation?.id || body.reservationId || null
-      ]
-    );
-    const occupancyId = occupancyResult.rows[0].id;
+        reservationId
+      });
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('line_occupancy', $1, 'line_position_set', $2, $3::jsonb)
-      `,
-      [
-        occupancyId,
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'line_occupancy',
+        entityId: occupancy.id,
+        action: 'line_position_set',
         actorService,
-        JSON.stringify({
+        metadata: {
           occupancyDate,
           lineGroupId,
           parkingPlaceId,
@@ -1676,12 +1210,12 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
           subjectType,
           userId,
           guestParkingRequestId,
-          reservationId: reservation?.id || body.reservationId || null
-        })
-      ]
-    );
+          reservationId
+        }
+      });
 
-    await client.query('commit');
+      return occupancy.id;
+    });
 
     const rows = await getLineOccupancyRows(lineGroupId, occupancyDate);
     const occupancy = rows.find((row) => row.occupancy_id === occupancyId);
@@ -1695,7 +1229,9 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
       }
     };
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     if (error.code === '23505') {
       return {
@@ -1716,8 +1252,6 @@ async function handleLineOccupancySet(req, actorService = 'admin-web') {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -1736,123 +1270,63 @@ async function handleBotBlockingContacts(searchParams) {
     };
   }
 
-  const client = await pool.connect();
+  // Deliberately not a transaction: the original ran these on one pooled client without
+  // ever issuing `begin`, so each log row committed on its own. Reading a contact and
+  // recording that it was read are independent facts, and a failure part-way through
+  // should keep the rows already written.
+  const requester = await lineOccupancyRepository.findEmployeeOccupancy(dbRepository, {
+    occupancyDate,
+    userId: requesterUserId
+  });
 
-  try {
-    const requesterResult = await client.query(
-      `
-        select
-          lo.id,
-          lo.line_group_id,
-          lo.position,
-          lg.code as line_group_code,
-          lg.name as line_group_name
-        from line_occupancy lo
-        join line_groups lg on lg.id = lo.line_group_id
-        where lo.occupancy_date = $1::date
-          and lo.subject_type = 'employee'
-          and lo.user_id = $2
-        limit 1
-      `,
-      [occupancyDate, requesterUserId]
-    );
-    const requester = requesterResult.rows[0];
+  if (!requester) {
+    return {
+      statusCode: 404,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Requester line occupancy was not found for this date'
+      }
+    };
+  }
 
-    if (!requester) {
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Requester line occupancy was not found for this date'
-        }
-      };
-    }
+  const blockers = await lineOccupancyRepository.listBlockersAhead(dbRepository, {
+    occupancyDate,
+    lineGroupId: requester.line_group_id,
+    position: requester.position
+  });
 
-    const blockers = await client.query(
-      `
-        select
-          lo.id as occupancy_id,
-          lo.position,
-          lo.subject_type,
-          u.id as user_id,
-          u.display_name as user_display_name,
-          u.department as user_department,
-          u.email as user_email,
-          u.phone as user_phone,
-          gpr.id as guest_parking_request_id,
-          gpr.guest_name,
-          gpr.host_user_id,
-          host.display_name as host_display_name
-        from line_occupancy lo
-        left join users u on u.id = lo.user_id
-        left join guest_parking_requests gpr on gpr.id = lo.guest_parking_request_id
-        left join users host on host.id = gpr.host_user_id
-        where lo.occupancy_date = $1::date
-          and lo.line_group_id = $2
-          and lo.position < $3
-        order by lo.position desc
-      `,
-      [occupancyDate, requester.line_group_id, requester.position]
-    );
+  if (!blockers.length) {
+    await contactAccessRepository.insertNoBlockersLog(dbRepository, {
+      requesterUserId,
+      occupancyDate,
+      lineGroupId: requester.line_group_id,
+      metadata: {
+        requesterPosition: requester.position
+      }
+    });
+  }
 
-    if (!blockers.rows.length) {
-      await client.query(
-        `
-          insert into contact_access_logs (
-            requester_user_id,
-            occupancy_date,
-            line_group_id,
-            resolution,
-            metadata
-          )
-          values ($1, $2::date, $3, 'no_blockers', $4::jsonb)
-        `,
-        [
-          requesterUserId,
-          occupancyDate,
-          requester.line_group_id,
-          JSON.stringify({
-            requesterPosition: requester.position
-          })
-        ]
-      );
-    }
+  const contacts = [];
 
-    const contacts = [];
+  for (const blocker of blockers) {
+    const resolution = blocker.subject_type === 'guest' ? 'guest_contact_via_admin' : 'employee_contact_shown';
 
-    for (const blocker of blockers.rows) {
-      const resolution = blocker.subject_type === 'guest' ? 'guest_contact_via_admin' : 'employee_contact_shown';
+    await contactAccessRepository.insertContactAccessLog(dbRepository, {
+      requesterUserId,
+      occupancyDate,
+      lineGroupId: requester.line_group_id,
+      targetUserId: blocker.user_id,
+      targetGuestParkingRequestId: blocker.guest_parking_request_id,
+      resolution,
+      metadata: {
+        requesterPosition: requester.position,
+        blockerPosition: blocker.position,
+        blockerSubjectType: blocker.subject_type
+      }
+    });
 
-      await client.query(
-        `
-          insert into contact_access_logs (
-            requester_user_id,
-            occupancy_date,
-            line_group_id,
-            target_user_id,
-            target_guest_parking_request_id,
-            resolution,
-            metadata
-          )
-          values ($1, $2::date, $3, $4, $5, $6, $7::jsonb)
-        `,
-        [
-          requesterUserId,
-          occupancyDate,
-          requester.line_group_id,
-          blocker.user_id,
-          blocker.guest_parking_request_id,
-          resolution,
-          JSON.stringify({
-            requesterPosition: requester.position,
-            blockerPosition: blocker.position,
-            blockerSubjectType: blocker.subject_type
-          })
-        ]
-      );
-
-      contacts.push(
+    contacts.push(
         blocker.subject_type === 'guest'
           ? {
               position: blocker.position,
@@ -1880,73 +1354,37 @@ async function handleBotBlockingContacts(searchParams) {
       );
     }
 
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        date: occupancyDate,
-        lineGroup: {
-          id: requester.line_group_id,
-          code: requester.line_group_code,
-          name: requester.line_group_name
-        },
-        requesterPosition: requester.position,
-        contacts
-      }
-    };
-  } finally {
-    client.release();
-  }
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      date: occupancyDate,
+      lineGroup: {
+        id: requester.line_group_id,
+        code: requester.line_group_code,
+        name: requester.line_group_name
+      },
+      requesterPosition: requester.position,
+      contacts
+    }
+  };
 }
 
-async function calculateAssignmentWarnings(client, reservationDate, parkingPlaceId) {
-  const placeResult = await client.query(
-    `
-      select
-        pp.id,
-        pp.code,
-        pp.line_group_id,
-        coalesce(pp.line_position_hint, 1) as line_position_hint
-      from parking_places pp
-      where pp.id = $1
-    `,
-    [parkingPlaceId]
-  );
-  const place = placeResult.rows[0];
+async function calculateAssignmentWarnings(repo, reservationDate, parkingPlaceId) {
+  const place = await placesRepository.findPlaceLineContext(repo, parkingPlaceId);
 
   if (!place?.line_group_id) {
     return [];
   }
 
-  const riskResult = await client.query(
-    `
-      select
-        dp.id as departure_plan_id,
-        dp.departure_time::text as departure_time,
-        lo.position,
-        u.id as user_id,
-        u.display_name,
-        pp.code as parking_place_code,
-        lg.code as line_group_code
-      from departure_plans dp
-      join line_occupancy lo
-        on lo.user_id = dp.user_id
-        and lo.subject_type = 'employee'
-        and lo.occupancy_date = dp.plan_date
-      join users u on u.id = dp.user_id
-      join parking_places pp on pp.id = lo.parking_place_id
-      join line_groups lg on lg.id = lo.line_group_id
-      where dp.plan_date = $1::date
-        and dp.is_early = true
-        and lo.line_group_id = $2
-        and lo.position > $3
-      order by lo.position
-    `,
-    [reservationDate, place.line_group_id, place.line_position_hint]
-  );
+  const risks = await conflictsRepository.listEarlyDepartureRisksBehind(repo, {
+    reservationDate,
+    lineGroupId: place.line_group_id,
+    linePositionHint: place.line_position_hint
+  });
 
-  return riskResult.rows.map((risk) => ({
+  return risks.map((risk) => ({
     type: 'early_departure_blocking_risk',
     message: `Назначение на место ${place.code} может перекрыть ранний выезд ${risk.display_name} в ${risk.departure_time.slice(0, 5)}.`,
     lineGroupCode: risk.line_group_code,
@@ -1962,38 +1400,7 @@ async function calculateAssignmentWarnings(client, reservationDate, parkingPlace
 }
 
 async function getDeparturePlansForDate(date) {
-  const rows = await queryMany(
-    `
-      select
-        dp.id,
-        dp.plan_date::text as plan_date,
-        dp.departure_time::text as departure_time,
-        dp.is_early,
-        dp.created_at,
-        dp.updated_at,
-        u.id as user_id,
-        u.display_name,
-        u.department,
-        lo.position,
-        lg.id as line_group_id,
-        lg.code as line_group_code,
-        lg.name as line_group_name,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title
-      from departure_plans dp
-      join users u on u.id = dp.user_id
-      left join line_occupancy lo
-        on lo.user_id = dp.user_id
-        and lo.subject_type = 'employee'
-        and lo.occupancy_date = dp.plan_date
-      left join line_groups lg on lg.id = lo.line_group_id
-      left join parking_places pp on pp.id = lo.parking_place_id
-      where dp.plan_date = $1::date
-      order by dp.is_early desc, dp.departure_time, u.display_name
-    `,
-    [date]
-  );
+  const rows = await departurePlansRepository.listPlansForDate(dbRepository, date);
 
   return rows.map((row) => ({
     id: row.id,
@@ -2026,46 +1433,7 @@ async function getDeparturePlansForDate(date) {
 }
 
 async function getConflictsForDate(date) {
-  const rows = await queryMany(
-    `
-      select
-        dp.id as departure_plan_id,
-        dp.departure_time::text as departure_time,
-        early_lo.position as early_position,
-        early_user.id as early_user_id,
-        early_user.display_name as early_user_display_name,
-        early_place.code as early_place_code,
-        blocker_lo.position as blocker_position,
-        blocker_lo.subject_type as blocker_subject_type,
-        blocker_user.id as blocker_user_id,
-        blocker_user.display_name as blocker_user_display_name,
-        gpr.id as blocker_guest_request_id,
-        gpr.guest_name as blocker_guest_name,
-        blocker_place.code as blocker_place_code,
-        lg.id as line_group_id,
-        lg.code as line_group_code,
-        lg.name as line_group_name
-      from departure_plans dp
-      join line_occupancy early_lo
-        on early_lo.user_id = dp.user_id
-        and early_lo.subject_type = 'employee'
-        and early_lo.occupancy_date = dp.plan_date
-      join users early_user on early_user.id = dp.user_id
-      join parking_places early_place on early_place.id = early_lo.parking_place_id
-      join line_groups lg on lg.id = early_lo.line_group_id
-      join line_occupancy blocker_lo
-        on blocker_lo.occupancy_date = dp.plan_date
-        and blocker_lo.line_group_id = early_lo.line_group_id
-        and blocker_lo.position < early_lo.position
-      join parking_places blocker_place on blocker_place.id = blocker_lo.parking_place_id
-      left join users blocker_user on blocker_user.id = blocker_lo.user_id
-      left join guest_parking_requests gpr on gpr.id = blocker_lo.guest_parking_request_id
-      where dp.plan_date = $1::date
-        and dp.is_early = true
-      order by lg.code, early_lo.position, blocker_lo.position
-    `,
-    [date]
-  );
+  const rows = await conflictsRepository.listConflictsForDate(dbRepository, date);
 
   return rows.map((row) => ({
     type: row.blocker_subject_type === 'guest' ? 'guest_blocks_early_departure' : 'employee_blocks_early_departure',
@@ -2198,164 +1566,81 @@ async function handleDeparturePlanUpsert(req, actorService = 'bot') {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const user = await employeesRepository.findEmployeeById(repo, userId);
 
-    const userResult = await client.query(
-      `
-        select id, display_name
-        from users
-        where id = $1
-          and kind = 'employee'
-          and deleted_at is null
-      `,
-      [userId]
-    );
-    const user = userResult.rows[0];
+      if (!user) {
+        throw abortWith(404, 'Employee not found');
+      }
 
-    if (!user) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Employee not found'
-        }
-      };
-    }
+      const multiLinePlace = await placesRepository.findMultiLinePlaceForUser(repo, { userId, planDate });
 
-    const multiAccessResult = await client.query(
-      `
-        select pp.id
-        from parking_places pp
-        left join permanent_assignments pa
-          on pa.parking_place_id = pp.id
-          and pa.user_id = $1
-          and pa.valid_during @> $2::date
-        left join reservations r
-          on r.parking_place_id = pp.id
-          and r.user_id = $1
-          and r.reservation_date = $2::date
-          and r.status = 'active'
-        where pp.line_group_id is not null
-          and (pa.id is not null or r.id is not null)
-        limit 1
-      `,
-      [userId, planDate]
-    );
+      if (!multiLinePlace) {
+        throw abortWith(
+          409,
+          'Departure time can be set only for users with a multi-line place or multi-line reservation on this date'
+        );
+      }
 
-    if (!multiAccessResult.rows[0]) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Departure time can be set only for users with a multi-line place or multi-line reservation on this date'
-        }
-      };
-    }
+      // The wall-clock 07:00 check above only covers "today in APP_TIMEZONE".
+      // lock-departure-plans persists the same decision, so a plan stays locked
+      // across a day rollover and the rule can be replayed on any date.
+      const lockedPlan = await departurePlansRepository.findLockedPlan(repo, { userId, planDate });
 
-    // The wall-clock 07:00 check above only covers "today in APP_TIMEZONE".
-    // lock-departure-plans persists the same decision, so a plan stays locked
-    // across a day rollover and the rule can be replayed on any date.
-    const lockedPlanResult = await client.query(
-      `
-        select locked_at
-        from departure_plans
-        where user_id = $1
-          and plan_date = $2::date
-          and locked_at is not null
-      `,
-      [userId, planDate]
-    );
-
-    if (lockedPlanResult.rows[0]) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Departure plan editing is locked for this date',
-          lockedAt: lockedPlanResult.rows[0].locked_at,
+      if (lockedPlan) {
+        throw abortWith(409, 'Departure plan editing is locked for this date', {
+          lockedAt: lockedPlan.locked_at,
           timezone: appTimezone
-        }
-      };
-    }
+        });
+      }
 
-    const planResult = await client.query(
-      `
-        insert into departure_plans (
-          user_id,
-          plan_date,
-          departure_time,
-          is_early,
-          created_by_user_id
-        )
-        values ($1, $2::date, $3::time, $4, $1)
-        on conflict (user_id, plan_date) do update
-          set departure_time = excluded.departure_time,
-              is_early = excluded.is_early,
-              updated_at = now()
-        returning id, user_id, plan_date::text as plan_date, departure_time::text as departure_time, is_early, created_at, updated_at
-      `,
-      [userId, planDate, departureTime, isEarlyDeparture(departureTime)]
-    );
-    const plan = planResult.rows[0];
-
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_user_id,
-          actor_service,
-          metadata
-        )
-        values ('departure_plan', $1, 'departure_plan_upserted', $2, $3, $4::jsonb)
-      `,
-      [
-        plan.id,
+      const plan = await departurePlansRepository.upsertPlan(repo, {
         userId,
+        planDate,
+        departureTime,
+        isEarly: isEarlyDeparture(departureTime)
+      });
+
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'departure_plan',
+        entityId: plan.id,
+        action: 'departure_plan_upserted',
+        actorUserId: userId,
         actorService,
-        JSON.stringify({
+        metadata: {
           userId,
           userDisplayName: user.display_name,
           planDate,
           departureTime,
           isEarly: plan.is_early
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        departurePlan: {
-          id: plan.id,
-          planDate: plan.plan_date,
-          departureTime: plan.departure_time.slice(0, 5),
-          isEarly: plan.is_early,
-          createdAt: plan.created_at,
-          updatedAt: plan.updated_at,
-          user: {
-            id: userId,
-            displayName: user.display_name
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          departurePlan: {
+            id: plan.id,
+            planDate: plan.plan_date,
+            departureTime: plan.departure_time.slice(0, 5),
+            isEarly: plan.is_early,
+            createdAt: plan.created_at,
+            updatedAt: plan.updated_at,
+            user: {
+              id: userId,
+              displayName: user.display_name
+            }
           }
         }
-      }
-    };
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -2365,8 +1650,6 @@ async function handleDeparturePlanUpsert(req, actorService = 'bot') {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -2392,68 +1675,10 @@ function mapParkingPlaceMap(row) {
 // a line, and a line's capacity equals the number of active slots in it.
 async function handleAdminMapDiagnostics(searchParams) {
   const mapCode = searchParams.get('mapCode');
-  const mapFilter = mapCode ? 'where ppm.code = $1' : '';
-  const values = mapCode ? [mapCode] : [];
 
-  const maps = await queryMany(
-    `
-      select
-        ppm.id,
-        ppm.code,
-        ppm.title,
-        ppm.floor_label,
-        ppm.file_type,
-        ppm.file_path,
-        ppm.source_checksum,
-        ppm.version,
-        ppm.is_active,
-        ppm.updated_at
-      from parking_place_maps ppm
-      ${mapFilter}
-      order by ppm.floor_label nulls last, ppm.code
-    `,
-    values
-  );
-
-  // line_group_id is NOT NULL since 005_place_inventory.sql, so this should always be
-  // empty. It is checked anyway: if it ever isn't, the constraint was dropped and the
-  // operator sees it here instead of finding out through a broken element list.
-  const placeWithoutLine = await queryMany(
-    `
-      select
-        pp.id,
-        pp.code,
-        pp.title,
-        pp.floor_label,
-        pp.place_type
-      from parking_places pp
-      where pp.deleted_at is null
-        and pp.is_active = true
-        and pp.line_group_id is null
-      order by pp.floor_label nulls last, pp.code
-    `
-  );
-
-  const lineCapacityMismatch = await queryMany(
-    `
-      select
-        lg.id,
-        lg.code,
-        lg.name,
-        lg.floor_label,
-        lg.capacity,
-        count(pp.id)::int as slot_count
-      from line_groups lg
-      left join parking_places pp
-        on pp.line_group_id = lg.id
-        and pp.deleted_at is null
-        and pp.is_active = true
-      where lg.archived_at is null
-      group by lg.id, lg.code, lg.name, lg.floor_label, lg.capacity
-      having count(pp.id) <> lg.capacity
-      order by lg.floor_label nulls last, lg.code
-    `
-  );
+  const maps = await mapsRepository.listMaps(dbRepository, mapCode);
+  const placeWithoutLine = await placeLinesRepository.listPlacesWithoutLine(dbRepository);
+  const lineCapacityMismatch = await placeLinesRepository.listLinesWithCapacityMismatch(dbRepository);
 
   return {
     statusCode: 200,
@@ -2529,75 +1754,41 @@ async function handleAdminMapBackgroundUpdate(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const map = await mapsRepository.upsertMapBackground(repo, {
+        mapCode,
+        mapTitle: mapTitle || mapCode.toUpperCase(),
+        floorLabel: floorLabel || mapCode.replace(/^g/i, ''),
+        fileType,
+        filePath,
+        sourceChecksum
+      });
 
-    const result = await client.query(
-      `
-        insert into parking_place_maps (
-          code,
-          title,
-          floor_label,
-          file_type,
-          file_path,
-          source_checksum,
-          version
-        )
-        values ($1, $2, $3, $4::map_file_type, $5, $6, 1)
-        on conflict (code)
-        do update set
-          title = excluded.title,
-          floor_label = excluded.floor_label,
-          file_type = excluded.file_type,
-          file_path = excluded.file_path,
-          source_checksum = excluded.source_checksum,
-          version = parking_place_maps.version + 1,
-          is_active = true,
-          updated_at = now()
-        returning id, code, title, floor_label, file_type, file_path, source_checksum, version, is_active, updated_at
-      `,
-      [mapCode, mapTitle || mapCode.toUpperCase(), floorLabel || mapCode.replace(/^g/i, ''), fileType, filePath, sourceChecksum]
-    );
-    const map = result.rows[0];
-
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values ('parking_place_map', $1, 'parking_place_map_background_replaced', 'admin-web', $2::jsonb)
-      `,
-      [
-        map.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'parking_place_map',
+        entityId: map.id,
+        action: 'parking_place_map_background_replaced',
+        actorService: 'admin-web',
+        metadata: {
           mapCode,
           filePath,
           fileType,
           sourceChecksum,
           version: map.version
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        map: mapParkingPlaceMap(map)
-      }
-    };
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          map: mapParkingPlaceMap(map)
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
-
     return {
       statusCode: 500,
       payload: {
@@ -2606,8 +1797,6 @@ async function handleAdminMapBackgroundUpdate(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -2686,54 +1875,7 @@ async function handleAdminPlaceLinesList(searchParams) {
     };
   }
 
-  const rows = await queryMany(
-    `
-      select
-        lg.id as line_id,
-        lg.code as line_code,
-        lg.name as line_name,
-        lg.capacity,
-        lg.floor_label,
-        lg.display_order,
-        pp.id as place_id,
-        pp.code as place_code,
-        pp.title as place_title,
-        pp.place_type,
-        pp.place_role,
-        pp.line_position_hint,
-        pp.guest_priority_rank,
-        r.id as reservation_id,
-        r.source as reservation_source,
-        u.display_name as user_display_name,
-        rel.id as release_id
-      from line_groups lg
-      join parking_places pp
-        on pp.line_group_id = lg.id
-        and pp.deleted_at is null
-        and pp.is_active = true
-      left join reservations r
-        on r.parking_place_id = pp.id
-        and r.reservation_date = $1::date
-        and r.status = 'active'
-      left join users u on u.id = r.user_id
-      left join lateral (
-        select pr.id
-        from place_releases pr
-        where pr.parking_place_id = pp.id
-          and pr.status = 'active'
-          and pr.release_during @> $1::date
-        limit 1
-      ) rel on true
-      where lg.archived_at is null
-        and ($2::text is null or lg.floor_label = $2::text)
-      order by
-        lg.display_order nulls last,
-        lg.code,
-        pp.line_position_hint nulls last,
-        pp.code
-    `,
-    [date, floor]
-  );
+  const rows = await placeLinesRepository.listPlaceLineSlots(dbRepository, { date, floor });
 
   const lines = [];
   const byLineId = new Map();
@@ -2884,68 +2026,38 @@ async function handleAdminPlaceLineCreate(req) {
   }
 
   const lineCode = `line-${floorLabel}-${slots[0].code}`;
-  const client = await pool.connect();
 
   try {
-    await client.query('begin');
-
-    const lineResult = await client.query(
-      `
-        insert into line_groups (code, name, capacity, floor_label, notes)
-        values ($1, $2, $3, $4, $5)
-        returning id, code, name, capacity, floor_label, display_order, archived_at
-      `,
-      [
-        lineCode,
-        `Линия ${floorLabel} / ${slots[0].code}`,
+    const stored = await withTransaction(pool, async (repo) => {
+      const line = await placeLinesRepository.insertLineGroup(repo, {
+        code: lineCode,
+        name: `Линия ${floorLabel} / ${slots[0].code}`,
         capacity,
         floorLabel,
-        `${PLACE_TYPE_BY_CAPACITY[capacity]} element`
-      ]
-    );
-    const line = lineResult.rows[0];
+        notes: `${PLACE_TYPE_BY_CAPACITY[capacity]} element`
+      });
 
-    for (const [index, slot] of slots.entries()) {
-      await client.query(
-        `
-          insert into parking_places (
-            code,
-            title,
-            floor_label,
-            place_type,
-            place_role,
-            line_group_id,
-            line_position_hint,
-            guest_priority_rank,
-            catalog_source
-          )
-          values ($1, $2, $3, $4::parking_place_type, $5::parking_place_role, $6, $7, $8, 'admin-web')
-        `,
-        [
-          slot.code,
-          slot.title,
+      for (const [index, slot] of slots.entries()) {
+        await placeLinesRepository.insertSlot(repo, {
+          code: slot.code,
+          title: slot.title,
           floorLabel,
-          PLACE_TYPE_BY_CAPACITY[capacity],
-          slot.placeRole,
-          line.id,
-          index + 1,
-          slot.guestPriorityRank
-        ]
-      );
-    }
+          placeType: PLACE_TYPE_BY_CAPACITY[capacity],
+          placeRole: slot.placeRole,
+          lineGroupId: line.id,
+          linePositionHint: index + 1,
+          guestPriorityRank: slot.guestPriorityRank
+        });
+      }
 
-    // The one implementation of "place_type follows capacity" — it also refreshes
-    // display_order so the new element sorts into the list where it belongs.
-    await client.query('select assign_place_lines()');
+      await placeLinesRepository.assignPlaceLines(repo);
 
-    await client.query(
-      `
-        insert into audit_logs (entity_type, entity_id, action, actor_service, metadata)
-        values ('parking_place', $1, 'place_line_created', 'admin-web', $2::jsonb)
-      `,
-      [
-        line.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'parking_place',
+        entityId: line.id,
+        action: 'place_line_created',
+        actorService: 'admin-web',
+        metadata: {
           lineCode,
           capacity,
           floorLabel,
@@ -2954,37 +2066,11 @@ async function handleAdminPlaceLineCreate(req) {
             placeRole: slot.placeRole,
             guestPriorityRank: slot.guestPriorityRank
           }))
-        })
-      ]
-    );
+        }
+      });
 
-    const storedResult = await client.query(
-      `
-        select
-          lg.id as line_id,
-          lg.code as line_code,
-          lg.name as line_name,
-          lg.capacity,
-          lg.floor_label,
-          lg.display_order,
-          pp.id as place_id,
-          pp.code as place_code,
-          pp.title as place_title,
-          pp.place_type,
-          pp.place_role,
-          pp.line_position_hint,
-          pp.guest_priority_rank
-        from line_groups lg
-        join parking_places pp on pp.line_group_id = lg.id and pp.deleted_at is null
-        where lg.id = $1
-        order by pp.line_position_hint nulls last, pp.code
-      `,
-      [line.id]
-    );
-
-    await client.query('commit');
-
-    const stored = storedResult.rows;
+      return placeLinesRepository.listSlotsForLine(repo, line.id);
+    });
 
     return {
       statusCode: 201,
@@ -3013,8 +2099,6 @@ async function handleAdminPlaceLineCreate(req) {
       }
     };
   } catch (error) {
-    await client.query('rollback');
-
     if (error.code === '23505') {
       return {
         statusCode: 409,
@@ -3034,8 +2118,6 @@ async function handleAdminPlaceLineCreate(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -3069,154 +2151,67 @@ async function handleAdminPlaceLineArchive(req) {
   }
 
   const today = currentDateInTimezone(appTimezone);
-  const client = await pool.connect();
 
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const line = await placeLinesRepository.findLineForUpdate(repo, lineId);
 
-    const lineResult = await client.query(
-      `
-        select id, code, name, capacity, floor_label, archived_at
-        from line_groups
-        where id = $1
-        for update
-      `,
-      [lineId]
-    );
-    const line = lineResult.rows[0];
+      if (!line || line.archived_at) {
+        throw abortWith(404, 'Parking line not found');
+      }
 
-    if (!line || line.archived_at) {
-      await client.query('rollback');
+      const blockerRows = await placeLinesRepository.listArchiveBlockers(repo, { lineId, today });
 
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking line not found'
-        }
-      };
-    }
+      if (blockerRows.length > 0) {
+        throw abortWith(409, 'Parking line still has active reservations or permanent assignments', {
+          blockers: blockerRows.map((row) => ({
+            type: row.blocker_type,
+            placeCode: row.place_code,
+            detail: row.detail,
+            userDisplayName: row.user_display_name || null
+          }))
+        });
+      }
 
-    // A place with a reservation for today or later, or a live permanent owner, is
-    // still in use — archiving it would strand a person, so the operator has to clear
-    // the blocker first and the response names every one of them.
-    const blockerResult = await client.query(
-      `
-        select
-          'reservation' as blocker_type,
-          pp.code as place_code,
-          to_char(r.reservation_date, 'YYYY-MM-DD') as detail,
-          u.display_name as user_display_name
-        from reservations r
-        join parking_places pp on pp.id = r.parking_place_id
-        left join users u on u.id = r.user_id
-        where pp.line_group_id = $1
-          and r.status = 'active'
-          and r.reservation_date >= $2::date
+      const archived = await placeLinesRepository.archiveSlotsOfLine(repo, lineId);
+      await placeLinesRepository.archiveLine(repo, lineId);
 
-        union all
-
-        select
-          'permanent_assignment' as blocker_type,
-          pp.code as place_code,
-          to_char(lower(pa.valid_during), 'YYYY-MM-DD') as detail,
-          u.display_name as user_display_name
-        from permanent_assignments pa
-        join parking_places pp on pp.id = pa.parking_place_id
-        join users u on u.id = pa.user_id
-        where pp.line_group_id = $1
-          and (upper(pa.valid_during) is null or upper(pa.valid_during) > $2::date)
-
-        order by place_code, blocker_type
-      `,
-      [lineId, today]
-    );
-
-    if (blockerResult.rowCount > 0) {
-      await client.query('rollback');
-
-      const blockers = blockerResult.rows.map((row) => ({
-        type: row.blocker_type,
-        placeCode: row.place_code,
-        detail: row.detail,
-        userDisplayName: row.user_display_name || null
-      }));
-
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking line still has active reservations or permanent assignments',
-          blockers
-        }
-      };
-    }
-
-    const archivedResult = await client.query(
-      `
-        update parking_places
-        set
-          is_active = false,
-          deleted_at = now(),
-          updated_at = now()
-        where line_group_id = $1
-          and deleted_at is null
-        returning id, code, title
-      `,
-      [lineId]
-    );
-
-    await client.query(
-      `
-        update line_groups
-        set
-          archived_at = now(),
-          updated_at = now()
-        where id = $1
-      `,
-      [lineId]
-    );
-
-    await client.query(
-      `
-        insert into audit_logs (entity_type, entity_id, action, actor_service, metadata)
-        values ('parking_place', $1, 'place_line_archived', 'admin-web', $2::jsonb)
-      `,
-      [
-        lineId,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'parking_place',
+        entityId: lineId,
+        action: 'place_line_archived',
+        actorService: 'admin-web',
+        metadata: {
           lineCode: line.code,
           capacity: line.capacity,
           floorLabel: line.floor_label,
-          archivedPlaceCodes: archivedResult.rows.map((row) => row.code)
-        })
-      ]
-    );
+          archivedPlaceCodes: archived.map((row) => row.code)
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        line: {
-          lineId: line.id,
-          code: line.code,
-          capacity: line.capacity,
-          floorLabel: line.floor_label
-        },
-        archivedPlaces: archivedResult.rows.map((row) => ({
-          placeId: row.id,
-          code: row.code,
-          title: row.title
-        }))
-      }
-    };
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          line: {
+            lineId: line.id,
+            code: line.code,
+            capacity: line.capacity,
+            floorLabel: line.floor_label
+          },
+          archivedPlaces: archived.map((row) => ({
+            placeId: row.id,
+            code: row.code,
+            title: row.title
+          }))
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -3226,8 +2221,6 @@ async function handleAdminPlaceLineArchive(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 async function handleAdminDashboard(searchParams) {
@@ -3245,102 +2238,10 @@ async function handleAdminDashboard(searchParams) {
   }
 
   const [releasedPlaces, reservations, guestRequests, guestReserve] = await Promise.all([
-    queryMany(
-      `
-        select
-          pr.id as release_id,
-          pr.notes as release_notes,
-          u.id as owner_user_id,
-          u.display_name as owner_display_name,
-          u.department as owner_department,
-          pp.id as parking_place_id,
-          pp.code as parking_place_code,
-          pp.title as parking_place_title,
-          pp.place_type as parking_place_type,
-          r.id as reservation_id
-        from place_releases pr
-        join users u on u.id = pr.user_id
-        join parking_places pp on pp.id = pr.parking_place_id
-          and pp.deleted_at is null
-        left join reservations r
-          on r.parking_place_id = pp.id
-          and r.reservation_date = $1::date
-          and r.status = 'active'
-        where pr.status = 'active'
-          and pr.release_during @> $1::date
-        order by pp.code
-      `,
-      [date]
-    ),
-    queryMany(
-      `
-        select
-          r.id,
-          r.reservation_date,
-          r.source,
-          r.reason,
-          r.created_at,
-          u.id as user_id,
-          u.display_name as user_display_name,
-          u.department as user_department,
-          pp.id as parking_place_id,
-          pp.code as parking_place_code,
-          pp.title as parking_place_title,
-          pp.place_type as parking_place_type
-        from reservations r
-        join parking_places pp on pp.id = r.parking_place_id
-        left join users u on u.id = r.user_id
-        where r.status = 'active'
-          and r.reservation_date = $1::date
-        order by pp.code
-      `,
-      [date]
-    ),
-    queryMany(
-      `
-        select
-          gpr.id,
-          gpr.request_date,
-          gpr.status,
-          gpr.guest_name,
-          gpr.guest_phone,
-          gpr.vehicle_plate_number,
-          gpr.created_at,
-          gpr.canceled_at,
-          gpr.notes,
-          host.id as host_user_id,
-          host.display_name as host_display_name,
-          host.department as host_department,
-          r.id as reservation_id,
-          pp.id as parking_place_id,
-          pp.code as parking_place_code,
-          pp.title as parking_place_title,
-          pp.place_type as parking_place_type
-        from guest_parking_requests gpr
-        join users host on host.id = gpr.host_user_id
-        left join reservations r on r.id = gpr.assigned_reservation_id
-        left join parking_places pp on pp.id = r.parking_place_id
-        where gpr.request_date = $1::date
-        order by gpr.created_at desc
-      `,
-      [date]
-    ),
-    queryOne(
-      `
-        select count(*)::int as available_places
-        from place_releases pr
-        join parking_places pp on pp.id = pr.parking_place_id
-          and pp.deleted_at is null
-        left join reservations r
-          on r.parking_place_id = pp.id
-          and r.reservation_date = $1::date
-          and r.status = 'active'
-        where pr.status = 'active'
-          and pr.release_during @> $1::date
-          and r.id is null
-      `,
-      [date]
-    )
+    placeReleasesRepository.listActiveReleasesForDate(dbRepository, date),
+    reservationsRepository.listActiveReservationsForDate(dbRepository, date),
+    guestRequestsRepository.listGuestRequestsForDate(dbRepository, date),
+    placeReleasesRepository.countUnreservedReleasedPlaces(dbRepository, date)
   ]);
 
   return {
@@ -3454,22 +2355,16 @@ async function handleAdminAvailability(searchParams) {
     };
   }
 
-  const client = await pool.connect();
+  const availability = await calculateAvailabilitySnapshot(dbRepository, date, { appTimezone, guestReserveMinimum });
 
-  try {
-    const availability = await calculateAvailabilitySnapshot(client, date, { appTimezone, guestReserveMinimum });
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        availability
-      }
-    };
-  } finally {
-    client.release();
-  }
+  return {
+    statusCode: 200,
+    payload: {
+      status: 'ok',
+      service: 'api',
+      availability
+    }
+  };
 }
 
 async function handleAdminPlaceReleasesList(searchParams) {
@@ -3487,32 +2382,10 @@ async function handleAdminPlaceReleasesList(searchParams) {
     };
   }
 
-  const releases = await queryMany(
-    `
-      select
-        pr.id,
-        lower(pr.release_during)::date as date_from,
-        (upper(pr.release_during)::date - 1) as date_to,
-        pr.status,
-        pr.created_via,
-        pr.created_at,
-        pr.notes,
-        u.id as user_id,
-        u.display_name as user_display_name,
-        u.department as user_department,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
-        pp.place_type as parking_place_type
-      from place_releases pr
-      join users u on u.id = pr.user_id
-      join parking_places pp on pp.id = pr.parking_place_id
-      where pr.status = 'active'
-        and ($1::date is null or pr.release_during && daterange($1::date, ($2::date + 1), '[)'))
-      order by lower(pr.release_during), pp.code
-    `,
-    [dateFrom || null, dateTo || dateFrom || null]
-  );
+  const releases = await placeReleasesRepository.listReleasesInRange(dbRepository, {
+    dateFrom: dateFrom || null,
+    dateTo: dateTo || dateFrom || null
+  });
 
   return {
     statusCode: 200,
@@ -3557,34 +2430,7 @@ async function handleAdminEmployeeParkingRequestsList(searchParams) {
     };
   }
 
-  const requests = await queryMany(
-    `
-      select
-        epr.id,
-        epr.request_date,
-        epr.status,
-        epr.requested_at,
-        epr.canceled_at,
-        epr.notes,
-        u.id as user_id,
-        u.display_name as user_display_name,
-        u.department as user_department,
-        qe.id as queue_entry_id,
-        qe.queue_position,
-        qe.status as queue_status,
-        qe.processed_at,
-        r.id as reservation_id,
-        pp.code as assigned_place_code
-      from employee_parking_requests epr
-      join users u on u.id = epr.user_id
-      left join queue_entries qe on qe.employee_parking_request_id = epr.id
-      left join reservations r on r.id = epr.assigned_reservation_id
-      left join parking_places pp on pp.id = r.parking_place_id
-      where ($1::date is null or epr.request_date = $1::date)
-      order by epr.request_date desc, qe.queue_position nulls last, epr.requested_at
-    `,
-    [requestDate || null]
-  );
+  const requests = await employeeRequestsRepository.listRequestsForDate(dbRepository, requestDate || null);
 
   return {
     statusCode: 200,
@@ -3653,153 +2499,77 @@ async function handleAdminEmployeeParkingRequestCreate(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
-    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`employee_queue:${requestDate}`]);
+    return await withTransaction(pool, async (repo) => {
+      await queueRepository.lockEmployeeQueueForDate(repo, requestDate);
 
-    const employeeResult = await client.query(
-      `
-        select id, display_name
-        from users
-        where id = $1
-          and kind = 'employee'
-          and deleted_at is null
-      `,
-      [userId]
-    );
-    const employee = employeeResult.rows[0];
+      const employee = await employeesRepository.findEmployeeById(repo, userId);
 
-    if (!employee) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Employee not found'
-        }
-      };
-    }
+      if (!employee) {
+        throw abortWith(404, 'Employee not found');
+      }
 
-    const permanentAssignmentResult = await client.query(
-      `
-        select id
-        from permanent_assignments
-        where user_id = $1
-          and valid_during @> $2::date
-        limit 1
-      `,
-      [userId, requestDate]
-    );
+      const permanentAssignment = await permanentAssignmentsRepository.findActiveAssignmentForUserDate(repo, {
+        userId,
+        date: requestDate
+      });
 
-    if (permanentAssignmentResult.rows[0]) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Employee has a permanent parking place for the selected date'
-        }
-      };
-    }
+      if (permanentAssignment) {
+        throw abortWith(409, 'Employee has a permanent parking place for the selected date');
+      }
 
-    const requestResult = await client.query(
-      `
-        insert into employee_parking_requests (
-          user_id,
-          request_date,
-          status,
-          notes
-        )
-        values ($1, $2::date, 'queued', $3)
-        returning id, request_date, status, requested_at
-      `,
-      [userId, requestDate, notes]
-    );
-    const parkingRequest = requestResult.rows[0];
+      const parkingRequest = await employeeRequestsRepository.insertRequest(repo, { userId, requestDate, notes });
 
-    const positionResult = await client.query(
-      `
-        select coalesce(max(queue_position), 0) + 1 as next_position
-        from queue_entries
-        where queue_date = $1::date
-      `,
-      [requestDate]
-    );
-    const queuePosition = Number(positionResult.rows[0].next_position);
+      const position = await queueRepository.nextQueuePosition(repo, requestDate);
+      const queuePosition = Number(position.next_position);
 
-    const queueResult = await client.query(
-      `
-        insert into queue_entries (
-          employee_parking_request_id,
-          queue_date,
-          queue_position
-        )
-        values ($1, $2::date, $3)
-        returning id, queue_position, status
-      `,
-      [parkingRequest.id, requestDate, queuePosition]
-    );
-    const queueEntry = queueResult.rows[0];
+      const queueEntry = await queueRepository.insertQueueEntry(repo, {
+        employeeParkingRequestId: parkingRequest.id,
+        queueDate: requestDate,
+        queuePosition
+      });
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'employee_parking_request',
-          $1,
-          'employee_parking_request_created',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        parkingRequest.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'employee_parking_request',
+        entityId: parkingRequest.id,
+        action: 'employee_parking_request_created',
+        actorService: 'admin-web',
+        metadata: {
           userId,
           userDisplayName: employee.display_name,
           requestDate,
           queueEntryId: queueEntry.id,
           queuePosition
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 201,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        request: {
-          id: parkingRequest.id,
-          requestDate: parkingRequest.request_date,
-          status: parkingRequest.status,
-          requestedAt: parkingRequest.requested_at,
-          user: {
-            id: userId,
-            displayName: employee.display_name
-          },
-          queueEntry: {
-            id: queueEntry.id,
-            position: queueEntry.queue_position,
-            status: queueEntry.status
+      return {
+        statusCode: 201,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          request: {
+            id: parkingRequest.id,
+            requestDate: parkingRequest.request_date,
+            status: parkingRequest.status,
+            requestedAt: parkingRequest.requested_at,
+            user: {
+              id: userId,
+              displayName: employee.display_name
+            },
+            queueEntry: {
+              id: queueEntry.id,
+              position: queueEntry.queue_position,
+              status: queueEntry.status
+            }
           }
         }
-      }
-    };
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     if (error.code === '23505') {
       return {
@@ -3820,8 +2590,6 @@ async function handleAdminEmployeeParkingRequestCreate(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -3854,137 +2622,65 @@ async function handleAdminEmployeeParkingRequestCancel(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const parkingRequest = await employeeRequestsRepository.findRequestForUpdate(repo, requestId);
 
-    const requestResult = await client.query(
-      `
-        select
-          epr.id,
-          epr.request_date,
-          epr.status,
-          epr.assigned_reservation_id,
-          u.display_name as user_display_name
-        from employee_parking_requests epr
-        join users u on u.id = epr.user_id
-        where epr.id = $1
-        for update
-      `,
-      [requestId]
-    );
-    const parkingRequest = requestResult.rows[0];
+      if (!parkingRequest) {
+        throw abortWith(404, 'Employee parking request not found');
+      }
 
-    if (!parkingRequest) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Employee parking request not found'
+      if (parkingRequest.assigned_reservation_id) {
+        throw abortWith(409, 'Assigned requests cannot be canceled here yet');
+      }
+
+      if (parkingRequest.status === 'canceled') {
+        throw new AbortTransaction({
+          statusCode: 200,
+          payload: {
+            status: 'ok',
+            service: 'api',
+            request: {
+              id: parkingRequest.id,
+              requestDate: parkingRequest.request_date,
+              status: parkingRequest.status
+            }
+          }
+        });
+      }
+
+      const canceledRequest = await employeeRequestsRepository.cancelRequest(repo, requestId);
+      await queueRepository.cancelWaitingEntriesForRequest(repo, requestId);
+
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'employee_parking_request',
+        entityId: requestId,
+        action: 'employee_parking_request_canceled',
+        actorService: 'admin-web',
+        metadata: {
+          requestDate: parkingRequest.request_date,
+          userDisplayName: parkingRequest.user_display_name
         }
-      };
-    }
+      });
 
-    if (parkingRequest.assigned_reservation_id) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Assigned requests cannot be canceled here yet'
-        }
-      };
-    }
-
-    if (parkingRequest.status === 'canceled') {
-      await client.query('rollback');
       return {
         statusCode: 200,
         payload: {
           status: 'ok',
           service: 'api',
           request: {
-            id: parkingRequest.id,
-            requestDate: parkingRequest.request_date,
-            status: parkingRequest.status
+            id: canceledRequest.id,
+            requestDate: canceledRequest.request_date,
+            status: canceledRequest.status,
+            canceledAt: canceledRequest.canceled_at
           }
         }
       };
-    }
-
-    const updateResult = await client.query(
-      `
-        update employee_parking_requests
-        set
-          status = 'canceled',
-          canceled_at = now(),
-          updated_at = now()
-        where id = $1
-        returning id, request_date, status, canceled_at
-      `,
-      [requestId]
-    );
-    const canceledRequest = updateResult.rows[0];
-
-    await client.query(
-      `
-        update queue_entries
-        set
-          status = 'canceled',
-          updated_at = now()
-        where employee_parking_request_id = $1
-          and status = 'waiting'
-      `,
-      [requestId]
-    );
-
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'employee_parking_request',
-          $1,
-          'employee_parking_request_canceled',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        requestId,
-        JSON.stringify({
-          requestDate: parkingRequest.request_date,
-          userDisplayName: parkingRequest.user_display_name
-        })
-      ]
-    );
-
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        request: {
-          id: canceledRequest.id,
-          requestDate: canceledRequest.request_date,
-          status: canceledRequest.status,
-          canceledAt: canceledRequest.canceled_at
-        }
-      }
-    };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -3994,8 +2690,6 @@ async function handleAdminEmployeeParkingRequestCancel(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -4013,39 +2707,7 @@ async function handleAdminGuestParkingRequestsList(searchParams) {
     };
   }
 
-  const requests = await queryMany(
-    `
-      select
-        gpr.id,
-        gpr.request_date,
-        gpr.status,
-        gpr.guest_name,
-        gpr.guest_phone,
-        gpr.vehicle_plate_number,
-        gpr.created_at,
-        gpr.canceled_at,
-        gpr.notes,
-        guest.id as guest_user_id,
-        guest.display_name as guest_display_name,
-        host.id as host_user_id,
-        host.display_name as host_display_name,
-        host.department as host_department,
-        r.id as reservation_id,
-        r.status as reservation_status,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
-        pp.place_type as parking_place_type
-      from guest_parking_requests gpr
-      join users guest on guest.id = gpr.guest_user_id
-      join users host on host.id = gpr.host_user_id
-      left join reservations r on r.id = gpr.assigned_reservation_id
-      left join parking_places pp on pp.id = r.parking_place_id
-      where ($1::date is null or gpr.request_date = $1::date)
-      order by gpr.request_date desc, gpr.created_at desc
-    `,
-    [requestDate || null]
-  );
+  const requests = await guestRequestsRepository.listGuestRequests(dbRepository, requestDate || null);
 
   return {
     statusCode: 200,
@@ -4123,168 +2785,61 @@ async function handleAdminGuestParkingRequestCreate(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
-    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`guest_assignment:${requestDate}`]);
+    return await withTransaction(pool, async (repo) => {
+      await guestRequestsRepository.lockGuestAssignmentForDate(repo, requestDate);
 
-    const hostResult = await client.query(
-      `
-        select id, display_name, department
-        from users
-        where id = $1
-          and kind = 'employee'
-          and is_active = true
-          and deleted_at is null
-      `,
-      [hostUserId]
-    );
-    const host = hostResult.rows[0];
+      const host = await guestRequestsRepository.findActiveHost(repo, hostUserId);
 
-    if (!host) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Host employee not found'
-        }
-      };
-    }
+      if (!host) {
+        throw abortWith(404, 'Host employee not found');
+      }
 
-    const placeResult = await client.query(
-      `
-        select
-          pr.id as release_id,
-          pp.id as parking_place_id,
-          pp.code as parking_place_code,
-          pp.title as parking_place_title,
-          pp.place_type
-        from place_releases pr
-        join parking_places pp on pp.id = pr.parking_place_id
-          and pp.deleted_at is null
-        left join reservations r
-          on r.parking_place_id = pp.id
-          and r.reservation_date = $1::date
-          and r.status = 'active'
-        where pr.status = 'active'
-          and pr.release_during @> $1::date
-          and r.id is null
-        order by
-          case pp.place_type
-            when 'single' then 1
-            when 'double' then 2
-            when 'triple' then 3
-            else 4
-          end,
-          pp.guest_priority_rank nulls last,
-          pp.code
-        limit 1
-        for update of pr, pp
-      `,
-      [requestDate]
-    );
-    const place = placeResult.rows[0];
+      const place = await placeReleasesRepository.findPlaceForGuestAssignment(repo, requestDate);
 
-    if (!place) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'No released parking place is available for guest assignment on this date'
-        }
-      };
-    }
+      if (!place) {
+        throw abortWith(409, 'No released parking place is available for guest assignment on this date');
+      }
 
-    const warnings = await calculateAssignmentWarnings(client, requestDate, place.parking_place_id);
+      const warnings = await calculateAssignmentWarnings(repo, requestDate, place.parking_place_id);
 
-    const { firstName, lastName } = splitDisplayName(guestName);
-    const guestResult = await client.query(
-      `
-        insert into users (
-          kind,
-          first_name,
-          last_name,
-          display_name,
-          phone
-        )
-        values ('guest', $1, $2, $3, $4)
-        returning id, display_name, phone
-      `,
-      [firstName, lastName, guestName, guestPhone]
-    );
-    const guest = guestResult.rows[0];
+      const { firstName, lastName } = splitDisplayName(guestName);
+      const guest = await guestRequestsRepository.insertGuestUser(repo, {
+        firstName,
+        lastName,
+        displayName: guestName,
+        phone: guestPhone
+      });
 
-    const requestResult = await client.query(
-      `
-        insert into guest_parking_requests (
-          guest_user_id,
-          host_user_id,
-          request_date,
-          status,
-          guest_name,
-          guest_phone,
-          vehicle_plate_number,
-          notes
-        )
-        values ($1, $2, $3::date, 'assigned', $4, $5, $6, $7)
-        returning id, request_date, status, created_at
-      `,
-      [guest.id, hostUserId, requestDate, guestName, guestPhone, vehiclePlateNumber, notes]
-    );
-    const guestRequest = requestResult.rows[0];
-
-    const reservationResult = await client.query(
-      `
-        insert into reservations (
-          reservation_date,
-          parking_place_id,
-          user_id,
-          guest_parking_request_id,
-          source,
-          reason
-        )
-        values ($1::date, $2, $3, $4, 'guest', $5)
-        returning id, reservation_date, source, status, created_at
-      `,
-      [
+      const guestRequest = await guestRequestsRepository.insertAssignedGuestRequest(repo, {
+        guestUserId: guest.id,
+        hostUserId,
         requestDate,
-        place.parking_place_id,
-        guest.id,
-        guestRequest.id,
-        `Guest assignment hosted by ${host.display_name}`
-      ]
-    );
-    const reservation = reservationResult.rows[0];
+        guestName,
+        guestPhone,
+        vehiclePlateNumber,
+        notes
+      });
 
-    await client.query(
-      `
-        update guest_parking_requests
-        set
-          assigned_reservation_id = $1,
-          updated_at = now()
-        where id = $2
-      `,
-      [reservation.id, guestRequest.id]
-    );
+      const reservation = await reservationsRepository.insertReservation(repo, {
+        reservationDate: requestDate,
+        parkingPlaceId: place.parking_place_id,
+        userId: guest.id,
+        guestParkingRequestId: guestRequest.id,
+        source: 'guest',
+        reason: `Guest assignment hosted by ${host.display_name}`
+      });
 
-    await client.query(
-      `
-        insert into reservation_events (
-          reservation_id,
-          event_type,
-          payload,
-          source
-        )
-        values ($1, 'reservation_created', $2::jsonb, 'guest')
-      `,
-      [
-        reservation.id,
-        JSON.stringify({
+      await guestRequestsRepository.attachReservation(repo, {
+        guestRequestId: guestRequest.id,
+        reservationId: reservation.id
+      });
+
+      await reservationsRepository.insertReservationEvent(repo, {
+        reservationId: reservation.id,
+        eventType: 'reservation_created',
+        source: 'guest',
+        payload: {
           releaseId: place.release_id,
           guestParkingRequestId: guestRequest.id,
           guestUserId: guest.id,
@@ -4293,44 +2848,23 @@ async function handleAdminGuestParkingRequestCreate(req) {
           hostDisplayName: host.display_name,
           parkingPlaceId: place.parking_place_id,
           requestDate
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query(
-      `
-        insert into parking_movements (
-          reservation_id,
-          movement_date,
-          to_parking_place_id,
-          movement_type,
-          reason
-        )
-        values ($1, $2::date, $3, 'guest_assignment', $4)
-      `,
-      [reservation.id, requestDate, place.parking_place_id, `Guest assignment hosted by ${host.display_name}`]
-    );
+      await reservationsRepository.insertMovement(repo, {
+        reservationId: reservation.id,
+        movementDate: requestDate,
+        toParkingPlaceId: place.parking_place_id,
+        movementType: 'guest_assignment',
+        reason: `Guest assignment hosted by ${host.display_name}`
+      });
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'guest_parking_request',
-          $1,
-          'guest_parking_request_created_and_assigned',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        guestRequest.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'guest_parking_request',
+        entityId: guestRequest.id,
+        action: 'guest_parking_request_created_and_assigned',
+        actorService: 'admin-web',
+        metadata: {
           guestUserId: guest.id,
           guestName,
           hostUserId,
@@ -4340,53 +2874,53 @@ async function handleAdminGuestParkingRequestCreate(req) {
           parkingPlaceCode: place.parking_place_code,
           requestDate,
           warnings
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 201,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        request: {
-          id: guestRequest.id,
-          requestDate: guestRequest.request_date,
-          status: guestRequest.status,
-          guestName,
-          guestPhone,
-          vehiclePlateNumber,
-          createdAt: guestRequest.created_at,
-          guest: {
-            id: guest.id,
-            displayName: guest.display_name,
-            phone: guest.phone
-          },
-          host: {
-            id: host.id,
-            displayName: host.display_name,
-            department: host.department
-          },
-          assignedReservation: {
-            id: reservation.id,
-            reservationDate: reservation.reservation_date,
-            source: reservation.source,
-            status: reservation.status,
-            parkingPlace: {
-              id: place.parking_place_id,
-              code: place.parking_place_code,
-              title: place.parking_place_title,
-              placeType: place.place_type
+      return {
+        statusCode: 201,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          request: {
+            id: guestRequest.id,
+            requestDate: guestRequest.request_date,
+            status: guestRequest.status,
+            guestName,
+            guestPhone,
+            vehiclePlateNumber,
+            createdAt: guestRequest.created_at,
+            guest: {
+              id: guest.id,
+              displayName: guest.display_name,
+              phone: guest.phone
+            },
+            host: {
+              id: host.id,
+              displayName: host.display_name,
+              department: host.department
+            },
+            assignedReservation: {
+              id: reservation.id,
+              reservationDate: reservation.reservation_date,
+              source: reservation.source,
+              status: reservation.status,
+              parkingPlace: {
+                id: place.parking_place_id,
+                code: place.parking_place_code,
+                title: place.parking_place_title,
+                placeType: place.place_type
+              }
             }
-          }
-        },
-        warnings
-      }
-    };
+          },
+          warnings
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     if (error.code === '23505') {
       return {
@@ -4407,8 +2941,6 @@ async function handleAdminGuestParkingRequestCreate(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -4441,166 +2973,52 @@ async function handleAdminGuestParkingRequestAssign(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const guestRequest = await guestRequestsRepository.findGuestRequestForUpdate(repo, requestId);
 
-    const requestResult = await client.query(
-      `
-        select
-          gpr.id,
-          gpr.request_date,
-          gpr.status,
-          gpr.guest_user_id,
-          gpr.host_user_id,
-          gpr.guest_name,
-          gpr.assigned_reservation_id,
-          host.display_name as host_display_name
-        from guest_parking_requests gpr
-        join users host on host.id = gpr.host_user_id
-        where gpr.id = $1
-        for update of gpr
-      `,
-      [requestId]
-    );
-    const guestRequest = requestResult.rows[0];
+      if (!guestRequest) {
+        throw abortWith(404, 'Guest parking request not found');
+      }
 
-    if (!guestRequest) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
+      if (guestRequest.status === 'canceled') {
+        throw abortWith(409, 'Canceled guest requests cannot be assigned');
+      }
+
+      if (guestRequest.assigned_reservation_id || guestRequest.status === 'assigned') {
+        throw abortWith(409, 'Guest request is already assigned');
+      }
+
+      const requestDate = formatDateForSql(guestRequest.request_date);
+      await guestRequestsRepository.lockGuestAssignmentForDate(repo, requestDate);
+
+      const place = await placeReleasesRepository.findPlaceForGuestAssignment(repo, requestDate);
+
+      if (!place) {
+        throw abortWith(409, 'No released parking place is available for guest assignment on this date');
+      }
+
+      const reservation = await reservationsRepository.insertReservation(repo, {
+        reservationDate: requestDate,
+        parkingPlaceId: place.parking_place_id,
+        userId: guestRequest.guest_user_id,
+        guestParkingRequestId: guestRequest.id,
+        source: 'guest',
+        reason: `Guest assignment hosted by ${guestRequest.host_display_name}`
+      });
+
+      const warnings = await calculateAssignmentWarnings(repo, requestDate, place.parking_place_id);
+
+      await guestRequestsRepository.markAssigned(repo, {
+        guestRequestId: guestRequest.id,
+        reservationId: reservation.id
+      });
+
+      await reservationsRepository.insertReservationEvent(repo, {
+        reservationId: reservation.id,
+        eventType: 'reservation_created',
+        source: 'guest',
         payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Guest parking request not found'
-        }
-      };
-    }
-
-    if (guestRequest.status === 'canceled') {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Canceled guest requests cannot be assigned'
-        }
-      };
-    }
-
-    if (guestRequest.assigned_reservation_id || guestRequest.status === 'assigned') {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Guest request is already assigned'
-        }
-      };
-    }
-
-    const requestDate = formatDateForSql(guestRequest.request_date);
-    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`guest_assignment:${requestDate}`]);
-
-    const placeResult = await client.query(
-      `
-        select
-          pr.id as release_id,
-          pp.id as parking_place_id,
-          pp.code as parking_place_code,
-          pp.title as parking_place_title,
-          pp.place_type
-        from place_releases pr
-        join parking_places pp on pp.id = pr.parking_place_id
-          and pp.deleted_at is null
-        left join reservations r
-          on r.parking_place_id = pp.id
-          and r.reservation_date = $1::date
-          and r.status = 'active'
-        where pr.status = 'active'
-          and pr.release_during @> $1::date
-          and r.id is null
-        order by
-          case pp.place_type
-            when 'single' then 1
-            when 'double' then 2
-            when 'triple' then 3
-            else 4
-          end,
-          pp.guest_priority_rank nulls last,
-          pp.code
-        limit 1
-        for update of pr, pp
-      `,
-      [requestDate]
-    );
-    const place = placeResult.rows[0];
-
-    if (!place) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'No released parking place is available for guest assignment on this date'
-        }
-      };
-    }
-
-    const reservationResult = await client.query(
-      `
-        insert into reservations (
-          reservation_date,
-          parking_place_id,
-          user_id,
-          guest_parking_request_id,
-          source,
-          reason
-        )
-        values ($1::date, $2, $3, $4, 'guest', $5)
-        returning id, reservation_date, source, status, created_at
-      `,
-      [
-        requestDate,
-        place.parking_place_id,
-        guestRequest.guest_user_id,
-        guestRequest.id,
-        `Guest assignment hosted by ${guestRequest.host_display_name}`
-      ]
-    );
-    const reservation = reservationResult.rows[0];
-
-    const warnings = await calculateAssignmentWarnings(client, requestDate, place.parking_place_id);
-
-    await client.query(
-      `
-        update guest_parking_requests
-        set
-          status = 'assigned',
-          assigned_reservation_id = $1,
-          updated_at = now()
-        where id = $2
-      `,
-      [reservation.id, guestRequest.id]
-    );
-
-    await client.query(
-      `
-        insert into reservation_events (
-          reservation_id,
-          event_type,
-          payload,
-          source
-        )
-        values ($1, 'reservation_created', $2::jsonb, 'guest')
-      `,
-      [
-        reservation.id,
-        JSON.stringify({
           releaseId: place.release_id,
           guestParkingRequestId: guestRequest.id,
           guestUserId: guestRequest.guest_user_id,
@@ -4608,44 +3026,23 @@ async function handleAdminGuestParkingRequestAssign(req) {
           hostUserId: guestRequest.host_user_id,
           parkingPlaceId: place.parking_place_id,
           requestDate
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query(
-      `
-        insert into parking_movements (
-          reservation_id,
-          movement_date,
-          to_parking_place_id,
-          movement_type,
-          reason
-        )
-        values ($1, $2::date, $3, 'guest_assignment', $4)
-      `,
-      [reservation.id, requestDate, place.parking_place_id, `Guest assignment hosted by ${guestRequest.host_display_name}`]
-    );
+      await reservationsRepository.insertMovement(repo, {
+        reservationId: reservation.id,
+        movementDate: requestDate,
+        toParkingPlaceId: place.parking_place_id,
+        movementType: 'guest_assignment',
+        reason: `Guest assignment hosted by ${guestRequest.host_display_name}`
+      });
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'guest_parking_request',
-          $1,
-          'guest_parking_request_assigned',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        guestRequest.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'guest_parking_request',
+        entityId: guestRequest.id,
+        action: 'guest_parking_request_assigned',
+        actorService: 'admin-web',
+        metadata: {
           guestUserId: guestRequest.guest_user_id,
           guestName: guestRequest.guest_name,
           hostUserId: guestRequest.host_user_id,
@@ -4654,40 +3051,40 @@ async function handleAdminGuestParkingRequestAssign(req) {
           parkingPlaceCode: place.parking_place_code,
           requestDate,
           warnings
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 201,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        request: {
-          id: guestRequest.id,
-          requestDate: reservation.reservation_date,
-          status: 'assigned',
-          guestName: guestRequest.guest_name,
-          assignedReservation: {
-            id: reservation.id,
-            reservationDate: reservation.reservation_date,
-            source: reservation.source,
-            status: reservation.status,
-            parkingPlace: {
-              id: place.parking_place_id,
-              code: place.parking_place_code,
-              title: place.parking_place_title,
-              placeType: place.place_type
+      return {
+        statusCode: 201,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          request: {
+            id: guestRequest.id,
+            requestDate: reservation.reservation_date,
+            status: 'assigned',
+            guestName: guestRequest.guest_name,
+            assignedReservation: {
+              id: reservation.id,
+              reservationDate: reservation.reservation_date,
+              source: reservation.source,
+              status: reservation.status,
+              parkingPlace: {
+                id: place.parking_place_id,
+                code: place.parking_place_code,
+                title: place.parking_place_title,
+                placeType: place.place_type
+              }
             }
-          }
-        },
-        warnings
-      }
-    };
+          },
+          warnings
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     if (error.code === '23505') {
       return {
@@ -4708,8 +3105,6 @@ async function handleAdminGuestParkingRequestAssign(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -4742,135 +3137,60 @@ async function handleAdminGuestParkingRequestCancel(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const guestRequest = await guestRequestsRepository.findGuestRequestForUpdate(repo, requestId);
 
-    const requestResult = await client.query(
-      `
-        select
-          gpr.id,
-          gpr.request_date,
-          gpr.status,
-          gpr.guest_user_id,
-          gpr.host_user_id,
-          gpr.guest_name,
-          gpr.assigned_reservation_id,
-          host.display_name as host_display_name
-        from guest_parking_requests gpr
-        join users host on host.id = gpr.host_user_id
-        where gpr.id = $1
-        for update of gpr
-      `,
-      [requestId]
-    );
-    const guestRequest = requestResult.rows[0];
+      if (!guestRequest) {
+        throw abortWith(404, 'Guest parking request not found');
+      }
 
-    if (!guestRequest) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Guest parking request not found'
-        }
-      };
-    }
-
-    if (guestRequest.status === 'canceled') {
-      await client.query('rollback');
-      return {
-        statusCode: 200,
-        payload: {
-          status: 'ok',
-          service: 'api',
-          request: {
-            id: guestRequest.id,
-            requestDate: guestRequest.request_date,
-            status: guestRequest.status
+      if (guestRequest.status === 'canceled') {
+        throw new AbortTransaction({
+          statusCode: 200,
+          payload: {
+            status: 'ok',
+            service: 'api',
+            request: {
+              id: guestRequest.id,
+              requestDate: guestRequest.request_date,
+              status: guestRequest.status
+            }
           }
-        }
-      };
-    }
+        });
+      }
 
-    let canceledReservation = null;
+      let canceledReservation = null;
 
-    if (guestRequest.assigned_reservation_id) {
-      const reservationResult = await client.query(
-        `
-          update reservations
-          set
-            status = 'canceled',
-            canceled_at = now(),
-            updated_at = now()
-          where id = $1
-            and status = 'active'
-          returning id, reservation_date, parking_place_id, status, canceled_at
-        `,
-        [guestRequest.assigned_reservation_id]
-      );
-      canceledReservation = reservationResult.rows[0] || null;
+      if (guestRequest.assigned_reservation_id) {
+        canceledReservation = await reservationsRepository.cancelActiveReservation(
+          repo,
+          guestRequest.assigned_reservation_id
+        );
 
-      if (canceledReservation) {
-        await client.query(
-          `
-            insert into reservation_events (
-              reservation_id,
-              event_type,
-              payload,
-              source
-            )
-            values ($1, 'reservation_canceled', $2::jsonb, 'guest')
-          `,
-          [
-            canceledReservation.id,
-            JSON.stringify({
+        if (canceledReservation) {
+          await reservationsRepository.insertReservationEvent(repo, {
+            reservationId: canceledReservation.id,
+            eventType: 'reservation_canceled',
+            source: 'guest',
+            payload: {
               guestParkingRequestId: guestRequest.id,
               guestUserId: guestRequest.guest_user_id,
               hostUserId: guestRequest.host_user_id,
               requestDate: guestRequest.request_date
-            })
-          ]
-        );
+            }
+          });
+        }
       }
-    }
 
-    const canceledRequestResult = await client.query(
-      `
-        update guest_parking_requests
-        set
-          status = 'canceled',
-          canceled_at = now(),
-          updated_at = now()
-        where id = $1
-        returning id, request_date, status, canceled_at
-      `,
-      [requestId]
-    );
-    const canceledRequest = canceledRequestResult.rows[0];
+      const canceledRequest = await guestRequestsRepository.cancelGuestRequest(repo, requestId);
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'guest_parking_request',
-          $1,
-          'guest_parking_request_canceled',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        requestId,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'guest_parking_request',
+        entityId: requestId,
+        action: 'guest_parking_request_canceled',
+        actorService: 'admin-web',
+        metadata: {
           guestUserId: guestRequest.guest_user_id,
           guestName: guestRequest.guest_name,
           hostUserId: guestRequest.host_user_id,
@@ -4878,35 +3198,35 @@ async function handleAdminGuestParkingRequestCancel(req) {
           reservationId: guestRequest.assigned_reservation_id,
           canceledReservationId: canceledReservation?.id || null,
           requestDate: guestRequest.request_date
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        request: {
-          id: canceledRequest.id,
-          requestDate: canceledRequest.request_date,
-          status: canceledRequest.status,
-          canceledAt: canceledRequest.canceled_at
-        },
-        canceledReservation: canceledReservation
-          ? {
-              id: canceledReservation.id,
-              reservationDate: canceledReservation.reservation_date,
-              status: canceledReservation.status,
-              canceledAt: canceledReservation.canceled_at
-            }
-          : null
-      }
-    };
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          request: {
+            id: canceledRequest.id,
+            requestDate: canceledRequest.request_date,
+            status: canceledRequest.status,
+            canceledAt: canceledRequest.canceled_at
+          },
+          canceledReservation: canceledReservation
+            ? {
+                id: canceledReservation.id,
+                reservationDate: canceledReservation.reservation_date,
+                status: canceledReservation.status,
+                canceledAt: canceledReservation.canceled_at
+              }
+            : null
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -4916,216 +3236,106 @@ async function handleAdminGuestParkingRequestCancel(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
 async function processQueueForDate(queueDate) {
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
-    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`process_queue:${queueDate}`]);
+    return await withTransaction(pool, async (repo) => {
+      await queueRepository.lockQueueForDate(repo, queueDate);
 
-    const queueResult = await client.query(
-      `
-        select
-          qe.id as queue_entry_id,
-          qe.queue_position,
-          epr.id as request_id,
-          epr.user_id,
-          u.display_name as user_display_name,
-          existing.id as existing_reservation_id
-        from queue_entries qe
-        join employee_parking_requests epr on epr.id = qe.employee_parking_request_id
-        join users u on u.id = epr.user_id
-        left join reservations existing
-          on existing.user_id = epr.user_id
-          and existing.reservation_date = $1::date
-          and existing.status = 'active'
-        where qe.queue_date = $1::date
-          and qe.status = 'waiting'
-          and epr.status = 'queued'
-        order by qe.queue_position
-        for update of qe, epr
-      `,
-      [queueDate]
-    );
+      const queueEntries = await queueRepository.listWaitingEntriesForUpdate(repo, queueDate);
+      const availablePlaces = await placeReleasesRepository.listPlacesForQueueAssignment(repo, queueDate);
 
-    const availablePlacesResult = await client.query(
-      `
-        select
-          pr.id as release_id,
-          pp.id as parking_place_id,
-          pp.code as parking_place_code,
-          pp.place_type,
-          pr.user_id as owner_user_id
-        from place_releases pr
-        join parking_places pp on pp.id = pr.parking_place_id
-          and pp.deleted_at is null
-        left join reservations r
-          on r.parking_place_id = pp.id
-          and r.reservation_date = $1::date
-          and r.status = 'active'
-        where pr.status = 'active'
-          and pr.release_during @> $1::date
-          and r.id is null
-        order by
-          case pp.place_type
-            when 'double' then 1
-            when 'triple' then 2
-            else 3
-          end,
-          pp.code
-        for update of pr, pp
-      `,
-      [queueDate]
-    );
+      const maxEmployeeAssignments = Math.max(0, availablePlaces.length - guestReserveMinimum);
+      const assignments = [];
+      const skipped = [];
+      let placeIndex = 0;
 
-    const queueEntries = queueResult.rows;
-    const availablePlaces = availablePlacesResult.rows;
-    const maxEmployeeAssignments = Math.max(0, availablePlaces.length - guestReserveMinimum);
-    const assignments = [];
-    const skipped = [];
-    let placeIndex = 0;
+      for (const entry of queueEntries) {
+        // A user who already holds a place for the date — served manually, or by
+        // an earlier partial run — is done, not a candidate. Assigning them a
+        // second place trips reservations_active_user_date_uniq, and because the
+        // whole run is one transaction that used to fail the ENTIRE batch,
+        // including the employees queued behind them. Close their request against
+        // the reservation they already have and move on.
+        if (entry.existing_reservation_id) {
+          await employeeRequestsRepository.assignRequest(repo, {
+            requestId: entry.request_id,
+            reservationId: entry.existing_reservation_id
+          });
 
-    for (const entry of queueEntries) {
-      // A user who already holds a place for the date — served manually, or by
-      // an earlier partial run — is done, not a candidate. Assigning them a
-      // second place trips reservations_active_user_date_uniq, and because the
-      // whole run is one transaction that used to fail the ENTIRE batch,
-      // including the employees queued behind them. Close their request against
-      // the reservation they already have and move on.
-      if (entry.existing_reservation_id) {
-        await client.query(
-          `
-            update employee_parking_requests
-            set
-              status = 'assigned',
-              assigned_reservation_id = $1,
-              updated_at = now()
-            where id = $2
-          `,
-          [entry.existing_reservation_id, entry.request_id]
-        );
+          await queueRepository.assignQueueEntry(repo, {
+            queueEntryId: entry.queue_entry_id,
+            reservationId: entry.existing_reservation_id
+          });
 
-        await client.query(
-          `
-            update queue_entries
-            set
-              status = 'assigned',
-              assigned_reservation_id = $1,
-              processed_at = now(),
-              updated_at = now()
-            where id = $2
-          `,
-          [entry.existing_reservation_id, entry.queue_entry_id]
-        );
+          skipped.push({
+            requestId: entry.request_id,
+            queueEntryId: entry.queue_entry_id,
+            queuePosition: entry.queue_position,
+            userId: entry.user_id,
+            userDisplayName: entry.user_display_name,
+            reservationId: entry.existing_reservation_id,
+            reason: 'already_has_reservation'
+          });
+          continue;
+        }
 
-        skipped.push({
-          requestId: entry.request_id,
-          queueEntryId: entry.queue_entry_id,
-          queuePosition: entry.queue_position,
+        if (assignments.length >= maxEmployeeAssignments) {
+          skipped.push({
+            requestId: entry.request_id,
+            queueEntryId: entry.queue_entry_id,
+            queuePosition: entry.queue_position,
+            userId: entry.user_id,
+            userDisplayName: entry.user_display_name,
+            reason: 'guest_reserve_minimum_reached'
+          });
+          continue;
+        }
+
+        while (placeIndex < availablePlaces.length && availablePlaces[placeIndex].owner_user_id === entry.user_id) {
+          placeIndex += 1;
+        }
+
+        const place = availablePlaces[placeIndex];
+
+        if (!place) {
+          skipped.push({
+            requestId: entry.request_id,
+            queueEntryId: entry.queue_entry_id,
+            queuePosition: entry.queue_position,
+            userId: entry.user_id,
+            userDisplayName: entry.user_display_name,
+            reason: 'no_available_released_place'
+          });
+          continue;
+        }
+
+        const reservation = await reservationsRepository.insertReservation(repo, {
+          reservationDate: queueDate,
+          parkingPlaceId: place.parking_place_id,
           userId: entry.user_id,
-          userDisplayName: entry.user_display_name,
-          reservationId: entry.existing_reservation_id,
-          reason: 'already_has_reservation'
+          employeeParkingRequestId: entry.request_id,
+          source: 'queue',
+          reason: `Queue assignment #${entry.queue_position}`
         });
-        continue;
-      }
 
-      if (assignments.length >= maxEmployeeAssignments) {
-        skipped.push({
+        await employeeRequestsRepository.assignRequest(repo, {
           requestId: entry.request_id,
-          queueEntryId: entry.queue_entry_id,
-          queuePosition: entry.queue_position,
-          userId: entry.user_id,
-          userDisplayName: entry.user_display_name,
-          reason: 'guest_reserve_minimum_reached'
+          reservationId: reservation.id
         });
-        continue;
-      }
 
-      while (placeIndex < availablePlaces.length && availablePlaces[placeIndex].owner_user_id === entry.user_id) {
-        placeIndex += 1;
-      }
-
-      const place = availablePlaces[placeIndex];
-
-      if (!place) {
-        skipped.push({
-          requestId: entry.request_id,
+        await queueRepository.assignQueueEntry(repo, {
           queueEntryId: entry.queue_entry_id,
-          queuePosition: entry.queue_position,
-          userId: entry.user_id,
-          userDisplayName: entry.user_display_name,
-          reason: 'no_available_released_place'
+          reservationId: reservation.id
         });
-        continue;
-      }
 
-      const reservationResult = await client.query(
-        `
-          insert into reservations (
-            reservation_date,
-            parking_place_id,
-            user_id,
-            employee_parking_request_id,
-            source,
-            reason
-          )
-          values ($1::date, $2, $3, $4, 'queue', $5)
-          returning id, reservation_date, source, status, created_at
-        `,
-        [
-          queueDate,
-          place.parking_place_id,
-          entry.user_id,
-          entry.request_id,
-          `Queue assignment #${entry.queue_position}`
-        ]
-      );
-      const reservation = reservationResult.rows[0];
-
-      await client.query(
-        `
-          update employee_parking_requests
-          set
-            status = 'assigned',
-            assigned_reservation_id = $1,
-            updated_at = now()
-          where id = $2
-        `,
-        [reservation.id, entry.request_id]
-      );
-
-      await client.query(
-        `
-          update queue_entries
-          set
-            status = 'assigned',
-            assigned_reservation_id = $1,
-            processed_at = now(),
-            updated_at = now()
-          where id = $2
-        `,
-        [reservation.id, entry.queue_entry_id]
-      );
-
-      await client.query(
-        `
-          insert into reservation_events (
-            reservation_id,
-            event_type,
-            payload,
-            source
-          )
-          values ($1, 'reservation_created', $2::jsonb, 'queue')
-        `,
-        [
-          reservation.id,
-          JSON.stringify({
+        await reservationsRepository.insertReservationEvent(repo, {
+          reservationId: reservation.id,
+          eventType: 'reservation_created',
+          source: 'queue',
+          payload: {
             releaseId: place.release_id,
             queueEntryId: entry.queue_entry_id,
             queuePosition: entry.queue_position,
@@ -5133,85 +3343,50 @@ async function processQueueForDate(queueDate) {
             userId: entry.user_id,
             parkingPlaceId: place.parking_place_id,
             queueDate
-          })
-        ]
-      );
+          }
+        });
 
-      await client.query(
-        `
-          insert into parking_movements (
-            reservation_id,
-            movement_date,
-            to_parking_place_id,
-            movement_type,
-            reason
-          )
-          values ($1, $2::date, $3, 'queue_assignment', $4)
-        `,
-        [
-          reservation.id,
-          queueDate,
-          place.parking_place_id,
-          `Assigned from queue position #${entry.queue_position}`
-        ]
-      );
+        await reservationsRepository.insertMovement(repo, {
+          reservationId: reservation.id,
+          movementDate: queueDate,
+          toParkingPlaceId: place.parking_place_id,
+          movementType: 'queue_assignment',
+          reason: `Assigned from queue position #${entry.queue_position}`
+        });
 
-      assignments.push({
-        requestId: entry.request_id,
-        queueEntryId: entry.queue_entry_id,
-        queuePosition: entry.queue_position,
-        reservationId: reservation.id,
-        user: {
-          id: entry.user_id,
-          displayName: entry.user_display_name
-        },
-        parkingPlace: {
-          id: place.parking_place_id,
-          code: place.parking_place_code
-        }
-      });
+        assignments.push({
+          requestId: entry.request_id,
+          queueEntryId: entry.queue_entry_id,
+          queuePosition: entry.queue_position,
+          reservationId: reservation.id,
+          user: {
+            id: entry.user_id,
+            displayName: entry.user_display_name
+          },
+          parkingPlace: {
+            id: place.parking_place_id,
+            code: place.parking_place_code
+          }
+        });
 
-      placeIndex += 1;
-    }
+        placeIndex += 1;
+      }
 
-    // Entries closed against a reservation the user already held are excluded:
-    // they were marked 'assigned' above and must not be downgraded to 'skipped'.
-    const skippedEntryIds = skipped
-      .filter((item) => item.reason !== 'already_has_reservation')
-      .map((item) => item.queueEntryId);
+      // Entries closed against a reservation the user already held are excluded:
+      // they were marked 'assigned' above and must not be downgraded to 'skipped'.
+      const skippedEntryIds = skipped
+        .filter((item) => item.reason !== 'already_has_reservation')
+        .map((item) => item.queueEntryId);
 
-    if (skippedEntryIds.length) {
-      await client.query(
-        `
-          update queue_entries
-          set
-            status = 'skipped',
-            processed_at = now(),
-            updated_at = now()
-          where id = any($1::uuid[])
-            and status = 'waiting'
-        `,
-        [skippedEntryIds]
-      );
-    }
+      if (skippedEntryIds.length) {
+        await queueRepository.markEntriesSkipped(repo, skippedEntryIds);
+      }
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'queue_entry',
-          'queue_processed',
-          'admin-web',
-          $1::jsonb
-        )
-      `,
-      [
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'queue_entry',
+        action: 'queue_processed',
+        actorService: 'admin-web',
+        metadata: {
           queueDate,
           waitingCount: queueEntries.length,
           availableReleasedPlacesCount: availablePlaces.length,
@@ -5220,32 +3395,26 @@ async function processQueueForDate(queueDate) {
           skippedCount: skipped.length,
           assignments,
           skipped
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      date: queueDate,
-      guestReserveMinimum,
-      availableReleasedPlacesCount: availablePlaces.length,
-      assignedCount: assignments.length,
-      skippedCount: skipped.length,
-      assignments,
-      skipped
-    };
+      return {
+        date: queueDate,
+        guestReserveMinimum,
+        availableReleasedPlacesCount: availablePlaces.length,
+        assignedCount: assignments.length,
+        skippedCount: skipped.length,
+        assignments,
+        skipped
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
-
     if (error.code === '23505') {
       error.statusCode = 409;
       error.message = 'Queue processing hit an existing active reservation for this date';
     }
 
     throw error;
-  } finally {
-    client.release();
   }
 }
 
@@ -5336,95 +3505,40 @@ async function handleAdminJobFreezeNextDay(req) {
   }
 
   try {
-    const result = await withJobRun('freeze_next_day', targetDate, async () => {
-      const client = await pool.connect();
+    const result = await withJobRun('freeze_next_day', targetDate, async () =>
+      withTransaction(pool, async (repo) => {
+        await placeReleasesRepository.lockFreezeForDate(repo, targetDate);
 
-      try {
-        await client.query('begin');
-        await client.query('select pg_advisory_xact_lock(hashtext($1))', [`freeze_next_day:${targetDate}`]);
-
-        const snapshot = await calculateAvailabilitySnapshot(client, targetDate, { appTimezone, guestReserveMinimum });
-
-        // Freezing is the state transition, not the audit row: once frozen_at
-        // is set the owner can no longer withdraw the release, so the pool the
-        // queue will hand out tomorrow morning cannot shrink underneath it.
-        // The `frozen_at is null` guard is what makes a second run a no-op.
-        const frozenResult = await client.query(
-          `
-            update place_releases pr
-            set
-              frozen_at = now(),
-              updated_at = now()
-            from parking_places pp
-            where pp.id = pr.parking_place_id
-              and pr.status = 'active'
-              and pr.release_during @> $1::date
-              and pr.frozen_at is null
-            returning
-              pr.id,
-              pp.id as parking_place_id,
-              pp.code as parking_place_code,
-              pp.place_type,
-              pr.user_id as owner_user_id
-          `,
-          [targetDate]
-        );
-
-        const releaseResult = await client.query(
-          `
-            select
-              pr.id,
-              pp.id as parking_place_id,
-              pp.code as parking_place_code,
-              pp.place_type,
-              pr.user_id as owner_user_id,
-              pr.frozen_at
-            from place_releases pr
-            join parking_places pp on pp.id = pr.parking_place_id
-            where pr.status = 'active'
-              and pr.release_during @> $1::date
-            order by pp.code
-          `,
-          [targetDate]
-        );
-
-        const frozenCount = frozenResult.rows.length;
+        const snapshot = await calculateAvailabilitySnapshot(repo, targetDate, { appTimezone, guestReserveMinimum });
+        const frozen = await placeReleasesRepository.freezeReleasesForDate(repo, targetDate);
+        const releases = await placeReleasesRepository.listReleasesWithFrozenState(repo, targetDate);
+        const frozenCount = frozen.length;
 
         // Only a run that changed something leaves an audit trail; re-running
         // the job must not grow the journal with identical rows.
         if (frozenCount > 0) {
-          await client.query(
-            `
-              insert into audit_logs (
-                entity_type,
-                action,
-                actor_service,
-                metadata
-              )
-              values ('system', 'availability_frozen', 'admin-web', $1::jsonb)
-            `,
-            [
-              JSON.stringify({
-                targetDate,
-                timezone: appTimezone,
-                releaseCount: releaseResult.rows.length,
-                frozenCount,
-                availability: snapshot
-              })
-            ]
-          );
+          await auditRepository.insertAuditLog(repo, {
+            entityType: 'system',
+            action: 'availability_frozen',
+            actorService: 'admin-web',
+            metadata: {
+              targetDate,
+              timezone: appTimezone,
+              releaseCount: releases.length,
+              frozenCount,
+              availability: snapshot
+            }
+          });
         }
-
-        await client.query('commit');
 
         return {
           date: targetDate,
           timezone: appTimezone,
-          releaseCount: releaseResult.rows.length,
+          releaseCount: releases.length,
           frozenCount,
           alreadyFrozen: frozenCount === 0,
           availability: snapshot,
-          frozenReleases: releaseResult.rows.map((release) => ({
+          frozenReleases: releases.map((release) => ({
             id: release.id,
             parkingPlaceId: release.parking_place_id,
             parkingPlaceCode: release.parking_place_code,
@@ -5432,13 +3546,8 @@ async function handleAdminJobFreezeNextDay(req) {
             ownerUserId: release.owner_user_id
           }))
         };
-      } catch (error) {
-        await client.query('rollback');
-        throw error;
-      } finally {
-        client.release();
-      }
-    });
+      })
+    );
 
     return {
       statusCode: 200,
@@ -5494,54 +3603,23 @@ async function handleAdminJobLockDeparturePlans(req) {
     const result = await withJobRun('lock_departure_plans', targetDate, async () => {
       // `locked_at is null` is the idempotency guard: the second run of the day
       // locks nothing and writes no audit row.
-      const lockedResult = await queryMany(
-        `
-          update departure_plans
-          set
-            locked_at = now(),
-            updated_at = now()
-          where plan_date = $1::date
-            and locked_at is null
-          returning id
-        `,
-        [targetDate]
-      );
-
-      const summary = await queryOne(
-        `
-          select
-            count(*)::int as plans_count,
-            count(*) filter (where is_early = true)::int as early_plans_count
-          from departure_plans
-          where plan_date = $1::date
-        `,
-        [targetDate]
-      );
-
+      const lockedResult = await departurePlansRepository.lockPlansForDate(dbRepository, targetDate);
+      const summary = await departurePlansRepository.summarizePlansForDate(dbRepository, targetDate);
       const lockedCount = lockedResult.length;
 
       if (lockedCount > 0) {
-        await queryOne(
-          `
-            insert into audit_logs (
-              entity_type,
-              action,
-              actor_service,
-              metadata
-            )
-            values ('system', 'departure_plan_editing_locked', 'admin-web', $1::jsonb)
-            returning id
-          `,
-          [
-            JSON.stringify({
-              targetDate,
-              timezone: appTimezone,
-              plansCount: summary?.plans_count || 0,
-              earlyPlansCount: summary?.early_plans_count || 0,
-              lockedCount
-            })
-          ]
-        );
+        await auditRepository.insertAuditLog(dbRepository, {
+          entityType: 'system',
+          action: 'departure_plan_editing_locked',
+          actorService: 'admin-web',
+          metadata: {
+            targetDate,
+            timezone: appTimezone,
+            plansCount: summary?.plans_count || 0,
+            earlyPlansCount: summary?.early_plans_count || 0,
+            lockedCount
+          }
+        });
       }
 
       return {
@@ -5618,70 +3696,39 @@ async function handleAdminJobUnlockEmployeePool(req) {
   }
 
   try {
-    const result = await withJobRun('unlock_employee_pool', targetDate, async () => {
-      const client = await pool.connect();
+    const result = await withJobRun('unlock_employee_pool', targetDate, async () =>
+      withTransaction(pool, async (repo) => {
+        await placeReleasesRepository.lockEmployeePoolForDate(repo, targetDate);
 
-      try {
-        await client.query('begin');
-        await client.query('select pg_advisory_xact_lock(hashtext($1))', [`unlock_employee_pool:${targetDate}`]);
-
-        const availableReleasedPlacesCount = await countAvailableReleasedPlaces(client, targetDate);
+        const availableReleasedPlacesCount = await countAvailableReleasedPlaces(repo, targetDate);
         const employeePoolSize = Math.max(0, availableReleasedPlacesCount - guestReserveMinimum);
 
-        const queueSummary = await client.query(
-          `
-            select
-              count(*)::int as waiting_count,
-              count(*) filter (where qe.queue_position <= $2)::int as servable_count
-            from queue_entries qe
-            join employee_parking_requests epr on epr.id = qe.employee_parking_request_id
-            where qe.queue_date = $1::date
-              and qe.status = 'waiting'
-              and epr.status = 'queued'
-          `,
-          [targetDate, employeePoolSize]
-        );
+        const queueSummary = await queueRepository.summarizeWaitingQueue(repo, {
+          queueDate: targetDate,
+          employeePoolSize
+        });
 
-        const waitingCount = queueSummary.rows[0]?.waiting_count || 0;
-        const servableCount = Math.min(queueSummary.rows[0]?.servable_count || 0, employeePoolSize);
+        const waitingCount = queueSummary?.waiting_count || 0;
+        const servableCount = Math.min(queueSummary?.servable_count || 0, employeePoolSize);
 
-        const alreadyUnlocked = await client.query(
-          `
-            select id
-            from audit_logs
-            where action = 'employee_pool_unlocked'
-              and metadata->>'targetDate' = $1
-            limit 1
-          `,
-          [targetDate]
-        );
+        const alreadyUnlocked = await auditRepository.findEmployeePoolUnlockedLog(repo, targetDate);
 
-        if (!alreadyUnlocked.rows[0]) {
-          await client.query(
-            `
-              insert into audit_logs (
-                entity_type,
-                action,
-                actor_service,
-                metadata
-              )
-              values ('system', 'employee_pool_unlocked', 'admin-web', $1::jsonb)
-            `,
-            [
-              JSON.stringify({
-                targetDate,
-                timezone: appTimezone,
-                guestReserveMinimum,
-                availableReleasedPlacesCount,
-                employeePoolSize,
-                waitingCount,
-                servableCount
-              })
-            ]
-          );
+        if (!alreadyUnlocked) {
+          await auditRepository.insertAuditLog(repo, {
+            entityType: 'system',
+            action: 'employee_pool_unlocked',
+            actorService: 'admin-web',
+            metadata: {
+              targetDate,
+              timezone: appTimezone,
+              guestReserveMinimum,
+              availableReleasedPlacesCount,
+              employeePoolSize,
+              waitingCount,
+              servableCount
+            }
+          });
         }
-
-        await client.query('commit');
 
         return {
           date: targetDate,
@@ -5692,15 +3739,10 @@ async function handleAdminJobUnlockEmployeePool(req) {
           waitingCount,
           servableCount,
           unservableCount: Math.max(0, waitingCount - servableCount),
-          alreadyUnlocked: Boolean(alreadyUnlocked.rows[0])
+          alreadyUnlocked: Boolean(alreadyUnlocked)
         };
-      } catch (error) {
-        await client.query('rollback');
-        throw error;
-      } finally {
-        client.release();
-      }
-    });
+      })
+    );
 
     return {
       statusCode: 200,
@@ -5763,58 +3805,35 @@ async function handleAdminJobRebuildConflicts(req) {
 
   try {
     const result = await withJobRun('rebuild_conflicts', targetDate, async () => {
-      const plans = await queryMany(
-        `
-          select id, departure_time::text as departure_time, is_early
-          from departure_plans
-          where plan_date = $1::date
-        `,
-        [targetDate]
-      );
+      const plans = await departurePlansRepository.listPlanEarlyFlagsForDate(dbRepository, targetDate);
 
       const drifted = plans.filter(
         (plan) => isEarlyDeparture(plan.departure_time.slice(0, 5)) !== plan.is_early
       );
 
       for (const plan of drifted) {
-        await queryOne(
-          `
-            update departure_plans
-            set
-              is_early = $1,
-              updated_at = now()
-            where id = $2
-            returning id
-          `,
-          [isEarlyDeparture(plan.departure_time.slice(0, 5)), plan.id]
-        );
+        await departurePlansRepository.updatePlanEarlyFlag(dbRepository, {
+          planId: plan.id,
+          isEarly: isEarlyDeparture(plan.departure_time.slice(0, 5))
+        });
       }
 
       const conflicts = await getConflictsForDate(targetDate);
       const changed = drifted.length > 0;
 
       if (changed) {
-        await queryOne(
-          `
-            insert into audit_logs (
-              entity_type,
-              action,
-              actor_service,
-              metadata
-            )
-            values ('system', 'conflicts_rebuilt', 'admin-web', $1::jsonb)
-            returning id
-          `,
-          [
-            JSON.stringify({
-              targetDate,
-              timezone: appTimezone,
-              plansCount: plans.length,
-              recalculatedCount: drifted.length,
-              conflictCount: conflicts.length
-            })
-          ]
-        );
+        await auditRepository.insertAuditLog(dbRepository, {
+          entityType: 'system',
+          action: 'conflicts_rebuilt',
+          actorService: 'admin-web',
+          metadata: {
+            targetDate,
+            timezone: appTimezone,
+            plansCount: plans.length,
+            recalculatedCount: drifted.length,
+            conflictCount: conflicts.length
+          }
+        });
       }
 
       return {
@@ -5865,45 +3884,12 @@ async function handleAdminJobRunsList(searchParams) {
     };
   }
 
-  const runs = await queryMany(
-    `
-      select
-        id,
-        job_name,
-        target_date,
-        status,
-        started_at,
-        finished_at,
-        actor_service,
-        summary,
-        error
-      from job_runs
-      where ($1::text is null or job_name = $1)
-        and ($2::date is null or target_date = $2::date)
-      order by started_at desc
-      limit $3
-    `,
-    [jobName || null, targetDate || null, limit]
-  );
-  const latestSuccessfulRuns = await queryMany(
-    `
-      select distinct on (job_name)
-        id,
-        job_name,
-        target_date,
-        status,
-        started_at,
-        finished_at,
-        actor_service,
-        summary,
-        error
-      from job_runs
-      where status = 'success'
-        and ($1::text is null or job_name = $1)
-      order by job_name, finished_at desc nulls last, started_at desc
-    `,
-    [jobName || null]
-  );
+  const runs = await jobsRepository.listJobRuns(dbRepository, {
+    jobName: jobName || null,
+    targetDate: targetDate || null,
+    limit
+  });
+  const latestSuccessfulRuns = await jobsRepository.listLatestSuccessfulRuns(dbRepository, jobName || null);
 
   return {
     statusCode: 200,
@@ -5949,212 +3935,94 @@ async function handleAdminManualReservationCreate(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
-    await client.query('select pg_advisory_xact_lock(hashtext($1))', [`manual_assignment:${reservationDate}`]);
+    return await withTransaction(pool, async (repo) => {
+      await placeReleasesRepository.lockManualAssignmentForDate(repo, reservationDate);
 
-    const releasedPlaceResult = await client.query(
-      `
-        select
-          pr.id as release_id,
-          pr.user_id as owner_user_id,
-          pp.code as parking_place_code
-        from place_releases pr
-        join parking_places pp on pp.id = pr.parking_place_id
-          and pp.deleted_at is null
-        where pr.parking_place_id = $1
-          and pr.status = 'active'
-          and pr.release_during @> $2::date
-        limit 1
-      `,
-      [parkingPlaceId, reservationDate]
-    );
+      const releasedPlace = await placeReleasesRepository.findActiveReleaseForPlaceDate(repo, {
+        parkingPlaceId,
+        reservationDate
+      });
 
-    const releasedPlace = releasedPlaceResult.rows[0];
-    if (!releasedPlace) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Manual assignment is currently allowed only for places released for the selected date'
-        }
-      };
-    }
+      if (!releasedPlace) {
+        throw abortWith(409, 'Manual assignment is currently allowed only for places released for the selected date');
+      }
 
-    if (releasedPlace.owner_user_id === userId) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Released place owner cannot be manually assigned to the same released place'
-        }
-      };
-    }
+      if (releasedPlace.owner_user_id === userId) {
+        throw abortWith(409, 'Released place owner cannot be manually assigned to the same released place');
+      }
 
-    const employeeResult = await client.query(
-      `
-        select id, display_name
-        from users
-        where id = $1
-          and kind = 'employee'
-          and deleted_at is null
-      `,
-      [userId]
-    );
+      const employee = await employeesRepository.findEmployeeById(repo, userId);
 
-    const employee = employeeResult.rows[0];
-    if (!employee) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Employee not found'
-        }
-      };
-    }
+      if (!employee) {
+        throw abortWith(404, 'Employee not found');
+      }
 
-    const availableReleasedPlacesCount = await countAvailableReleasedPlaces(client, reservationDate);
-    if (availableReleasedPlacesCount <= guestReserveMinimum) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: `Manual employee assignment would reduce guest reserve below ${guestReserveMinimum} places`,
+      const availableReleasedPlacesCount = await countAvailableReleasedPlaces(repo, reservationDate);
+
+      if (availableReleasedPlacesCount <= guestReserveMinimum) {
+        throw abortWith(409, `Manual employee assignment would reduce guest reserve below ${guestReserveMinimum} places`, {
           guestReserve: {
             minimum: guestReserveMinimum,
             availablePlaces: availableReleasedPlacesCount
           }
-        }
-      };
-    }
+        });
+      }
 
-    const warnings = await calculateAssignmentWarnings(client, reservationDate, parkingPlaceId);
+      const warnings = await calculateAssignmentWarnings(repo, reservationDate, parkingPlaceId);
 
-    const reservationResult = await client.query(
-      `
-        insert into reservations (
-          reservation_date,
-          parking_place_id,
-          user_id,
-          source,
-          reason
-        )
-        values (
-          $1::date,
-          $2,
-          $3,
-          'manual',
-          $4
-        )
-        returning id, reservation_date, source, status, created_at
-      `,
-      [reservationDate, parkingPlaceId, userId, reason]
-    );
+      const reservation = await reservationsRepository.insertReservation(repo, {
+        reservationDate,
+        parkingPlaceId,
+        userId,
+        source: 'manual',
+        reason
+      });
 
-    const reservation = reservationResult.rows[0];
+      // Serving the employee manually answers their parking request, so close it
+      // and its queue entry here. Leaving them 'queued' used to make them a
+      // candidate for the next queue run, which then tripped the one-reservation-
+      // per-user-per-day constraint and failed the whole batch.
+      const closedRequest = await employeeRequestsRepository.closeOpenRequestForUserDate(repo, {
+        userId,
+        requestDate: reservationDate,
+        reservationId: reservation.id
+      });
 
-    // Serving the employee manually answers their parking request, so close it
-    // and its queue entry here. Leaving them 'queued' used to make them a
-    // candidate for the next queue run, which then tripped the one-reservation-
-    // per-user-per-day constraint and failed the whole batch.
-    const closedRequestResult = await client.query(
-      `
-        update employee_parking_requests
-        set
-          status = 'assigned',
-          assigned_reservation_id = $1,
-          updated_at = now()
-        where user_id = $2
-          and request_date = $3::date
-          and status in ('active', 'queued')
-        returning id
-      `,
-      [reservation.id, userId, reservationDate]
-    );
-    const closedRequest = closedRequestResult.rows[0] || null;
+      if (closedRequest) {
+        await queueRepository.assignWaitingEntriesForRequest(repo, {
+          employeeParkingRequestId: closedRequest.id,
+          reservationId: reservation.id
+        });
+      }
 
-    if (closedRequest) {
-      await client.query(
-        `
-          update queue_entries
-          set
-            status = 'assigned',
-            assigned_reservation_id = $1,
-            processed_at = now(),
-            updated_at = now()
-          where employee_parking_request_id = $2
-            and status = 'waiting'
-        `,
-        [reservation.id, closedRequest.id]
-      );
-    }
-
-    await client.query(
-      `
-        insert into reservation_events (
-          reservation_id,
-          event_type,
-          payload,
-          source
-        )
-        values ($1, 'reservation_created', $2::jsonb, 'manual')
-      `,
-      [
-        reservation.id,
-        JSON.stringify({
+      await reservationsRepository.insertReservationEvent(repo, {
+        reservationId: reservation.id,
+        eventType: 'reservation_created',
+        source: 'manual',
+        payload: {
           releaseId: releasedPlace.release_id,
           userId,
           parkingPlaceId,
           reservationDate,
           closedEmployeeRequestId: closedRequest?.id || null
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query(
-      `
-        insert into parking_movements (
-          reservation_id,
-          movement_date,
-          to_parking_place_id,
-          movement_type,
-          reason
-        )
-        values ($1, $2::date, $3, 'manual_reassign', $4)
-      `,
-      [reservation.id, reservationDate, parkingPlaceId, reason || 'Manual admin assignment']
-    );
+      await reservationsRepository.insertMovement(repo, {
+        reservationId: reservation.id,
+        movementDate: reservationDate,
+        toParkingPlaceId: parkingPlaceId,
+        movementType: 'manual_reassign',
+        reason: reason || 'Manual admin assignment'
+      });
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'reservation',
-          $1,
-          'manual_reservation_created',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        reservation.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'reservation',
+        entityId: reservation.id,
+        action: 'manual_reservation_created',
+        actorService: 'admin-web',
+        metadata: {
           releaseId: releasedPlace.release_id,
           userId,
           userDisplayName: employee.display_name,
@@ -6163,37 +4031,37 @@ async function handleAdminManualReservationCreate(req) {
           reservationDate,
           closedEmployeeRequestId: closedRequest?.id || null,
           warnings
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 201,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        reservation: {
-          id: reservation.id,
-          reservationDate: reservation.reservation_date,
-          source: reservation.source,
-          status: reservation.status,
-          createdAt: reservation.created_at,
-          user: {
-            id: userId,
-            displayName: employee.display_name
+      return {
+        statusCode: 201,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          reservation: {
+            id: reservation.id,
+            reservationDate: reservation.reservation_date,
+            source: reservation.source,
+            status: reservation.status,
+            createdAt: reservation.created_at,
+            user: {
+              id: userId,
+              displayName: employee.display_name
+            },
+            parkingPlace: {
+              id: parkingPlaceId,
+              code: releasedPlace.parking_place_code
+            }
           },
-          parkingPlace: {
-            id: parkingPlaceId,
-            code: releasedPlace.parking_place_code
-          }
-        },
-        warnings
-      }
-    };
+          warnings
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     if (error.code === '23505') {
       return {
@@ -6214,8 +4082,6 @@ async function handleAdminManualReservationCreate(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -6278,115 +4144,42 @@ async function handleAdminPlaceReleaseCreate(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const owner = await permanentAssignmentsRepository.findOwnerForRange(repo, {
+        parkingPlaceId,
+        dateFrom,
+        dateTo
+      });
 
-    const ownerResult = await client.query(
-      `
-        select
-          pa.user_id,
-          u.display_name as user_display_name,
-          pp.code as parking_place_code
-        from permanent_assignments pa
-        join users u on u.id = pa.user_id
-        join parking_places pp on pp.id = pa.parking_place_id
-        where pa.parking_place_id = $1
-          and pa.valid_during @> $2::date
-          and pa.valid_during @> $3::date
-        order by lower(pa.valid_during) desc
-        limit 1
-      `,
-      [parkingPlaceId, dateFrom, dateTo]
-    );
+      if (!owner) {
+        throw abortWith(409, 'Parking place has no permanent owner for the selected date range');
+      }
 
-    const owner = ownerResult.rows[0];
-    if (!owner) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking place has no permanent owner for the selected date range'
-        }
-      };
-    }
+      const overlap = await placeReleasesRepository.findOverlappingRelease(repo, {
+        parkingPlaceId,
+        dateFrom,
+        dateTo
+      });
 
-    const overlapResult = await client.query(
-      `
-        select id
-        from place_releases
-        where parking_place_id = $1
-          and status = 'active'
-          and release_during && daterange($2::date, ($3::date + 1), '[)')
-        limit 1
-      `,
-      [parkingPlaceId, dateFrom, dateTo]
-    );
+      if (overlap) {
+        throw abortWith(409, 'Parking place already has an active release overlapping this date range');
+      }
 
-    if (overlapResult.rows[0]) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Parking place already has an active release overlapping this date range'
-        }
-      };
-    }
+      const release = await placeReleasesRepository.insertRelease(repo, {
+        userId: owner.user_id,
+        parkingPlaceId,
+        dateFrom,
+        dateTo,
+        notes
+      });
 
-    const releaseResult = await client.query(
-      `
-        insert into place_releases (
-          user_id,
-          parking_place_id,
-          release_during,
-          created_via,
-          notes
-        )
-        values (
-          $1,
-          $2,
-          daterange($3::date, ($4::date + 1), '[)'),
-          'admin_web',
-          $5
-        )
-        returning
-          id,
-          lower(release_during)::date as date_from,
-          (upper(release_during)::date - 1) as date_to,
-          status,
-          created_via,
-          created_at
-      `,
-      [owner.user_id, parkingPlaceId, dateFrom, dateTo, notes]
-    );
-
-    const release = releaseResult.rows[0];
-
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'place_release',
-          $1,
-          'place_release_created',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        release.id,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'place_release',
+        entityId: release.id,
+        action: 'place_release_created',
+        actorService: 'admin-web',
+        metadata: {
           userId: owner.user_id,
           userDisplayName: owner.user_display_name,
           parkingPlaceId,
@@ -6394,37 +4187,37 @@ async function handleAdminPlaceReleaseCreate(req) {
           dateFrom,
           dateTo,
           createdVia: 'admin_web'
-        })
-      ]
-    );
+        }
+      });
 
-    await client.query('commit');
-
-    return {
-      statusCode: 201,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        release: {
-          id: release.id,
-          dateFrom: release.date_from,
-          dateTo: release.date_to,
-          status: release.status,
-          createdVia: release.created_via,
-          createdAt: release.created_at,
-          user: {
-            id: owner.user_id,
-            displayName: owner.user_display_name
-          },
-          parkingPlace: {
-            id: parkingPlaceId,
-            code: owner.parking_place_code
+      return {
+        statusCode: 201,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          release: {
+            id: release.id,
+            dateFrom: release.date_from,
+            dateTo: release.date_to,
+            status: release.status,
+            createdVia: release.created_via,
+            createdAt: release.created_at,
+            user: {
+              id: owner.user_id,
+              displayName: owner.user_display_name
+            },
+            parkingPlace: {
+              id: parkingPlaceId,
+              code: owner.parking_place_code
+            }
           }
         }
-      }
-    };
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -6434,8 +4227,6 @@ async function handleAdminPlaceReleaseCreate(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -6468,204 +4259,91 @@ async function handleAdminReservationCancel(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const reservation = await reservationsRepository.findReservationForUpdate(repo, reservationId);
 
-    const reservationResult = await client.query(
-      `
-        select
-          r.id,
-          r.reservation_date,
-          r.parking_place_id,
-          r.user_id,
-          r.employee_parking_request_id,
-          r.guest_parking_request_id,
-          r.source,
-          r.status,
-          u.display_name as user_display_name,
-          pp.code as parking_place_code
-        from reservations r
-        join parking_places pp on pp.id = r.parking_place_id
-        left join users u on u.id = r.user_id
-        where r.id = $1
-        for update of r
-      `,
-      [reservationId]
-    );
+      if (!reservation) {
+        throw abortWith(404, 'Reservation not found');
+      }
 
-    const reservation = reservationResult.rows[0];
-
-    if (!reservation) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Reservation not found'
-        }
-      };
-    }
-
-    if (reservation.status === 'canceled') {
-      await client.query('rollback');
-      return {
-        statusCode: 200,
-        payload: {
-          status: 'ok',
-          service: 'api',
-          reservation: {
-            id: reservation.id,
-            reservationDate: reservation.reservation_date,
-            status: reservation.status
+      if (reservation.status === 'canceled') {
+        throw new AbortTransaction({
+          statusCode: 200,
+          payload: {
+            status: 'ok',
+            service: 'api',
+            reservation: {
+              id: reservation.id,
+              reservationDate: reservation.reservation_date,
+              status: reservation.status
+            }
           }
-        }
-      };
-    }
+        });
+      }
 
-    if (reservation.status !== 'active') {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Only active reservations can be canceled'
-        }
-      };
-    }
+      if (reservation.status !== 'active') {
+        throw abortWith(409, 'Only active reservations can be canceled');
+      }
 
-    const canceledReservationResult = await client.query(
-      `
-        update reservations
-        set
-          status = 'canceled',
-          canceled_at = now(),
-          updated_at = now()
-        where id = $1
-        returning id, reservation_date, status, canceled_at
-      `,
-      [reservationId]
-    );
-    const canceledReservation = canceledReservationResult.rows[0];
+      const canceledReservation = await reservationsRepository.cancelReservation(repo, reservationId);
 
-    if (reservation.employee_parking_request_id) {
-      await client.query(
-        `
-          update employee_parking_requests
-          set
-            status = 'queued',
-            assigned_reservation_id = null,
-            updated_at = now()
-          where id = $1
-            and status = 'assigned'
-        `,
-        [reservation.employee_parking_request_id]
-      );
+      if (reservation.employee_parking_request_id) {
+        await employeeRequestsRepository.reopenAssignedRequest(repo, reservation.employee_parking_request_id);
+        await queueRepository.reopenAssignedEntriesForRequest(repo, reservation.employee_parking_request_id);
+      }
 
-      await client.query(
-        `
-          update queue_entries
-          set
-            status = 'waiting',
-            assigned_reservation_id = null,
-            processed_at = null,
-            updated_at = now()
-          where employee_parking_request_id = $1
-            and status = 'assigned'
-        `,
-        [reservation.employee_parking_request_id]
-      );
-    }
+      if (reservation.guest_parking_request_id) {
+        await guestRequestsRepository.cancelGuestRequestIfNotCanceled(repo, reservation.guest_parking_request_id);
+      }
 
-    if (reservation.guest_parking_request_id) {
-      await client.query(
-        `
-          update guest_parking_requests
-          set
-            status = 'canceled',
-            canceled_at = now(),
-            updated_at = now()
-          where id = $1
-            and status <> 'canceled'
-        `,
-        [reservation.guest_parking_request_id]
-      );
-    }
-
-    await client.query(
-      `
-        insert into reservation_events (
-          reservation_id,
-          event_type,
-          payload,
-          source
-        )
-        values ($1, 'reservation_canceled', $2::jsonb, $3)
-      `,
-      [
+      await reservationsRepository.insertReservationEvent(repo, {
         reservationId,
-        JSON.stringify({
+        eventType: 'reservation_canceled',
+        source: reservation.source,
+        payload: {
           reservationDate: reservation.reservation_date,
           parkingPlaceId: reservation.parking_place_id,
           parkingPlaceCode: reservation.parking_place_code,
           userId: reservation.user_id,
           employeeParkingRequestId: reservation.employee_parking_request_id,
           guestParkingRequestId: reservation.guest_parking_request_id
-        }),
-        reservation.source
-      ]
-    );
+        }
+      });
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'reservation',
-          $1,
-          'reservation_canceled',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        reservationId,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'reservation',
+        entityId: reservationId,
+        action: 'reservation_canceled',
+        actorService: 'admin-web',
+        metadata: {
           reservationDate: reservation.reservation_date,
           parkingPlaceId: reservation.parking_place_id,
           parkingPlaceCode: reservation.parking_place_code,
           userId: reservation.user_id,
           userDisplayName: reservation.user_display_name,
           source: reservation.source
-        })
-      ]
-    );
-
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        reservation: {
-          id: canceledReservation.id,
-          reservationDate: canceledReservation.reservation_date,
-          status: canceledReservation.status,
-          canceledAt: canceledReservation.canceled_at
         }
-      }
-    };
+      });
+
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          reservation: {
+            id: canceledReservation.id,
+            reservationDate: canceledReservation.reservation_date,
+            status: canceledReservation.status,
+            canceledAt: canceledReservation.canceled_at
+          }
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -6675,8 +4353,6 @@ async function handleAdminReservationCancel(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -6709,172 +4385,85 @@ async function handleAdminPlaceReleaseCancel(req) {
     };
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('begin');
+    return await withTransaction(pool, async (repo) => {
+      const release = await placeReleasesRepository.findReleaseForUpdate(repo, releaseId);
 
-    const releaseResult = await client.query(
-      `
-        select
-          pr.id,
-          pr.parking_place_id,
-          pr.user_id,
-          pr.release_during,
-          pr.status,
-          pr.frozen_at,
-          lower(pr.release_during)::date as date_from,
-          (upper(pr.release_during)::date - 1) as date_to,
-          u.display_name as user_display_name,
-          pp.code as parking_place_code
-        from place_releases pr
-        join users u on u.id = pr.user_id
-        join parking_places pp on pp.id = pr.parking_place_id
-        where pr.id = $1
-        for update
-      `,
-      [releaseId]
-    );
+      if (!release) {
+        throw abortWith(404, 'Place release not found');
+      }
 
-    const release = releaseResult.rows[0];
-
-    if (!release) {
-      await client.query('rollback');
-      return {
-        statusCode: 404,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Place release not found'
-        }
-      };
-    }
-
-    if (release.status === 'canceled') {
-      await client.query('rollback');
-      return {
-        statusCode: 200,
-        payload: {
-          status: 'ok',
-          service: 'api',
-          release: {
-            id: release.id,
-            status: release.status,
-            dateFrom: release.date_from,
-            dateTo: release.date_to
+      if (release.status === 'canceled') {
+        throw new AbortTransaction({
+          statusCode: 200,
+          payload: {
+            status: 'ok',
+            service: 'api',
+            release: {
+              id: release.id,
+              status: release.status,
+              dateFrom: release.date_from,
+              dateTo: release.date_to
+            }
           }
-        }
-      };
-    }
+        });
+      }
 
-    // Once freeze-next-day has run for the released day, the release is part of
-    // that day's settled pool and cannot be taken back — someone may already be
-    // counting on the place.
-    if (release.frozen_at) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Cannot cancel a release for a day that is already frozen',
+      // Once freeze-next-day has run for the released day, the release is part of
+      // that day's settled pool and cannot be taken back — someone may already be
+      // counting on the place.
+      if (release.frozen_at) {
+        throw abortWith(409, 'Cannot cancel a release for a day that is already frozen', {
           frozenAt: release.frozen_at,
           timezone: appTimezone
-        }
-      };
-    }
+        });
+      }
 
-    const reservationResult = await client.query(
-      `
-        select id
-        from reservations
-        where parking_place_id = $1
-          and status = 'active'
-          and reservation_date <@ $2::daterange
-        limit 1
-      `,
-      [release.parking_place_id, release.release_during]
-    );
+      const activeReservation = await reservationsRepository.findActiveReservationInRange(repo, {
+        parkingPlaceId: release.parking_place_id,
+        releaseDuring: release.release_during
+      });
 
-    if (reservationResult.rows[0]) {
-      await client.query('rollback');
-      return {
-        statusCode: 409,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'Cannot cancel release while it has active reservations'
-        }
-      };
-    }
+      if (activeReservation) {
+        throw abortWith(409, 'Cannot cancel release while it has active reservations');
+      }
 
-    const updateResult = await client.query(
-      `
-        update place_releases
-        set
-          status = 'canceled',
-          canceled_at = now(),
-          updated_at = now()
-        where id = $1
-        returning
-          id,
-          lower(release_during)::date as date_from,
-          (upper(release_during)::date - 1) as date_to,
-          status,
-          canceled_at
-      `,
-      [releaseId]
-    );
-    const canceledRelease = updateResult.rows[0];
+      const canceledRelease = await placeReleasesRepository.cancelRelease(repo, releaseId);
 
-    await client.query(
-      `
-        insert into audit_logs (
-          entity_type,
-          entity_id,
-          action,
-          actor_service,
-          metadata
-        )
-        values (
-          'place_release',
-          $1,
-          'place_release_canceled',
-          'admin-web',
-          $2::jsonb
-        )
-      `,
-      [
-        releaseId,
-        JSON.stringify({
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'place_release',
+        entityId: releaseId,
+        action: 'place_release_canceled',
+        actorService: 'admin-web',
+        metadata: {
           userId: release.user_id,
           userDisplayName: release.user_display_name,
           parkingPlaceId: release.parking_place_id,
           parkingPlaceCode: release.parking_place_code,
           dateFrom: release.date_from,
           dateTo: release.date_to
-        })
-      ]
-    );
-
-    await client.query('commit');
-
-    return {
-      statusCode: 200,
-      payload: {
-        status: 'ok',
-        service: 'api',
-        release: {
-          id: canceledRelease.id,
-          dateFrom: canceledRelease.date_from,
-          dateTo: canceledRelease.date_to,
-          status: canceledRelease.status,
-          canceledAt: canceledRelease.canceled_at
         }
-      }
-    };
+      });
+
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          release: {
+            id: canceledRelease.id,
+            dateFrom: canceledRelease.date_from,
+            dateTo: canceledRelease.date_to,
+            status: canceledRelease.status,
+            canceledAt: canceledRelease.canceled_at
+          }
+        }
+      };
+    });
   } catch (error) {
-    await client.query('rollback');
+    if (error instanceof AbortTransaction) {
+      return error.result;
+    }
 
     return {
       statusCode: 500,
@@ -6884,8 +4473,6 @@ async function handleAdminPlaceReleaseCancel(req) {
         error: error.message
       }
     };
-  } finally {
-    client.release();
   }
 }
 
@@ -6930,74 +4517,26 @@ async function handleAdminAuditLogsList(searchParams) {
   const action = searchParams.get('action');
   const actor = searchParams.get('actor');
   const limit = parsePositiveLimit(searchParams, 100, 300);
-  const where = [];
-  const params = [];
 
-  if (date) {
-    if (!isIsoDate(date)) {
-      return {
-        statusCode: 400,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'date must use YYYY-MM-DD format'
-        }
-      };
-    }
-    params.push(date);
-    where.push(`al.occurred_at >= $${params.length}::date and al.occurred_at < ($${params.length}::date + interval '1 day')`);
+  if (date && !isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
   }
 
-  if (entityType) {
-    params.push(entityType);
-    where.push(`al.entity_type = $${params.length}`);
-  }
-
-  if (entityId) {
-    params.push(entityId);
-    where.push(`al.entity_id = $${params.length}::uuid`);
-  }
-
-  if (action) {
-    params.push(`%${action}%`);
-    where.push(`al.action ilike $${params.length}`);
-  }
-
-  if (actor) {
-    params.push(`%${actor}%`);
-    where.push(`(
-      al.actor_service ilike $${params.length}
-      or actor_user.display_name ilike $${params.length}
-      or actor_auth.login ilike $${params.length}
-      or actor_auth.display_name ilike $${params.length}
-    )`);
-  }
-
-  params.push(limit);
-  const rows = await queryMany(
-    `
-      select
-        al.id,
-        al.entity_type,
-        al.entity_id,
-        al.action,
-        al.actor_service,
-        al.actor_user_id,
-        actor_user.display_name as actor_user_display_name,
-        al.actor_auth_user_id,
-        actor_auth.login as actor_auth_login,
-        actor_auth.display_name as actor_auth_display_name,
-        al.occurred_at,
-        al.metadata
-      from audit_logs al
-      left join users actor_user on actor_user.id = al.actor_user_id
-      left join auth_users actor_auth on actor_auth.id = al.actor_auth_user_id
-      ${where.length ? `where ${where.join(' and ')}` : ''}
-      order by al.occurred_at desc
-      limit $${params.length}
-    `,
-    params
-  );
+  const rows = await auditRepository.listAuditLogs(dbRepository, {
+    date,
+    entityType,
+    entityId,
+    action,
+    actor,
+    limit
+  });
 
   return {
     statusCode: 200,
@@ -7052,61 +4591,19 @@ function mapContactAccessLog(row) {
 async function handleAdminContactAccessLogsList(searchParams) {
   const date = searchParams.get('date');
   const limit = parsePositiveLimit(searchParams, 100, 300);
-  const params = [];
-  const where = [];
 
-  if (date) {
-    if (!isIsoDate(date)) {
-      return {
-        statusCode: 400,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: 'date must use YYYY-MM-DD format'
-        }
-      };
-    }
-    params.push(date);
-    where.push(`cal.occupancy_date = $${params.length}::date`);
+  if (date && !isIsoDate(date)) {
+    return {
+      statusCode: 400,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'date must use YYYY-MM-DD format'
+      }
+    };
   }
 
-  params.push(limit);
-  const rows = await queryMany(
-    `
-      select
-        cal.id,
-        cal.occupancy_date,
-        cal.requester_user_id,
-        requester.display_name as requester_display_name,
-        requester.department as requester_department,
-        requester.email as requester_email,
-        requester.phone as requester_phone,
-        cal.line_group_id,
-        lg.code as line_group_code,
-        lg.name as line_group_name,
-        cal.target_user_id,
-        target_user.display_name as target_user_display_name,
-        target_user.department as target_user_department,
-        target_user.email as target_user_email,
-        target_user.phone as target_user_phone,
-        cal.target_guest_parking_request_id,
-        gpr.guest_name as target_guest_name,
-        host.display_name as target_guest_host_display_name,
-        cal.resolution,
-        cal.created_at,
-        cal.metadata
-      from contact_access_logs cal
-      join users requester on requester.id = cal.requester_user_id
-      left join line_groups lg on lg.id = cal.line_group_id
-      left join users target_user on target_user.id = cal.target_user_id
-      left join guest_parking_requests gpr on gpr.id = cal.target_guest_parking_request_id
-      left join users host on host.id = gpr.host_user_id
-      ${where.length ? `where ${where.join(' and ')}` : ''}
-      order by cal.created_at desc
-      limit $${params.length}
-    `,
-    params
-  );
+  const rows = await contactAccessRepository.listContactAccessLogs(dbRepository, { date, limit });
 
   return {
     statusCode: 200,
@@ -7132,47 +4629,7 @@ async function handleAdminLineOccupancyList(searchParams) {
     };
   }
 
-  const rows = await queryMany(
-    `
-      select
-        lo.id as occupancy_id,
-        lo.occupancy_date::text as occupancy_date,
-        lo.position,
-        lo.subject_type,
-        lo.created_at as occupancy_created_at,
-        lo.updated_at as occupancy_updated_at,
-        lg.id as line_group_id,
-        lg.code as line_group_code,
-        lg.name as line_group_name,
-        lg.capacity as line_group_capacity,
-        pp.id as parking_place_id,
-        pp.code as parking_place_code,
-        pp.title as parking_place_title,
-        pp.place_type as parking_place_type,
-        u.id as user_id,
-        u.display_name as user_display_name,
-        u.department as user_department,
-        u.email as user_email,
-        u.phone as user_phone,
-        gpr.id as guest_parking_request_id,
-        gpr.guest_name,
-        gpr.guest_phone,
-        gpr.host_user_id,
-        host.display_name as host_display_name,
-        r.id as reservation_id,
-        r.source as reservation_source
-      from line_occupancy lo
-      join line_groups lg on lg.id = lo.line_group_id
-      join parking_places pp on pp.id = lo.parking_place_id
-      left join users u on u.id = lo.user_id
-      left join guest_parking_requests gpr on gpr.id = lo.guest_parking_request_id
-      left join users host on host.id = gpr.host_user_id
-      left join reservations r on r.id = lo.reservation_id
-      where lo.occupancy_date = $1::date
-      order by lg.floor_label nulls last, lg.code, lo.position
-    `,
-    [occupancyDate]
-  );
+  const rows = await lineOccupancyRepository.listOccupancyForDate(dbRepository, { occupancyDate });
 
   return {
     statusCode: 200,
@@ -7186,17 +4643,7 @@ async function handleAdminLineOccupancyList(searchParams) {
 }
 
 async function handleAdminPlaceHistory(placeId) {
-  const place = await queryOne(
-    `
-      -- Archived places stay readable on purpose: archiving is how a place leaves
-      -- service, and its reservations, releases and audit trail are exactly what the
-      -- operator comes here to read afterwards.
-      select id, code, title, floor_label, place_type, is_active
-      from parking_places
-      where id = $1
-    `,
-    [placeId]
-  );
+  const place = await placesRepository.findPlaceForHistory(dbRepository, placeId);
 
   if (!place) {
     return {
@@ -7210,122 +4657,11 @@ async function handleAdminPlaceHistory(placeId) {
   }
 
   const [permanentAssignments, releases, reservations, movements, auditLogs] = await Promise.all([
-    queryMany(
-      `
-        select
-          pa.id,
-          lower(pa.valid_during)::text as date_from,
-          (upper(pa.valid_during) - interval '1 day')::date::text as date_to,
-          pa.created_at,
-          pa.notes,
-          u.id as user_id,
-          u.display_name,
-          u.department
-        from permanent_assignments pa
-        join users u on u.id = pa.user_id
-        where pa.parking_place_id = $1
-        order by lower(pa.valid_during) desc, pa.created_at desc
-        limit 100
-      `,
-      [placeId]
-    ),
-    queryMany(
-      `
-        select
-          pr.id,
-          lower(pr.release_during)::text as date_from,
-          (upper(pr.release_during) - interval '1 day')::date::text as date_to,
-          pr.status,
-          pr.created_via,
-          pr.created_at,
-          pr.canceled_at,
-          pr.notes,
-          u.id as user_id,
-          u.display_name,
-          u.department
-        from place_releases pr
-        join users u on u.id = pr.user_id
-        where pr.parking_place_id = $1
-        order by lower(pr.release_during) desc, pr.created_at desc
-        limit 100
-      `,
-      [placeId]
-    ),
-    queryMany(
-      `
-        select
-          r.id,
-          r.reservation_date::text as reservation_date,
-          r.source,
-          r.status,
-          r.reason,
-          r.created_at,
-          r.canceled_at,
-          u.id as user_id,
-          u.display_name,
-          u.department,
-          gpr.id as guest_parking_request_id,
-          gpr.guest_name
-        from reservations r
-        left join users u on u.id = r.user_id
-        left join guest_parking_requests gpr on gpr.id = r.guest_parking_request_id
-        where r.parking_place_id = $1
-        order by r.reservation_date desc, r.created_at desc
-        limit 100
-      `,
-      [placeId]
-    ),
-    queryMany(
-      `
-        select
-          pm.id,
-          pm.movement_date::text as movement_date,
-          pm.movement_type,
-          pm.reason,
-          pm.created_at,
-          from_place.code as from_place_code,
-          to_place.code as to_place_code,
-          r.source,
-          u.display_name as user_display_name,
-          gpr.guest_name
-        from parking_movements pm
-        join reservations r on r.id = pm.reservation_id
-        left join parking_places from_place on from_place.id = pm.from_parking_place_id
-        join parking_places to_place on to_place.id = pm.to_parking_place_id
-        left join users u on u.id = r.user_id
-        left join guest_parking_requests gpr on gpr.id = r.guest_parking_request_id
-        where pm.from_parking_place_id = $1
-           or pm.to_parking_place_id = $1
-        order by pm.movement_date desc, pm.created_at desc
-        limit 100
-      `,
-      [placeId]
-    ),
-    queryMany(
-      `
-        select
-          al.id,
-          al.entity_type,
-          al.entity_id,
-          al.action,
-          al.actor_service,
-          al.actor_user_id,
-          actor_user.display_name as actor_user_display_name,
-          al.actor_auth_user_id,
-          actor_auth.login as actor_auth_login,
-          actor_auth.display_name as actor_auth_display_name,
-          al.occurred_at,
-          al.metadata
-        from audit_logs al
-        left join users actor_user on actor_user.id = al.actor_user_id
-        left join auth_users actor_auth on actor_auth.id = al.actor_auth_user_id
-        where al.entity_id = $1
-           or al.metadata->>'parkingPlaceId' = $1::text
-        order by al.occurred_at desc
-        limit 100
-      `,
-      [placeId]
-    )
+    permanentAssignmentsRepository.listAssignmentsForPlace(dbRepository, placeId),
+    placeReleasesRepository.listReleasesForPlace(dbRepository, placeId),
+    reservationsRepository.listReservationsForPlace(dbRepository, placeId),
+    reservationsRepository.listMovementsForPlace(dbRepository, placeId),
+    auditRepository.listAuditLogsForPlace(dbRepository, placeId)
   ]);
 
   return {
@@ -7410,16 +4746,7 @@ async function handleAdminPlaceHistory(placeId) {
 }
 
 async function handleAdminEmployeeHistory(userId) {
-  const employee = await queryOne(
-    `
-      select id, employee_no, display_name, email, phone, department, yandex_messenger_user_id, created_at
-      from users
-      where id = $1
-        and kind = 'employee'
-        and deleted_at is null
-    `,
-    [userId]
-  );
+  const employee = await employeesRepository.findEmployeeProfile(dbRepository, userId);
 
   if (!employee) {
     return {
@@ -7434,202 +4761,15 @@ async function handleAdminEmployeeHistory(userId) {
 
   const [permanentAssignments, releases, employeeRequests, hostedGuestRequests, reservations, lineOccupancy, departurePlans, contactLogs, auditLogs] =
     await Promise.all([
-      queryMany(
-        `
-          select
-            pa.id,
-            lower(pa.valid_during)::text as date_from,
-            (upper(pa.valid_during) - interval '1 day')::date::text as date_to,
-            pa.created_at,
-            pa.notes,
-            pp.id as parking_place_id,
-            pp.code as parking_place_code,
-            pp.title as parking_place_title
-          from permanent_assignments pa
-          join parking_places pp on pp.id = pa.parking_place_id
-          where pa.user_id = $1
-          order by lower(pa.valid_during) desc, pa.created_at desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            pr.id,
-            lower(pr.release_during)::text as date_from,
-            (upper(pr.release_during) - interval '1 day')::date::text as date_to,
-            pr.status,
-            pr.created_via,
-            pr.created_at,
-            pr.canceled_at,
-            pr.notes,
-            pp.id as parking_place_id,
-            pp.code as parking_place_code
-          from place_releases pr
-          join parking_places pp on pp.id = pr.parking_place_id
-          where pr.user_id = $1
-          order by lower(pr.release_during) desc, pr.created_at desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            epr.id,
-            epr.request_date::text as request_date,
-            epr.status,
-            epr.requested_at,
-            epr.canceled_at,
-            epr.notes,
-            qe.queue_position,
-            qe.status as queue_status,
-            pp.code as parking_place_code
-          from employee_parking_requests epr
-          left join queue_entries qe on qe.employee_parking_request_id = epr.id
-          left join reservations r on r.id = epr.assigned_reservation_id
-          left join parking_places pp on pp.id = r.parking_place_id
-          where epr.user_id = $1
-          order by epr.request_date desc, epr.created_at desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            gpr.id,
-            gpr.request_date::text as request_date,
-            gpr.status,
-            gpr.guest_name,
-            gpr.guest_phone,
-            gpr.vehicle_plate_number,
-            gpr.requested_at,
-            gpr.canceled_at,
-            pp.code as parking_place_code
-          from guest_parking_requests gpr
-          left join reservations r on r.id = gpr.assigned_reservation_id
-          left join parking_places pp on pp.id = r.parking_place_id
-          where gpr.host_user_id = $1
-          order by gpr.request_date desc, gpr.created_at desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            r.id,
-            r.reservation_date::text as reservation_date,
-            r.source,
-            r.status,
-            r.reason,
-            r.created_at,
-            r.canceled_at,
-            pp.id as parking_place_id,
-            pp.code as parking_place_code
-          from reservations r
-          join parking_places pp on pp.id = r.parking_place_id
-          where r.user_id = $1
-          order by r.reservation_date desc, r.created_at desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            lo.id,
-            lo.occupancy_date::text as occupancy_date,
-            lo.position,
-            lo.subject_type,
-            lo.created_at,
-            lg.code as line_group_code,
-            pp.code as parking_place_code
-          from line_occupancy lo
-          join line_groups lg on lg.id = lo.line_group_id
-          join parking_places pp on pp.id = lo.parking_place_id
-          where lo.user_id = $1
-          order by lo.occupancy_date desc, lo.position
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select id, plan_date::text as plan_date, departure_time::text as departure_time, is_early, created_at, updated_at
-          from departure_plans
-          where user_id = $1
-          order by plan_date desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            cal.id,
-            cal.occupancy_date,
-            cal.requester_user_id,
-            requester.display_name as requester_display_name,
-            requester.department as requester_department,
-            requester.email as requester_email,
-            requester.phone as requester_phone,
-            cal.line_group_id,
-            lg.code as line_group_code,
-            lg.name as line_group_name,
-            cal.target_user_id,
-            target_user.display_name as target_user_display_name,
-            target_user.department as target_user_department,
-            target_user.email as target_user_email,
-            target_user.phone as target_user_phone,
-            cal.target_guest_parking_request_id,
-            gpr.guest_name as target_guest_name,
-            host.display_name as target_guest_host_display_name,
-            cal.resolution,
-            cal.created_at,
-            cal.metadata
-          from contact_access_logs cal
-          join users requester on requester.id = cal.requester_user_id
-          left join line_groups lg on lg.id = cal.line_group_id
-          left join users target_user on target_user.id = cal.target_user_id
-          left join guest_parking_requests gpr on gpr.id = cal.target_guest_parking_request_id
-          left join users host on host.id = gpr.host_user_id
-          where cal.requester_user_id = $1
-             or cal.target_user_id = $1
-          order by cal.created_at desc
-          limit 100
-        `,
-        [userId]
-      ),
-      queryMany(
-        `
-          select
-            al.id,
-            al.entity_type,
-            al.entity_id,
-            al.action,
-            al.actor_service,
-            al.actor_user_id,
-            actor_user.display_name as actor_user_display_name,
-            al.actor_auth_user_id,
-            actor_auth.login as actor_auth_login,
-            actor_auth.display_name as actor_auth_display_name,
-            al.occurred_at,
-            al.metadata
-          from audit_logs al
-          left join users actor_user on actor_user.id = al.actor_user_id
-          left join auth_users actor_auth on actor_auth.id = al.actor_auth_user_id
-          where al.entity_id = $1
-             or al.actor_user_id = $1
-             or al.metadata->>'userId' = $1::text
-             or al.metadata->>'hostUserId' = $1::text
-          order by al.occurred_at desc
-          limit 100
-        `,
-        [userId]
-      )
+      permanentAssignmentsRepository.listAssignmentsForUser(dbRepository, userId),
+      placeReleasesRepository.listReleasesForUser(dbRepository, userId),
+      employeeRequestsRepository.listRequestsForUser(dbRepository, userId),
+      guestRequestsRepository.listHostedRequestsForUser(dbRepository, userId),
+      reservationsRepository.listReservationsForUser(dbRepository, userId),
+      lineOccupancyRepository.listOccupancyForUser(dbRepository, userId),
+      departurePlansRepository.listPlansForUser(dbRepository, userId),
+      contactAccessRepository.listContactAccessLogsForUser(dbRepository, userId),
+      auditRepository.listAuditLogsForUser(dbRepository, userId)
     ]);
 
   return {

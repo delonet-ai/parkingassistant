@@ -36,7 +36,9 @@ apps/api/src/modules/<context>/
 
 Dependency direction is one-way — `controller → service → repository`, any layer → `packages/domain` — and is enforced by `no-restricted-imports` / `no-restricted-syntax` rules in `eslint.config.js`, not by convention. See [ADR 003](adr/003-modular-architecture.md).
 
-The contexts are `employees`, `places`, `place-lines`, `permanent-assignments`, `place-releases`, `employee-requests`, `guest-requests`, `reservations`, `queue`, `line-occupancy`, `departure-plans`, `conflicts`, `contact-access`, `maps`, `dashboard`, `audit`, `jobs`. `availability` is a read model over `place-releases`, `places` and `reservations` rather than a context of its own.
+The contexts are `employees`, `places`, `place-lines`, `permanent-assignments`, `place-releases`, `employee-requests`, `guest-requests`, `reservations`, `queue`, `line-occupancy`, `departure-plans`, `conflicts`, `contact-access`, `maps`, `dashboard`, `audit`, `jobs`, `system`. `availability` is a read model over `place-releases`, `places` and `reservations` rather than a context of its own; `dashboard` owns no repository, because its handler is a composition of three other contexts' reads.
+
+Every SQL string in the API lives in an `apps/api/src/modules/<context>/repository.js`, and nowhere else — a test asserts it. A repository function takes the query surface as its first argument, so the same function serves a pool-bound repository and the client-bound one `withTransaction` yields.
 
 All database access goes through `apps/api/src/repositories/db.js`: `createDbRepository(pool)` for pool-scoped reads, `withTransaction(pool, fn)` for anything transactional. `withTransaction` yields a client-bound repository with the same `queryOne` / `queryMany` surface, issues `begin`/`commit`/`rollback` around the callback, and always releases the client. A service that needs to abort throws — the helper never inspects the return value.
 

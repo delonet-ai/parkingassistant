@@ -10,15 +10,23 @@ const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require(
 // checked against them. The SQL-evaluated parts (the `greatest(available - $2, 0)`
 // after-19:00 pool, the per-place-type counters) are pinned here only at the
 // mapping level; their arithmetic is covered by the Task 3 integration tests.
+//
+// Task 15 moved the SQL itself into `modules/place-releases/repository.js`, so the mock
+// is now the `queryOne`/`queryMany` surface a repository is handed rather than a raw pg
+// client. The assertions on the SQL text still hold — the repository is what runs it now.
 
 function createMockClient(rows) {
   const calls = [];
 
   return {
     calls,
-    async query(text, params) {
+    async queryOne(text, params) {
       calls.push({ text, params });
-      return { rows };
+      return rows[0] || null;
+    },
+    async queryMany(text, params) {
+      calls.push({ text, params });
+      return rows;
     }
   };
 }
@@ -129,7 +137,7 @@ test('calculateAvailabilitySnapshot echoes the date and timezone it was given', 
 });
 
 test('countAvailableReleasedPlaces returns the count for the requested date', async () => {
-  const client = createMockClient([{ count: 7 }]);
+  const client = createMockClient([{ available_places: 7 }]);
 
   assert.equal(await countAvailableReleasedPlaces(client, '2026-07-17'), 7);
   assert.deepEqual(client.calls[0].params, ['2026-07-17']);
@@ -137,12 +145,12 @@ test('countAvailableReleasedPlaces returns the count for the requested date', as
 
 test('countAvailableReleasedPlaces falls back to 0 for an empty or null count', async () => {
   assert.equal(await countAvailableReleasedPlaces(createMockClient([]), '2026-07-17'), 0);
-  assert.equal(await countAvailableReleasedPlaces(createMockClient([{ count: null }]), '2026-07-17'), 0);
-  assert.equal(await countAvailableReleasedPlaces(createMockClient([{ count: 0 }]), '2026-07-17'), 0);
+  assert.equal(await countAvailableReleasedPlaces(createMockClient([{ available_places: null }]), '2026-07-17'), 0);
+  assert.equal(await countAvailableReleasedPlaces(createMockClient([{ available_places: 0 }]), '2026-07-17'), 0);
 });
 
 test('countAvailableReleasedPlaces excludes places already reserved for the date', async () => {
-  const client = createMockClient([{ count: 0 }]);
+  const client = createMockClient([{ available_places: 0 }]);
 
   await countAvailableReleasedPlaces(client, '2026-07-17');
 

@@ -1,51 +1,20 @@
 'use strict';
 
-async function countAvailableReleasedPlaces(client, date) {
-  const result = await client.query(
-    `
-      select count(*)::int as count
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
-      left join reservations r
-        on r.parking_place_id = pp.id
-        and r.reservation_date = $1::date
-        and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-        and r.id is null
-    `,
-    [date]
-  );
+// Availability is a read model, not a bounded context (ADR 003): every number below is a
+// property of released places, so the SQL lives in the place-releases repository and this
+// file only folds one row into the shape the API answers with.
 
-  return result.rows[0]?.count || 0;
+const placeReleasesRepository = require('../modules/place-releases/repository');
+
+async function countAvailableReleasedPlaces(repo, date) {
+  const row = await placeReleasesRepository.countUnreservedReleasedPlaces(repo, date);
+
+  return row?.available_places || 0;
 }
 
-async function calculateAvailabilitySnapshot(client, date, options) {
+async function calculateAvailabilitySnapshot(repo, date, options) {
   const { appTimezone, guestReserveMinimum } = options;
-  const result = await client.query(
-    `
-      select
-        count(*)::int as released_places,
-        count(*) filter (where r.id is null)::int as available_places,
-        count(*) filter (where r.id is null and pp.place_type in ('double', 'triple'))::int as before_19_employee_places,
-        greatest(count(*) filter (where r.id is null)::int - $2::int, 0)::int as after_19_employee_places,
-        count(*) filter (where r.id is null and pp.place_type = 'single')::int as available_single_places,
-        count(*) filter (where r.id is null and pp.place_type = 'double')::int as available_double_places,
-        count(*) filter (where r.id is null and pp.place_type = 'triple')::int as available_triple_places
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
-      left join reservations r
-        on r.parking_place_id = pp.id
-        and r.reservation_date = $1::date
-        and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-    `,
-    [date, guestReserveMinimum]
-  );
-  const row = result.rows[0] || {};
+  const row = (await placeReleasesRepository.summarizeAvailability(repo, { date, guestReserveMinimum })) || {};
   const availablePlaces = row.available_places || 0;
 
   return {

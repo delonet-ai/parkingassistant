@@ -122,7 +122,8 @@ test('the bounded contexts in ADR 003 match the module map in ARCHITECTURE.md', 
     'maps',
     'dashboard',
     'audit',
-    'jobs'
+    'jobs',
+    'system'
   ];
 
   for (const context of contexts) {
