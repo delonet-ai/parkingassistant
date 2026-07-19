@@ -177,6 +177,29 @@ local changes
 что тесты и стенд применяют SQL одним и тем же кодом. Идемпотентность закреплена тестом
 `packages/db/integration/migrate.itest.js`.
 
+### Demo dataset
+
+Демо-набор для тестового стенда лежит в `packages/db/seeds/demo/` — на уровень ниже, чем читает
+`db:migrate`, поэтому деплой его не применяет. Загрузка и сброс — явные команды:
+
+```bash
+DATABASE_URL=postgresql://... npm run db:seed:demo
+DATABASE_URL=postgresql://... npm run db:seed:demo:reset
+```
+
+Набор рассчитан так, чтобы **каждая** вкладка админки отдавала содержимое: линии всех размеров,
+сотрудники с постоянным местом и без, постоянные закрепления, активные релизы, заявки сотрудников
+(выданная через очередь / в очереди / новая), гостевые заявки (размещённая и ожидающая), брони,
+планы выезда с одним ранним и заблокированным (непустые конфликты), занятость линий, лог доступа
+к контактам и записи аудита. Даты привязаны к «сегодня» в `Europe/Moscow`.
+
+Идемпотентность обеспечена конструкцией «reset + insert»: `000_reset.sql` удаляет строки по тегу
+демо-набора (`users.email like '%@demo.invalid'`, `parking_places.catalog_source = 'demo'`,
+`line_groups.code like 'demo-%'`, `parking_place_maps.source_checksum = 'demo'`,
+`audit_logs.actor_service = 'db_seed_demo'`), `001_demo_dataset.sql` вставляет их заново. Всё
+остальное — импортированный каталог, реальные пользователи, bootstrap-администратор — не
+затрагивается. Закреплено тестом `packages/db/integration/demo-seed.itest.js`.
+
 Production storage mounts:
 
 - `/opt/git/parkingassistant/staging/postgres`;
