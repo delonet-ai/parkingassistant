@@ -62,9 +62,6 @@ WHERE user_id IN (SELECT id FROM demo_reset_users)
 DELETE FROM audit_logs
 WHERE actor_service = 'db_seed_demo';
 
-DELETE FROM parking_place_map_zones
-WHERE parking_place_id IN (SELECT id FROM demo_reset_places);
-
 DELETE FROM parking_place_maps
 WHERE source_checksum = 'demo';
 

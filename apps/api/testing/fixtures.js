@@ -76,24 +76,45 @@ function createFixtures(db) {
     return result.rows[0];
   }
 
+  const CAPACITY_BY_PLACE_TYPE = { single: 1, double: 2, triple: 3 };
+
+  /**
+   * Every place belongs to a line group — parking_places.line_group_id is NOT NULL since
+   * 005_place_inventory.sql. A caller that does not name a group gets one of its own,
+   * sized to match the requested place_type so the two stay in agreement.
+   */
   async function insertPlace(overrides = {}) {
     const suffix = nextSuffix();
+    const placeType = overrides.placeType || 'double';
+    const floorLabel = overrides.floorLabel || '4';
+
+    const lineGroupId =
+      overrides.lineGroupId ||
+      (
+        await insertLineGroup({
+          capacity: CAPACITY_BY_PLACE_TYPE[placeType],
+          floorLabel
+        })
+      ).id;
 
     const result = await db.query(
       `
         insert into parking_places (
-          code, title, floor_label, place_type,
+          code, title, floor_label, place_type, place_role,
           line_group_id, line_position_hint, guest_priority_rank
         )
-        values ($1, $2, $3, $4, $5, $6, $7)
-        returning id, code, title, place_type, line_group_id, line_position_hint, guest_priority_rank
+        values ($1, $2, $3, $4, $5::parking_place_role, $6, $7, $8)
+        returning
+          id, code, title, place_type, place_role,
+          line_group_id, line_position_hint, guest_priority_rank
       `,
       [
         overrides.code || `P-${suffix}`,
         overrides.title || `Place ${suffix}`,
-        overrides.floorLabel || '4',
-        overrides.placeType || 'double',
-        overrides.lineGroupId || null,
+        floorLabel,
+        placeType,
+        overrides.placeRole || 'regular',
+        lineGroupId,
         overrides.linePositionHint || null,
         overrides.guestPriorityRank === undefined ? null : overrides.guestPriorityRank
       ]

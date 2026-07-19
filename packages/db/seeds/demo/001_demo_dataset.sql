@@ -22,52 +22,63 @@ CREATE TEMP TABLE demo_ctx ON COMMIT DROP AS
   SELECT (now() AT TIME ZONE 'Europe/Moscow')::date AS today;
 
 -- ---------------------------------------------------------------------------
--- Inventory: 4 lines (two doubles, two triples) + 5 standalone single places.
+-- Inventory: 9 elements — two doubles, two triples and five singles.
+--
+-- Every element is a line_groups row, singles included (see 005_place_inventory.sql):
+-- the UI has exactly one kind of identity to juggle. capacity is the source of truth
+-- for element size and place_type is derived from it, so the two always agree here.
 -- ---------------------------------------------------------------------------
 
-INSERT INTO line_groups (code, name, capacity, floor_label, notes)
+INSERT INTO line_groups (code, name, capacity, floor_label, notes, display_order)
 VALUES
-  ('demo-line-4-101', 'Линия G4 / 101', 2, '4', 'Demo dataset'),
-  ('demo-line-4-110', 'Линия G4 / 110', 3, '4', 'Demo dataset'),
-  ('demo-line-3-201', 'Линия G3 / 201', 2, '3', 'Demo dataset'),
-  ('demo-line-5-301', 'Линия G5 / 301', 3, '5', 'Demo dataset');
+  ('demo-line-3-201', 'Линия G3 / 201', 2, '3', 'Demo dataset', 1),
+  ('demo-line-3-210', 'Линия G3 / 210', 1, '3', 'Demo dataset', 2),
+  ('demo-line-4-101', 'Линия G4 / 101', 2, '4', 'Demo dataset', 3),
+  ('demo-line-4-110', 'Линия G4 / 110', 3, '4', 'Demo dataset', 4),
+  ('demo-line-4-120', 'Линия G4 / 120', 1, '4', 'Demo dataset', 5),
+  ('demo-line-4-121', 'Линия G4 / 121', 1, '4', 'Demo dataset', 6),
+  ('demo-line-4-122', 'Линия G4 / 122', 1, '4', 'Demo dataset', 7),
+  ('demo-line-5-301', 'Линия G5 / 301', 3, '5', 'Demo dataset', 8),
+  ('demo-line-5-310', 'Линия G5 / 310', 1, '5', 'Demo dataset', 9);
 
 INSERT INTO parking_places (
-  code, title, floor_label, place_type,
+  code, title, floor_label, place_type, place_role,
   line_group_id, line_position_hint, guest_priority_rank, catalog_source
 )
 SELECT
   v.code,
   concat('Место ', v.code),
   v.floor_label,
-  v.place_type::parking_place_type,
+  (CASE lg.capacity WHEN 1 THEN 'single' WHEN 2 THEN 'double' ELSE 'triple' END)
+    ::parking_place_type,
+  v.place_role::parking_place_role,
   lg.id,
   v.position_hint,
   v.guest_rank,
   'demo'
 FROM (
   VALUES
-    ('101', '4', 'double', 'demo-line-4-101', 1::smallint, NULL::smallint),
-    ('102', '4', 'double', 'demo-line-4-101', 2, NULL),
-    ('110', '4', 'triple', 'demo-line-4-110', 1, 1),
-    ('111', '4', 'triple', 'demo-line-4-110', 2, NULL),
-    ('112', '4', 'triple', 'demo-line-4-110', 3, NULL),
-    ('120', '4', 'single', NULL, NULL, NULL),
-    ('121', '4', 'single', NULL, NULL, NULL),
-    ('122', '4', 'single', NULL, NULL, NULL),
-    ('201', '3', 'double', 'demo-line-3-201', 1, NULL),
-    ('202', '3', 'double', 'demo-line-3-201', 2, 2),
-    ('210', '3', 'single', NULL, NULL, NULL),
-    ('301', '5', 'triple', 'demo-line-5-301', 1, NULL),
-    ('302', '5', 'triple', 'demo-line-5-301', 2, NULL),
-    ('303', '5', 'triple', 'demo-line-5-301', 3, 3),
-    ('310', '5', 'single', NULL, NULL, NULL)
-) AS v(code, floor_label, place_type, line_code, position_hint, guest_rank)
-LEFT JOIN line_groups lg ON lg.code = v.line_code;
+    ('101', '4', 'demo-line-4-101', 1::smallint, 'regular', NULL::smallint),
+    ('102', '4', 'demo-line-4-101', 2, 'regular', NULL),
+    ('110', '4', 'demo-line-4-110', 1, 'rotatable', 1),
+    ('111', '4', 'demo-line-4-110', 2, 'regular', NULL),
+    ('112', '4', 'demo-line-4-110', 3, 'blocked', NULL),
+    ('120', '4', 'demo-line-4-120', 1, 'regular', NULL),
+    ('121', '4', 'demo-line-4-121', 1, 'regular', NULL),
+    ('122', '4', 'demo-line-4-122', 1, 'regular', NULL),
+    ('201', '3', 'demo-line-3-201', 1, 'regular', NULL),
+    ('202', '3', 'demo-line-3-201', 2, 'rotatable', 2),
+    ('210', '3', 'demo-line-3-210', 1, 'regular', NULL),
+    ('301', '5', 'demo-line-5-301', 1, 'regular', NULL),
+    ('302', '5', 'demo-line-5-301', 2, 'regular', NULL),
+    ('303', '5', 'demo-line-5-301', 3, 'rotatable', 3),
+    ('310', '5', 'demo-line-5-310', 1, 'regular', NULL)
+) AS v(code, floor_label, line_code, position_hint, place_role, guest_rank)
+JOIN line_groups lg ON lg.code = v.line_code;
 
 -- ---------------------------------------------------------------------------
--- Floor plans and their zones. The zone geometry carries the place role
--- (regular / rotatable / blocked) — see the plan's Task 8 backfill.
+-- Floor plans. Static reference images only — the clickable zones were retired
+-- with 005_place_inventory.sql and the place role now lives on parking_places.
 -- ---------------------------------------------------------------------------
 
 INSERT INTO parking_place_maps (code, title, floor_label, file_type, file_path, source_checksum)
@@ -75,42 +86,6 @@ VALUES
   ('g3', 'Паркинг G3', '3', 'png', 'parking-g3.png', 'demo'),
   ('g4', 'Паркинг G4', '4', 'png', 'parking-g4.png', 'demo'),
   ('g5', 'Паркинг G5', '5', 'png', 'parking-g5.png', 'demo');
-
-INSERT INTO parking_place_map_zones (
-  parking_place_map_id, parking_place_id, zone_key, geometry, label_x, label_y
-)
-SELECT
-  m.id,
-  laid_out.id,
-  laid_out.code,
-  jsonb_build_object(
-    'x', laid_out.x,
-    'y', laid_out.y,
-    'width', 0.15,
-    'height', 0.10,
-    'zoneType', laid_out.zone_type
-  ),
-  round((laid_out.x + 0.075)::numeric, 2),
-  round((laid_out.y + 0.050)::numeric, 2)
-FROM (
-  SELECT
-    pp.id,
-    pp.code,
-    pp.floor_label,
-    CASE
-      WHEN pp.code IN ('110', '202', '303') THEN 'rotatable'
-      WHEN pp.code = '112' THEN 'blocked'
-      ELSE 'regular'
-    END AS zone_type,
-    round((0.05 + 0.18 * ((row_number() OVER w - 1) % 5))::numeric, 2) AS x,
-    round((0.10 + 0.22 * ((row_number() OVER w - 1) / 5))::numeric, 2) AS y
-  FROM parking_places pp
-  WHERE pp.catalog_source = 'demo'
-  WINDOW w AS (PARTITION BY pp.floor_label ORDER BY pp.code)
-) AS laid_out
-JOIN parking_place_maps m
-  ON m.source_checksum = 'demo'
-  AND m.floor_label = laid_out.floor_label;
 
 -- ---------------------------------------------------------------------------
 -- People. Employees 001-004 and 008-013 own a place; 005-007 do not and are the

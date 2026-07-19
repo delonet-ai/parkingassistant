@@ -240,18 +240,33 @@ Migration `packages/db/schema/005_place_inventory.sql` — **note the renumber:*
 (`004_job_state.sql`) for the departure-plan lock column. **Step order matters** — the zone table is
 read for data before it is dropped:
 
-- [ ] 1. Add `CREATE TYPE parking_place_role AS ENUM ('regular', 'rotatable', 'blocked')` and `parking_places.place_role parking_place_role NOT NULL DEFAULT 'regular'`.
-- [ ] 2. Backfill it from the zone geometry — `UPDATE parking_places p SET place_role = (z.geometry->>'zoneType')::parking_place_role FROM parking_place_map_zones z WHERE z.parking_place_id = p.id AND z.geometry->>'zoneType' IN ('regular','rotatable','blocked')`. Assert afterwards that the count of `rotatable`/`blocked` places matches the count of such zones — a silent loss here quietly breaks guest allocation.
-- [ ] 3. Only now `DROP TABLE parking_place_map_zones`. Keep `parking_place_maps` — the per-floor background image is still used.
-- [ ] 4. Relax `line_groups.capacity` to `CHECK (capacity IN (1, 2, 3))`; add `line_groups.display_order integer` and `line_groups.archived_at timestamptz` (the table has **no** archive column today, and Task 9 needs one).
-- [ ] 5. Backfill a capacity-1 line group for every active `parking_places` row with `line_group_id IS NULL` (code `line-<floor>-<placeCode>`, `line_position_hint = 1`).
-- [ ] 6. Backfill `display_order` from `(floor_label, numeric prefix of place code, code)` — `parking_places.code` is `text` and is **not** guaranteed numeric, so sort non-numeric codes last by collation rather than casting and failing.
-- [ ] Do NOT add `NOT NULL` to `parking_places.line_group_id`: the column is declared `REFERENCES line_groups(id) ON DELETE SET NULL`, which contradicts it. Either switch that FK to `ON DELETE RESTRICT` and then add `NOT NULL`, or keep the "every active place has a line group" rule as a documented invariant plus an integration assertion. Prefer `RESTRICT` + `NOT NULL` — a place silently losing its line is worse than a refused group delete.
-- [ ] Reconcile `scripts/import/parking-catalog.js` and `003_infer_line_groups.sql` with the new invariant: an import must land every place in a line group, singles included, and set `place_type` from the group capacity.
-- [ ] Update the Task 5 demo seed to the new model (it is written before this task and will not survive it unchanged).
-- [ ] Integration test: migration is idempotent; no active place is group-less afterwards; `place_role` counts match the pre-migration zone counts; no data outside the zones table was touched.
-- [ ] Run `npm run test:integration`; green.
-- [ ] Mark completed.
+- [x] 1. Add `CREATE TYPE parking_place_role AS ENUM ('regular', 'rotatable', 'blocked')` and `parking_places.place_role parking_place_role NOT NULL DEFAULT 'regular'`. — the existence guard is `to_regtype('parking_place_role') IS NULL`, **not** a `pg_type.typname` match: the harness runs many scratch schemas in one database and a bare name check sees a sibling schema's type and skips creating this one's.
+- [x] 2. Backfill it from the zone geometry; assert the counts match. — a place can carry a zone on more than one floor plan (the unique constraint is per map), so the backfill is a `DISTINCT ON (parking_place_id)` with a deterministic precedence (`blocked` > `rotatable` > `regular`) and the assertion counts `DISTINCT parking_place_id`. It `RAISE EXCEPTION`s rather than warning.
+- [x] 3. Only now `DROP TABLE parking_place_map_zones`. Keep `parking_place_maps`.
+- [x] 4. Relax `line_groups.capacity` to `CHECK (capacity IN (1, 2, 3))`; add `display_order` and `archived_at`.
+- [x] 5. Backfill a capacity-1 line group for every group-less `parking_places` row — **including archived ones**, because step 7's `NOT NULL` applies to every row and not just the active ones. A group that ends up with no active slot is stamped `archived_at` instead of being left dangling.
+- [x] 6. Backfill `display_order` from `(floor_label, numeric prefix of the front slot's code, code)`, non-numeric codes last. Pinned by a fixture place with code `G-annex`.
+- [x] `RESTRICT` + `NOT NULL` chosen, as the plan prefers. The FK is dropped and re-added as `ON DELETE RESTRICT` before `SET NOT NULL`; the test asserts `delete_rule = 'RESTRICT'` and `is_nullable = 'NO'` from `information_schema` rather than trusting the DDL.
+- [x] Reconcile `scripts/import/parking-catalog.js` and `003_infer_line_groups.sql`. — **003 is left as it was on purpose** (it is already in the ledger of every existing database, so editing its behavior would only change fresh ones and let the two drift); it gained a header saying what it deliberately does not do. The import was rewritten: rows are staged in a temp table, lines are derived from the whole batch, and only then are places written with `line_group_id` resolved — `place_type` from `lg.capacity` and `line_position_hint` from code order within the line, never from the spreadsheet wording. This also fixes the old mislabel where a **double's** rear read "задний" → hint 3. `inferPlaceType()` is deleted outright, and a guest place now lands as `place_role = 'rotatable'` — that classification used to live in the zone geometry and would otherwise have been lost at the import boundary. Verified end-to-end against a real generated `.xlsx`: a triple, a double, a guest single and a plain single all land correctly with 0 group-less places.
+- [x] Update the Task 5 demo seed to the new model. — 9 elements now (2 doubles, 2 triples, 5 singles, each a `line_groups` row with an explicit `display_order`), `place_role` set directly, the zone INSERT and its reset counterpart deleted, `place_type` derived from `lg.capacity` in the seed itself.
+- [x] Integration test. — `packages/db/integration/place-inventory.itest.js` (12 tests) applies 001–004 by hand, plants a pre-redesign fixture (a real double, a group-less single, a group-less *archived* single, a non-numeric code, zones carrying all three roles, plus users/permanent assignments as untouched-data canaries), then applies 005: role promotion, the non-regular count, the table drop with the maps kept, zero group-less places, single-slot adoption, the archived-line rule, capacity ↔ slot count ↔ `place_type` agreement, `display_order` ordering, `NOT NULL` + `RESTRICT` read back from `information_schema`, capacity 1 accepted while 0 and 4 are refused, a byte-for-byte untouched-data comparison, and a second apply changing nothing.
+- [x] Run `npm run test:integration`; green. — 111/111 against a live Postgres, stable over 8 consecutive full runs with zero deadlocks. `npm run check` / `lint` clean, `npm test` 71 pass. `db:migrate` verified end-to-end on a fresh database (run 1 applies 6 files including `005_place_inventory.sql`, run 2 reports `nothing to apply`), as were `db:seed:demo`, a reload, and `db:seed:demo:reset` (demo rows gone, imported catalog and bootstrap admin intact).
+- [x] Mark completed.
+
+**Harness fix required by this task:** `CREATE EXTENSION IF NOT EXISTS` in `001` ran with the
+scratch schema first on the `search_path`, so the *first* test file to run planted `btree_gist`
+**inside its own scratch schema** and every later schema silently borrowed that one's operator
+classes for its exclusion constraints. One file's `drop schema ... cascade` then had to cascade
+into another file's live constraints, and the two deadlocked mid-test (`40P01`) — which is why the
+failures landed on unrelated suites and moved around between runs. `packages/db/testing/harness.js`
+now creates both extensions `WITH SCHEMA public` before the apply, making the `IF NOT EXISTS` in
+`001` a no-op and each scratch schema genuinely self-contained. This was latent since Task 2 and
+an eighth integration file made it reproducible.
+
+**Known intermediate state, by the plan's own ordering:** the five zone endpoints
+(`/admin/map-zones*`, `/admin/map-diagnostics`) and the admin-web drawing UI still query the table
+this task drops, so they now fail at runtime. Task 9 deletes the endpoints and Task 10 the UI. No
+test covers them, so every validation command stays green.
 
 ### Task 9: Place inventory API (list / create / archive elements)
 

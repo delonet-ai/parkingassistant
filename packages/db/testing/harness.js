@@ -74,8 +74,28 @@ async function createTestDatabase(options = {}) {
   const adminPool = new Pool({ connectionString: baseUrl });
 
   try {
-    await adminPool.query(`drop schema if exists ${schemaName} cascade`);
-    await adminPool.query(`create schema ${schemaName}`);
+    // The extensions must live in `public`, not in the scratch schema.
+    //
+    // 001_initial_schema.sql says `CREATE EXTENSION IF NOT EXISTS`, and an extension is
+    // database-wide: with the scratch schema first on the search_path, the FIRST harness
+    // to run plants btree_gist inside its own schema and every later scratch schema
+    // silently borrows that one's operator classes for its exclusion constraints. Then
+    // one file's `drop schema ... cascade` has to cascade into another file's live
+    // constraints, and the two deadlock against each other mid-test (40P01).
+    //
+    // Creating them in public up front makes the IF NOT EXISTS in 001 a no-op, so each
+    // scratch schema is genuinely self-contained and can be dropped in isolation.
+    const client = await adminPool.connect();
+    try {
+      await client.query('select pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+      await client.query('create extension if not exists pgcrypto with schema public');
+      await client.query('create extension if not exists btree_gist with schema public');
+      await client.query(`drop schema if exists ${schemaName} cascade`);
+      await client.query(`create schema ${schemaName}`);
+    } finally {
+      await client.query('select pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
+      client.release();
+    }
   } finally {
     await adminPool.end();
   }

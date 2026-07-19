@@ -1,3 +1,21 @@
+-- Infers multi-slot lines (capacity 2 and 3) from the catalog's position hints.
+--
+-- This file predates the place-inventory redesign and is deliberately left as it was:
+-- it is already recorded in the migration ledger of every existing database, so editing
+-- its behaviour would only ever affect fresh ones and the two would drift apart.
+--
+-- What it does NOT do, and what 005_place_inventory.sql's assign_place_lines() does
+-- instead, for both fresh and existing databases:
+--
+--   * single places also need a line group — capacity 1 is illegal until 005 relaxes
+--     the CHECK, so it cannot be done here;
+--   * parking_places.place_type is derived from line_groups.capacity rather than
+--     guessed from the spreadsheet wording;
+--   * line_groups.display_order is filled in.
+--
+-- scripts/import/parking-catalog.js applies the same front/middle/rear rule as this file
+-- to the batch it stages and then calls assign_place_lines() to finish the job.
+
 BEGIN;
 
 WITH numbered_places AS (
