@@ -185,22 +185,23 @@ jobs
 
 ## Deployment
 
-Целевой production-процесс:
+Штатный процесс:
 
 ```text
 local changes
   -> git commit
   -> git push origin main
-  -> Portainer Git stack redeploy
-  -> smoke checks
+  -> ssh omv /opt/git/parkingassistant/scripts/deploy/stand.sh
+  -> npm run smoke:stand
 ```
 
 Важно:
 
-- Portainer должен сам забирать актуальный код из Git.
-- Ручной `scp` файлов на сервер не является штатным деплоем.
-- SSH на сервер используется только для диагностики логов, health checks и аварийного анализа.
-- В compose не нужно монтировать исходники приложения в `/app`; код должен попадать внутрь image на этапе build.
+- Сервер забирает код сам — скрипт деплоя начинается с `git pull --ff-only` и отказывается
+  работать на грязном чекауте. Ручной `scp` файлов на сервер штатным деплоем не является.
+- В compose не монтируются исходники приложения в `/app`: код попадает внутрь образа на этапе build.
+- Почему деплой идёт из чекаута на хосте, а не через GitOps менеджера контейнеров —
+  [ADR 005](adr/005-stand-deploy-via-host-checkout.md).
 
 ### Состав стека
 
@@ -231,10 +232,17 @@ local changes
 
 ```text
 git push origin main
-  -> Portainer Git stack redeploy      # человек или Portainer API, не агент
-  -> migrate отрабатывает сам
+  -> ssh omv /opt/git/parkingassistant/scripts/deploy/stand.sh
+     git pull --ff-only
+     docker compose --env-file staging/env/app.env up -d --build
+     ожидание healthy у api и admin-web
+  -> migrate отрабатывает сам, внутри compose
   -> npm run smoke:stand
 ```
+
+`scripts/deploy/stand.sh` идемпотентен: пересобирается только изменившееся, пересоздаются только
+сервисы с новым образом или конфигом, `staging/` не трогается вовсе. `SKIP_PULL=1` собирает чекаут
+как есть, `NO_BUILD=1` перезапускает на уже собранных образах.
 
 `npm run smoke:stand` (`scripts/smoke/stand.js`) запускается из dev-контейнера и проверяет
 `3330/health`, `3330/health/db`, `3340/health` и рендер `3340/?view=day`. Только чтение —
@@ -242,7 +250,9 @@ git push origin main
 `SMOKE_STAND_HOST`, `SMOKE_STAND_API_PORT`, `SMOKE_STAND_ADMIN_PORT`, `SMOKE_STAND_TIMEOUT_MS`
 (по умолчанию — стенд `192.168.0.100`).
 
-Сам redeploy — человеческий шаг или вызов Portainer API; агент его не выполняет.
+Диагностика уже работающего стека идёт через Arcane (`arcane ps`, `arcane logs <контейнер>`,
+`arcane restart <контейнер>`) или напрямую по SSH. Собирать стек Arcane не умеет — его проект
+`parkingassistant` с GitOps-привязкой редеплоить нельзя, см. ADR 005.
 
 ### Schema migrations
 
@@ -253,7 +263,7 @@ git push origin main
 
 В стеке это отдельный one-shot сервис `migrate`, который стартует после healthy `postgres` и
 завершается до старта `api` и `jobs` (`depends_on: service_completed_successfully`). Отдельного
-ручного шага при деплое нет: `push` в `main` → Portainer redeploy → миграция отрабатывает сама.
+ручного шага при деплое нет: `push` в `main` → `scripts/deploy/stand.sh` → миграция отрабатывает сама.
 
 Тот же `runMigrations()` использует интеграционный харнесс (`packages/db/testing/harness.js`), так
 что тесты и стенд применяют SQL одним и тем же кодом. Идемпотентность закреплена тестом
@@ -300,12 +310,12 @@ Production storage mounts:
 
 Тестовый стенд для проверки и перекаток:
 
-- Хост: `192.168.0.100`. Полностью под тестирование; на нём через Portainer поднят стек со всеми
-  контейнерами и компонентами из `main`.
-- Управление Docker на сервере — предпочтительно через **Portainer API** (удобнее, чем ручные
-  docker-команды по SSH). Токен Portainer выпускается отдельно и хранится **вне репозитория**
-  (например, в переменной окружения `PORTAINER_API_TOKEN` / секрет-хранилище), в git не коммитится.
-- Деплой на стенд идёт штатно: `push` в `main` → Portainer Git stack redeploy (см. поток выше).
+- Хост: `192.168.0.100`. Полностью под тестирование; стек из `main` поднимается из чекаута
+  `/opt/git/parkingassistant` (он же build context, `staging/` внутри него — вне git).
+- Менеджер контейнеров — **Arcane** (UI на `:3552`, CLI `arcane`). Он наблюдает и оператирует
+  запущенные контейнеры: `arcane ps`, `arcane logs`, `arcane restart`. Сборку он не выполняет.
+- Токен Arcane хранится **вне репозитория** (`~/.arcane_token` в dev-контейнере), в git не коммитится.
+- Деплой на стенд: `ssh omv /opt/git/parkingassistant/scripts/deploy/stand.sh` (см. поток выше).
 - Порты на стенде соответствуют production-портам: API `3330`, Admin Web `3340`, Bot Adapter `3350`.
 - SSH используется только для диагностики. Доступ настраивается **по ключу** (ed25519), ключ
   генерируется из dev-контейнера; парольный root-вход отключается после установки ключа.
@@ -358,18 +368,31 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 
 - ~~`apps/api/src/server.js` все еще содержит крупные handler-группы и SQL-heavy business operations~~ — закрыто Phase 3: SQL вынесен в `modules/<context>/repository.js`, чистые правила в `packages/domain`, handlers в `modules/<context>/controller.js`. `server.js` — 65 строк bootstrap.
 - ~~`apps/admin-web/src/server.js` все еще содержит большую часть HTML render-функций и POST handlers~~ — закрыто Task 19: renderers разнесены по `pages/` и `components/`, data-fetching — в `http/routes/`, `server.js` — 17 строк bootstrap. HTML остался байт-в-байт прежним.
-- `bot-adapter` пока остается отдельным adapter entrypoint без полноценной декомпозиции сценариев.
-- Нет полноценного тестового harness с PostgreSQL fixture data; `smoke:m1` проверяет старт и базовые HTTP paths, но не бизнес-инварианты.
+- `bot-adapter` пока остается отдельным adapter entrypoint без полноценной декомпозиции сценариев —
+  это сознательно: фаза Yandex Messenger отложена, и сервис даже не входит в стек.
+- ~~Нет полноценного тестового harness с PostgreSQL fixture data~~ — закрыто: `packages/db/testing/harness.js`
+  (схема на отдельной scratch-схеме + сиды + очистка), `apps/api/testing/{boot-api,fixtures}.js`,
+  288 интеграционных тестов и 122 golden-снапшота. `smoke:m1` остался как проверка старта, а не инвариантов.
 
 ### Runtime And Deployment
 
 - ~~Постоянный staging/test ландшафт на OMV с отдельными volumes, ports и smoke-командой после redeploy~~ — сделано: стенд `192.168.0.100`, порты `3330`/`3340`, `npm run smoke:stand`.
+- Проект `parkingassistant` в Arcane с GitOps-привязкой остаётся зарегистрированным, но нерабочим:
+  его `redeploy` запустит сборку, которой нечем собирать, и погасит работающие контейнеры. Его надо
+  удалить или отвязать в UI — см. [ADR 005](adr/005-stand-deploy-via-host-checkout.md).
+- В `staging/env/app.env` на стенде лежат значения `change-me` (`JWT_SECRET`, `SESSION_SECRET`,
+  пароль Postgres), а Postgres стенда опубликован на хостовый `5432`. Для стенда приемлемо, для
+  прода — нет; закрывается в M9.
 - `npm audit --omit=dev` показывает `xlsx` high severity advisories, npm сообщает `No fix available`. Риск принят для текущего offline import tooling: Excel-файлы считаются доверенными, import scripts не являются публичным web upload/runtime endpoint. Если импорт станет пользовательским или регулярным production-процессом, нужно заменить Excel dependency или вынести import tooling из основного runtime.
 
 ### Product Gaps
 
-- M2 UI операции в карточке места еще не доведены до полного дневного сценария без SQL.
-- Интеграционные проверки бизнес-правил остаются задачей M5.
+- Авторизация и роли не включены в runtime: админка открыта, расчёт на одного оператора.
+  Схема (`auth_users`, `auth_roles`, `auth_sessions`) есть, но ничего её не проверяет — M7.
+- Yandex Messenger и сценарии бота не реализованы — M8.
+- Визуальный слой admin-web — ad-hoc CSS одним инлайновым блоком; переход на дизайн-систему — M10.
+- Нет структурных логов с correlation id, OpenAPI-описаний (`docs/api/` пуст) и описания формата
+  Excel-каталога (`docs/catalog/` пуст).
 
 ## Milestone Plan
 
@@ -377,7 +400,8 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 
 Цель: подготовить код к безопасному расширению.
 
-Status: completed and validated on OMV via Portainer Git redeploy on 2026-06-13.
+Status: completed and validated on OMV via Portainer Git redeploy on 2026-06-13. Portainer has
+since been removed from the server; деплой стенда описан в [ADR 005](adr/005-stand-deploy-via-host-checkout.md).
 
 - Разделить `apps/api/src/server.js` на router, repositories, services и serializers: done for first stabilization layer; handler extraction remains tracked as technical debt.
 - Разделить `apps/admin-web/src/server.js` на render modules по вкладкам: done for render module selection; полная декомпозиция файла завершена в Task 19.
@@ -514,17 +538,23 @@ Acceptance:
 
 Цель: сделать эксплуатацию предсказуемой.
 
-- Зафиксировать Git -> Portainer redeploy как единственный штатный деплой.
-- Добавить health/readiness checks для сервисов.
+- ~~Зафиксировать единственный штатный деплой~~ — сделано: `scripts/deploy/stand.sh` из чекаута
+  на хосте, [ADR 005](adr/005-stand-deploy-via-host-checkout.md).
+- ~~Добавить health/readiness checks для сервисов~~ — сделано: container healthcheck у `api` и
+  `admin-web`, `depends_on: service_healthy` у зависимых сервисов.
+- ~~Добавить smoke-check checklist после redeploy~~ — сделано: `npm run smoke:stand`.
 - Описать backup/restore для PostgreSQL и mounted storage.
-- Добавить smoke-check checklist после redeploy.
-- Усилить production env defaults и secrets.
+- Усилить production env defaults и secrets: сейчас в `staging/env/app.env` лежат значения
+  `change-me`, а Postgres стенда опубликован на хостовый `5432`.
+- Перевести стенд на образы из registry, если ручной запуск скрипта деплоя станет узким местом
+  (отвергнутая на сегодня альтернатива из ADR 005).
 
 Acceptance:
 
-- Новый релиз поднимается через Portainer из Git.
-- Есть короткий проверочный чеклист после релиза.
+- Новый релиз поднимается одной командой из git: done.
+- Есть короткий проверочный чеклист после релиза: done.
 - Есть документированный минимум backup/restore.
+- В env стенда нет значений `change-me`.
 
 ### M10. Design System Migration (Vitech UI)
 
@@ -583,7 +613,7 @@ npm test
 git diff --check
 ```
 
-Smoke-check после Portainer redeploy:
+Smoke-check после деплоя:
 
 ```bash
 npm run smoke:stand
@@ -592,20 +622,25 @@ npm run smoke:stand
 Команда проверяет `3330/health`, `3330/health/db`, `3340/health` и рендер `3340/?view=day`,
 печатает построчный отчёт и завершается с ненулевым кодом при первом же провале.
 
-Диагностика на сервере:
+Диагностика на сервере (из dev-контейнера; своего docker-демона у него нет):
 
 ```bash
-docker ps --filter name=parkingassistant
-docker logs --tail 100 parkingassistant-api
-docker logs --tail 100 parkingassistant-admin-web
-docker logs --tail 100 parkingassistant-jobs
+arcane ps                                   # контейнеры сервера
+arcane logs parkingassistant-api 100
+arcane logs parkingassistant-admin-web 100
+arcane logs parkingassistant-jobs 100
+
+ssh omv docker ps --filter name=parkingassistant
+ssh omv docker logs --tail 100 parkingassistant-migrate
 ```
 
 ## Known Gaps
 
-- Auth/RBAC еще не включены в runtime как обязательный доступ.
+- Auth/RBAC еще не включены в runtime как обязательный доступ (схема есть, проверок нет).
 - Yandex Messenger integration требует production webhook validation.
-- Тестовая инфраструктура пока не является полноценным gate перед релизом.
-- `api` и `admin-web` требуют декомпозиции больших entrypoint-файлов.
-- Backup/restore и health/readiness нужно формализовать до production эксплуатации.
-- README содержит исторические baseline-описания и должен постепенно синхронизироваться с фактическим состоянием.
+- CI (`.github/workflows/ci.yml`) гоняет `check`, `lint` и `npm test`, но **не** интеграционные
+  тесты: им нужен живой PostgreSQL, и поднимать его в CI пока не настроено. Поэтому `npm run
+  test:integration` остаётся ручным шагом перед заметными изменениями схемы или бизнес-правил.
+- Backup/restore для PostgreSQL и mounted storage не формализован (health/readiness — сделаны).
+- Деплой стенда запускается вручную (`scripts/deploy/stand.sh`), автоматического триггера по
+  push в `main` нет — осознанный компромисс варианта из ADR 005.

@@ -2,18 +2,25 @@
 
 Ниже стартовая декомпозиция задач по файлам и модулям. Это не финальная структура фреймворка, а рабочий blueprint, чтобы можно было быстро начать реализацию.
 
-## Current Stabilization Status
+## Status
 
-M1 baseline начат:
+Этот файл — **стартовый blueprint декомпозиции**, а не трекер прогресса. Он описывает, какие модули
+предполагались на входе в проект; фактическое состояние кода и дальнейший план живут в
+[docs/TECHNICAL_README.md](docs/TECHNICAL_README.md).
 
-- `apps/api/src/router.js` содержит активный dispatch API routes.
-- `apps/api/src/repositories`, `apps/api/src/services`, `apps/api/src/serializers` содержат первый слой вынесенных модулей.
-- `packages/shared` содержит общие helpers для HTTP, дат, HTML escaping и API errors.
-- `apps/admin-web/src/render-modules.js` выделяет выбор render-модуля по вкладке.
-- `npm run check` выполняет acceptance `node --check` для JS entrypoints.
-- `npm run smoke:m1` поднимает локальные `api` и `admin-web` и проверяет health, root, 404 и error payload.
+Что изменилось относительно этого blueprint по ходу реализации:
 
-Следующий cleanup после стабилизации: продолжить перенос крупных API handler-групп и admin-web render-функций в отдельные файлы без изменения URL и UI поведения.
+- `apps/api` разложен не на `modules/<name>` с произвольным содержимым, а на bounded contexts со
+  строгими слоями `controller` → `service` → `repository` и чистыми правилами в `packages/domain`
+  (см. [ADR 003](docs/adr/003-modular-architecture.md)); направление зависимостей проверяется
+  тестом `architecture.test.js`.
+- `floor-maps` и кликабельные зоны на плане **сняты целиком** и заменены инвентарём
+  элементов-линий (см. [ADR 004](docs/adr/004-place-inventory.md)). План этажа остался статичной
+  картинкой-ориентиром.
+- `auth`, `access-control`, `admin-users` и сценарии `bot-adapter` отложены post-MVP: схема в БД
+  есть, runtime-кода нет.
+- `packages/jobs` как отдельный пакет не появился — планировщик живёт в `apps/jobs`, а сами задачи
+  реализованы job-эндпоинтами API.
 
 ## Предлагаемая структура репозитория
 

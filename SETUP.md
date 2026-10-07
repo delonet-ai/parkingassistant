@@ -6,7 +6,7 @@
 
 Корень runtime-артефактов:
 
-- [staging/](/Users/deliter/Documents/GitClone/parkingassistant/staging)
+- `staging/` в корне проекта (в git не хранится — см. `/staging/` в `.gitignore`)
 
 Эта папка не хранится в git и используется для:
 
@@ -63,27 +63,49 @@ docker compose --env-file staging/env/app.env down
 
 ## OMV Server
 
-### 1. Разместить проект
+Стенд деплоится **из git-чекаута на самом сервере**. Почему именно так, а не через GitOps
+менеджера контейнеров — в [ADR 005](docs/adr/005-stand-deploy-via-host-checkout.md): Arcane
+синхронизирует из репозитория только compose-файл, а четыре сервиса из пяти собираются
+`build: context: .`, и собирать там нечего.
 
-Рекомендуемый путь:
-
-```text
-/opt/parkingassistant
-```
-
-Для текущего server baseline у нас принят фактический путь:
+### 1. Разместить чекаут
 
 ```text
 /opt/git/parkingassistant
 ```
 
-### 2. Создать те же папки
+Это и корень проекта, и build context, и место, где лежит `staging/`:
 
-Внутри `/opt/parkingassistant`:
+```text
+/opt/git/parkingassistant/
+├── docker-compose.yml          # "." указывает сюда
+├── apps/ packages/ infra/ scripts/
+└── staging/                    # вне git, переживает любой редеплой
+    ├── env/app.env
+    ├── postgres/
+    └── maps/ imports/ logs/ backups/
+```
 
 ```bash
-mkdir -p staging/env staging/postgres staging/maps staging/imports staging/backups staging/logs
+git clone https://github.com/delonet-ai/parkingassistant.git /opt/git/parkingassistant
 ```
+
+Каталог должен принадлежать пользователю, под которым идёт деплой (`deployer`), иначе
+`git pull` на сервере не сработает.
+
+### 2. Создать папки runtime-артефактов
+
+```bash
+mkdir -p /opt/git/parkingassistant/staging/env \
+         /opt/git/parkingassistant/staging/postgres \
+         /opt/git/parkingassistant/staging/maps \
+         /opt/git/parkingassistant/staging/imports \
+         /opt/git/parkingassistant/staging/backups \
+         /opt/git/parkingassistant/staging/logs
+```
+
+Если `staging/postgres` уже непустой — там живой кластер, не трогайте его: compose примонтирует
+его как есть, а `migrate` накатит только недостающие миграции.
 
 ### 3. Подготовить env
 
@@ -93,29 +115,50 @@ cp .env.example staging/env/app.env
 
 Потом отредактировать:
 
-- пароли PostgreSQL
-- `JWT_SECRET`
-- `SESSION_SECRET`
-- параметры `Yandex Messenger`
-- порты, если нужно
+- пароли PostgreSQL;
+- `JWT_SECRET`, `SESSION_SECRET`;
+- параметры `Yandex Messenger` (пока не используются — `bot-adapter` в стек не входит);
+- порты стенда: `API_PORT=3330`, `ADMIN_WEB_PORT=3340`.
 
-### 4. Запуск через CLI
+`POSTGRES_PASSWORD` действует **только при инициализации пустого кластера**. На уже существующем
+`staging/postgres` PostgreSQL сохраняет тот пароль, с которым его создали, и расхождение проявится
+как невозможность `api` подключиться к базе — не как потеря данных.
+
+### 4. Деплой
+
+Одна идемпотентная команда, запускается на сервере:
 
 ```bash
-docker compose --env-file staging/env/app.env up -d
+/opt/git/parkingassistant/scripts/deploy/stand.sh
 ```
 
-### 5. Запуск через Portainer
+Что она делает: отказывается работать на грязном чекауте, делает `git pull --ff-only`, запускает
+`docker compose --env-file staging/env/app.env up -d --build` и ждёт, пока `api` и `admin-web`
+станут `healthy`. Ненулевой код возврата и последние 50 строк логов — если не дождалась.
 
-Вариант через stack:
+Из dev-контейнера:
 
-- открыть Portainer
-- создать `Stack`
-- указать содержимое [docker-compose.yml](/Users/deliter/Documents/GitClone/parkingassistant/docker-compose.yml)
-- env-переменные взять из `staging/env/app.env`
-- рабочая директория стека должна соответствовать корню проекта
+```bash
+ssh omv /opt/git/parkingassistant/scripts/deploy/stand.sh
+npm run smoke:stand
+```
 
-Если Portainer развернут на том же сервере, удобнее всего сначала клонировать проект на сервер, а потом работать со stack уже из этой папки.
+Переменные: `SKIP_PULL=1` — собрать чекаут как есть (например, непушнутую ветку), `NO_BUILD=1` —
+перезапустить на уже собранных образах.
+
+### 5. Arcane
+
+Arcane остаётся наблюдателем и оператором уже запущенных контейнеров, но не собирает стек:
+
+```bash
+arcane ps                                   # что сейчас работает
+arcane logs parkingassistant-api 100
+arcane restart parkingassistant-admin-web
+```
+
+**Проект `parkingassistant` в Arcane с GitOps-привязкой трогать нельзя.** Его `redeploy` запустит
+сборку, которой нечем собирать, и по дороге погасит работающие контейнеры. Его стоит удалить или
+отвязать в UI; на данные и тома это не влияет.
 
 ## What Is Shared Between Mac And OMV
 
@@ -133,9 +176,11 @@ docker compose --env-file staging/env/app.env up -d
 
 Важно:
 
-- на `MacBook` допустимы относительные пути
-- для `OMV + Portainer Git stack` bind mounts должны быть абсолютными, иначе Portainer привяжет их к временному `/data/compose/<id>` workspace
-- в текущем compose server-side mounts зафиксированы через `/opt/git/parkingassistant/staging/...`
+- на `MacBook` допустимы относительные пути;
+- в compose server-side mounts зафиксированы абсолютным `/opt/git/parkingassistant/staging/...`,
+  поэтому данные стенда не зависят от того, из какой директории запущен `docker compose`;
+- `build: context: .` наоборот разрешается относительно compose-файла, то есть относительно
+  чекаута — это и делает деплой из чекаута рабочим.
 
 ## Schema migrations
 
@@ -155,7 +200,7 @@ DATABASE_URL=postgresql://... npm run db:migrate
 
 В compose это отдельный one-shot сервис `migrate`: он поднимается после `postgres` (healthy), выполняет
 `npm run db:migrate` и завершается, а `api` и `jobs` стартуют только через
-`depends_on: migrate: service_completed_successfully`. Поэтому свежий деплой стека в Portainer
+`depends_on: migrate: service_completed_successfully`. Поэтому свежий деплой стека
 поднимается с полной схемой без ручных шагов, а редеплой просто прогоняет миграцию вхолостую.
 
 Это единственный путь применения SQL: тот же `runMigrations()` использует и интеграционный харнесс.
@@ -248,7 +293,7 @@ docker compose -f docker-compose.test.yml down
 копируются на этапе build, монтируется только storage (`postgres`, `maps`, `imports`, `logs`,
 `backups`). Placeholder-команд больше нет — у каждого образа реальный `CMD`.
 
-После Portainer redeploy стенд проверяется одной командой:
+После деплоя стенд проверяется одной командой:
 
 ```bash
 npm run smoke:stand                      # по умолчанию 192.168.0.100:3330 / :3340
@@ -261,7 +306,8 @@ SMOKE_STAND_HOST=127.0.0.1 SMOKE_STAND_API_PORT=3000 SMOKE_STAND_ADMIN_PORT=3100
 
 1. Создать `staging/...` локально и на сервере.
 2. Подготовить `staging/env/app.env` для обеих сред.
-3. Поднять `postgres` и проверить доступность контейнера.
-4. Прогнать [packages/db/schema/001_initial_schema.sql](/Users/deliter/Documents/GitClone/parkingassistant/packages/db/schema/001_initial_schema.sql) на живой БД.
-5. Прогнать `sh scripts/db/seed.sh`.
-6. После этого проверить, что в БД создан bootstrap `system_admin`.
+3. Поднять стек: `scripts/deploy/stand.sh` на сервере или
+   `docker compose --env-file staging/env/app.env up -d --build` локально.
+4. Убедиться, что one-shot `migrate` отработал: `docker logs parkingassistant-migrate`.
+5. Проверить стенд: `npm run smoke:stand`.
+6. При необходимости загрузить демо-данные: `npm run db:seed:demo` с `DATABASE_URL` стенда.

@@ -16,7 +16,7 @@
 - доступом к контактам тех, кто блокирует выезд
 - историей фактического занятия мест и всех перемещений
 - ручными и автоматическими назначениями с прозрачным происхождением
-- выбором мест администратором прямо по карте этажей
+- выбором мест администратором по списку элементов под планом этажа
 
 ## Цели
 
@@ -99,12 +99,12 @@
 - admin CRUD для сотрудников, мест и постоянных закреплений;
 - заявки сотрудников, гости, очередь, отдачи мест и ручные назначения;
 - line occupancy, departure plans, conflicts и contact access logs;
-- map zones, dashboard, audit logs и job runs.
+- инвентарь элементов-линий, подложки планов этажей, dashboard, audit logs и job runs.
 
 Текущий Admin Web baseline:
 
 - ежедневный экран с KPI, операционной картой и карточкой места;
-- вкладки заявок, линий, справочников, журнала и технического редактора карты;
+- вкладки заявок, линий, справочников, журнала и инвентаря мест (`Места`);
 - все операции выполняются через backend API, без дублирования бизнес-правил в UI.
 
 Текущий import baseline:
@@ -144,7 +144,7 @@
 
 - смотреть парковку на сегодня и завтра
 - смотреть места и постоянные закрепления
-- выбирать места по карте этажей
+- выбирать место кликом по слоту элемента под планом этажа
 - смотреть очередь
 - назначать места вручную
 - создавать и назначать гостевые парковки
@@ -429,18 +429,22 @@
 
 На текущем этапе уже есть входные материалы:
 
-- каталог мест в Excel: `/Users/deliter/Downloads/2024_10_01_Паркинг Мск_Каримова Г.Я.  (1).xlsx`
+- каталог мест в Excel: `2024_10_01_Паркинг Мск_Каримова Г.Я. (1).xlsx` (хранится вне репозитория, у владельца проекта)
 - карта этажей в PDF для последующего добавления в интерфейс администратора
 
 Excel-файл рассматривается как исходный источник справочника мест. В workbook есть рабочий лист `Лист1`, а также скрытые месячные листы, что полезно для дальнейшего импорта исторических данных или сверки с операционным учетом.
 
 ## Документы проекта
 
-- Базовая декомпозиция задач по модулям: [TASKS.md](/Users/deliter/Documents/GitClone/parkingassistant/TASKS.md)
-- Архитектурный обзор: [docs/ARCHITECTURE.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/ARCHITECTURE.md)
-- Черновик ERD: [docs/ERD.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/ERD.md)
-- Схема деплоя: [docs/DEPLOYMENT.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/DEPLOYMENT.md)
-- ADR по runtime и деплою: [docs/adr/001-runtime-and-deployment.md](/Users/deliter/Documents/GitClone/parkingassistant/docs/adr/001-runtime-and-deployment.md)
-- Docker baseline: [docker-compose.yml](/Users/deliter/Documents/GitClone/parkingassistant/docker-compose.yml)
-- Setup для Mac и OMV: [SETUP.md](/Users/deliter/Documents/GitClone/parkingassistant/SETUP.md)
-- DB scripts: [scripts/db/README.md](/Users/deliter/Documents/GitClone/parkingassistant/scripts/db/README.md)
+- Техническая точка входа и milestone-план: [docs/TECHNICAL_README.md](docs/TECHNICAL_README.md)
+- Правила для AI-агентов в репозитории: [AGENTS.md](AGENTS.md)
+- Базовая декомпозиция задач по модулям: [TASKS.md](TASKS.md)
+- Архитектурный обзор: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Черновик ERD: [docs/ERD.md](docs/ERD.md)
+- Схема деплоя: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- ADR: [runtime и деплой](docs/adr/001-runtime-and-deployment.md), [база](docs/adr/002-database-baseline.md),
+  [модульная архитектура](docs/adr/003-modular-architecture.md), [инвентарь мест](docs/adr/004-place-inventory.md),
+  [деплой стенда](docs/adr/005-stand-deploy-via-host-checkout.md)
+- Docker baseline: [docker-compose.yml](docker-compose.yml)
+- Setup для Mac и OMV: [SETUP.md](SETUP.md)
+- Выполненные планы: [docs/plans/completed/](docs/plans/completed/)

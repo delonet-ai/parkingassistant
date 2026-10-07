@@ -7,7 +7,7 @@
 - `apps/api`: `Node.js 22`
 - `apps/bot-adapter`: `Node.js 22`
 - `packages/jobs`: `Node.js 22`
-- `apps/admin-web`: `Next.js` или другой Node-based web app с отдельным web image
+- `apps/admin-web`: server-rendered UI на голом `node:http`, без фреймворка и build step
 - `PostgreSQL 16`
 - `Redis` опционально, только если позже понадобится очередь, rate limit или pub/sub
 
@@ -43,7 +43,8 @@
 
 - `parkingassistant-admin-web`
 
-Если admin UI будет на `Next.js standalone`, образ получится компактным и удобным для деплоя за reverse proxy.
+`admin-web` не имеет сторонних зависимостей — только node builtins и `packages/shared`, — поэтому
+его образ собирается `infra/docker/admin-web.Dockerfile` вообще без `node_modules`.
 
 ### Infrastructure images
 
@@ -230,24 +231,33 @@ Internet
 
 В репозитории уже зафиксирован стартовый infra baseline:
 
-- compose stack: [docker-compose.yml](/Users/deliter/Documents/GitClone/parkingassistant/docker-compose.yml)
-- shared app runtime: [infra/docker/app.Dockerfile](/Users/deliter/Documents/GitClone/parkingassistant/infra/docker/app.Dockerfile)
-- admin web runtime: [infra/docker/admin-web.Dockerfile](/Users/deliter/Documents/GitClone/parkingassistant/infra/docker/admin-web.Dockerfile)
-- env template: [.env.example](/Users/deliter/Documents/GitClone/parkingassistant/.env.example)
+- compose stack: [docker-compose.yml](../docker-compose.yml)
+- shared app runtime: [infra/docker/app.Dockerfile](../infra/docker/app.Dockerfile)
+- admin web runtime: [infra/docker/admin-web.Dockerfile](../infra/docker/admin-web.Dockerfile)
+- env template: [.env.example](../.env.example)
 
-Это пока placeholder-уровень для запуска сервисов и фиксации архитектуры. Следующим шагом сюда должны лечь реальные команды сборки и старта после выбора package manager и framework stack.
+Placeholder-уровня здесь больше нет: у каждого образа реальный `CMD`, схема накатывается one-shot
+сервисом `migrate`, а стенд поднимается и проверяется двумя командами (`scripts/deploy/stand.sh`,
+`npm run smoke:stand`).
 
-## Important Portainer Note
+## How The Stand Actually Deploys
 
-Для server-side stack через Portainer не нужно монтировать исходники приложения в `/app`.
+Менеджер контейнеров на OMV — **Arcane**, не Portainer; Portainer с сервера снят. Стенд собирается
+и поднимается из git-чекаута на самом хосте, потому что Arcane GitOps забирает из репозитория
+только compose-файл, а четыре сервиса из пяти объявляют `build: context: .`. Полное обоснование и
+отвергнутая альтернатива (образы через CI в registry) — в
+[ADR 005](adr/005-stand-deploy-via-host-checkout.md), пошаговая настройка — в [SETUP.md](../SETUP.md).
 
-Почему:
+```text
+push в main
+  -> ssh omv /opt/git/parkingassistant/scripts/deploy/stand.sh
+     (git pull --ff-only -> docker compose up -d --build -> ожидание healthy)
+  -> npm run smoke:stand из dev-контейнера
+```
 
-- код уже должен находиться внутри собранного image
-- bind mount вида `./:/app` в Portainer может затереть содержимое image
-- это особенно ломает `package.json`, `node_modules` и runtime entrypoints
-
-Для server deployment оставляем только data mounts:
+Исходники приложения **не монтируются** в `/app`: код уже лежит внутри собранного образа, а
+bind mount вида `./:/app` затёр бы его содержимое вместе с `package.json`, `node_modules` и
+entrypoint-ами. Монтируются только данные, и только абсолютными путями:
 
 - `/opt/git/parkingassistant/staging/postgres`
 - `/opt/git/parkingassistant/staging/maps`
@@ -255,4 +265,6 @@ Internet
 - `/opt/git/parkingassistant/staging/logs`
 - `/opt/git/parkingassistant/staging/backups`
 
-Для `Portainer Git stack` это критично, потому что относительные bind mounts иначе будут привязаны к временному workspace наподобие `/data/compose/<id>`, а не к постоянной папке проекта.
+Абсолютные пути здесь принципиальны: они делают данные стенда независимыми от того, из какой
+директории запущен `docker compose`. Build context, наоборот, намеренно относительный — он
+разрешается относительно compose-файла, то есть относительно чекаута.
