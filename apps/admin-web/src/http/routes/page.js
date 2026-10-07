@@ -8,9 +8,26 @@
 
 const { escapeHtml } = require('../../../../../packages/shared/html');
 const { fetchJson } = require('../../api-client');
-const { parkingMaps } = require('../../config');
+const { mapCodeToFloorLabel, parkingMaps } = require('../../config');
 const { todayIsoDate } = require('../../components/format');
 const { renderPage } = require('../../pages/layout');
+
+const FALLBACK_MAP_CODE = parkingMaps[0]?.id || 'g4';
+
+// The floor plans are static configuration (G3/G4/G5); the inventory on them is not. A
+// catalog can legitimately hold nothing on G3, and opening on an empty floor reads to the
+// operator as "there are no places at all". So default to the first configured floor that
+// actually has lines, keeping the configured order.
+function firstPopulatedMapCode(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return FALLBACK_MAP_CODE;
+  }
+
+  const populatedFloors = new Set(lines.map((line) => String(line.floorLabel || '')));
+  const populatedMap = parkingMaps.find((map) => populatedFloors.has(mapCodeToFloorLabel(map.id)));
+
+  return populatedMap ? populatedMap.id : FALLBACK_MAP_CODE;
+}
 
 async function handlePageRoute(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/') {
@@ -20,8 +37,10 @@ async function handlePageRoute(req, res, url) {
       const activeView = ['day', 'requests', 'catalog', 'lines', 'audit', 'places'].includes(requestedView) ? requestedView : 'day';
       const placeId = url.searchParams.get('placeId');
       const employeeId = url.searchParams.get('employeeId');
-      const requestedMapCode = url.searchParams.get('mapCode') || parkingMaps[0]?.id || 'g4';
-      const selectedMapCode = parkingMaps.some((map) => map.id === requestedMapCode) ? requestedMapCode : parkingMaps[0]?.id || 'g4';
+      const requestedMapCode = url.searchParams.get('mapCode');
+      // An explicit ?mapCode always wins. Without one the floor is picked after the fetch,
+      // from the floors that actually hold inventory — see firstPopulatedMapCode.
+      const explicitMapCode = parkingMaps.some((map) => map.id === requestedMapCode) ? requestedMapCode : null;
       const requestedStatusFilter = url.searchParams.get('status') || '';
       const mapStatusFilter = ['free', 'released', 'occupied', 'guest', 'rotatable', 'blocked'].includes(requestedStatusFilter) ? requestedStatusFilter : '';
       const requestedTypeFilter = url.searchParams.get('type') || '';
@@ -134,6 +153,8 @@ async function handlePageRoute(req, res, url) {
           : url.searchParams.get('error')
             ? { type: 'error', text: url.searchParams.get('error') }
             : null;
+
+      const selectedMapCode = explicitMapCode || firstPopulatedMapCode(placeLines?.data?.lines);
 
       const pageHtml = renderPage({
           health,

@@ -142,6 +142,23 @@ describe('admin tabs render against a stubbed API', () => {
       assert.match(html, /Тройное/);
       assert.match(html, /Удалить линию/);
     });
+
+    it('Места opens on a floor that has inventory, not on the first configured one', async () => {
+      // The floor selector used to default to parkingMaps[0] (G3) regardless of the
+      // catalog. The imported catalog has nothing on G3, so the operator landed on
+      // «Этаж G3: линий 0.» and could read it as an empty inventory.
+      const { html } = await getHtml(admin.baseUrl, `/?view=places&date=${DATE}`);
+
+      assert.match(html, /<option value="g4" selected>/);
+      assert.match(html, /class="place-slot place-slot--/);
+    });
+
+    it('an explicit mapCode still wins over the populated-floor default', async () => {
+      const { html } = await getHtml(admin.baseUrl, `/?view=places&date=${DATE}&mapCode=g3`);
+
+      assert.match(html, /<option value="g3" selected>/);
+      assert.doesNotMatch(html, /class="place-slot place-slot--/);
+    });
   });
 
   describe('the place drawer', () => {
