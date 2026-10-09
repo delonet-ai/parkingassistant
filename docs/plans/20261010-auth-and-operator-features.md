@@ -182,13 +182,36 @@ a regression — but M8 now has a prerequisite it did not have: a service identi
 - Create: `apps/admin-ui/src/pages/LoginPage.vue`, `apps/admin-ui/src/pages/LoginPage.spec.js`
 - Modify: `apps/admin-ui/src/{api.js,store.js,App.vue}`, `apps/admin-ui/src/App.spec.js`
 
-- [ ] fix the proxy first: `apps/admin-ui/server.js` forwards only `content-type`, so it must also pass `cookie` upstream and return `set-cookie` downstream — without this the login succeeds and the next request is anonymous
-- [ ] add `boot()` resolution through `GET /auth/me`: a resolved user renders the app, a `401` renders the login screen, and the bootstrap state from `/auth/bootstrap-status` renders a first-run "set a password" form instead
-- [ ] build `LoginPage.vue` on `ViCard` + `ViInput` (`type="password"`) + `ViButton`, showing the API's message on refusal and nothing more specific than the API said
-- [ ] make `api.js` treat a `401` on any call as "the session ended": drop to the login screen rather than leaving a half-loaded day behind an error toast
-- [ ] show the signed-in operator and a logout control in the header
-- [ ] write specs: a `401` on boot shows the login screen and not the tab strip, a successful login renders the day, a `401` mid-session returns to the login screen, the first-run form appears only for the bootstrap state
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 5
+- [x] fix the proxy first: `apps/admin-ui/server.js` forwards only `content-type`, so it must also pass `cookie` upstream and return `set-cookie` downstream — without this the login succeeds and the next request is anonymous
+- [x] add `boot()` resolution through `GET /auth/me`: a resolved user renders the app, a `401` renders the login screen, and the bootstrap state from `/auth/bootstrap-status` renders a first-run "set a password" form instead
+- [x] build `LoginPage.vue` on `ViCard` + `ViInput` (`type="password"`) + `ViButton`, showing the API's message on refusal and nothing more specific than the API said
+- [x] make `api.js` treat a `401` on any call as "the session ended": drop to the login screen rather than leaving a half-loaded day behind an error toast
+- [x] show the signed-in operator and a logout control in the header
+- [x] write specs: a `401` on boot shows the login screen and not the tab strip, a successful login renders the day, a `401` mid-session returns to the login screen, the first-run form appears only for the bootstrap state
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 5 (130 UI specs, 342 node tests, lint clean, `npm run admin-ui:build` clean)
+
+➕ the proxy fix needed a **behavioural** test, not a stubbed one: a cookie crossing a
+process is exactly what a `fetch` stub cannot prove. `apps/admin-ui/server.spec.js` spawns the
+real `server.js` against a stub API over the loopback and asserts both directions. It carries
+`// @vitest-environment node`, because happy-dom's `fetch` applies the browser's same-origin
+policy to a loopback call. The floor-plan upload forwards the cookie too — it is the one
+request this server makes on the operator's behalf, and it would otherwise 401 after Task 3.
+
+➕ `App.vue` renders the login screen **instead of** the shell rather than over it: no tab
+strip, no page component, so nothing can fetch or flash a day the API has not authorised. The
+spec asserts the negative — that boot made exactly two requests, `/auth/me` and
+`/auth/bootstrap-status`, and that no tab title is on the screen.
+
+➕ `authStage` is set to `'ready'` *before* the day loads, not after. A signed-in operator
+whose day fails to load has a data problem and should see it inside the app; sending them back
+to a login form would blame them for something a password cannot fix. The same split applies to
+`/auth/me` answering anything other than 401 — the login screen then carries the API's own
+message instead of an invitation to sign in.
+
+⚠️ **a design-system trap that cost a test:** `ViInput` decides whether it has an `#error` or
+`#note` slot from the slots object it was mounted with, so `<template v-if="mismatch" #error>`
+never appears, however the condition changes. The slot must be declared unconditionally with
+the `v-if` **inside** it. Added to the trap list in `AGENTS.md`.
 
 ### Task 5: Users and roles, for the system administrator
 

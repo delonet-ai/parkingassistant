@@ -54,6 +54,45 @@ async function sendFile(res, filePath) {
   createReadStream(filePath).pipe(res)
 }
 
+/**
+ * The session is a cookie, so the proxy has to be transparent in both directions: the
+ * browser's `cookie` reaches the API, and the API's `set-cookie` reaches the browser.
+ * Forwarding only `content-type` would make every request after a successful login
+ * anonymous — the login would answer 200, hand its cookie to this process and drop it here.
+ */
+function upstreamHeaders(req, extra = {}) {
+  const headers = {}
+
+  if (req.headers['content-type']) {
+    headers['content-type'] = req.headers['content-type']
+  }
+
+  if (req.headers.cookie) {
+    headers.cookie = req.headers.cookie
+  }
+
+  // `extra` wins: the floor-plan upload arrives as multipart and leaves as JSON.
+  return { ...headers, ...extra }
+}
+
+/** `set-cookie` may legitimately repeat, which `Headers.get` would join into one broken value. */
+function relayHeaders(upstream, contentLength) {
+  const headers = {
+    'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+    'content-length': contentLength
+  }
+  const cookies =
+    typeof upstream.headers.getSetCookie === 'function'
+      ? upstream.headers.getSetCookie()
+      : [upstream.headers.get('set-cookie')].filter(Boolean)
+
+  if (cookies.length) {
+    headers['set-cookie'] = cookies
+  }
+
+  return headers
+}
+
 /** Streams the request to the API and the answer back, headers and status included. */
 async function proxyApi(req, res, url) {
   const target = new URL(`${url.pathname.replace(/^\/api/, '')}${url.search}`, apiBaseUrl)
@@ -68,7 +107,7 @@ async function proxyApi(req, res, url) {
   try {
     upstream = await fetch(target, {
       method: req.method,
-      headers: req.headers['content-type'] ? { 'content-type': req.headers['content-type'] } : undefined,
+      headers: upstreamHeaders(req),
       body: chunks.length ? Buffer.concat(chunks) : undefined
     })
   } catch (error) {
@@ -78,10 +117,7 @@ async function proxyApi(req, res, url) {
 
   const body = Buffer.from(await upstream.arrayBuffer())
 
-  res.writeHead(upstream.status, {
-    'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-    'content-length': body.length
-  })
+  res.writeHead(upstream.status, relayHeaders(upstream, body.length))
   res.end(body)
 }
 
@@ -138,9 +174,11 @@ async function uploadFloorPlan(req, res) {
   await mkdir(mapStoragePath, { recursive: true })
   await writeFile(path.join(mapStoragePath, filename), file.buffer)
 
+  // The operator's session has to travel with this one too: the API refuses an anonymous
+  // write, and the file is already on disk by the time it is asked.
   const upstream = await fetch(new URL('/admin/map-backgrounds', apiBaseUrl), {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: upstreamHeaders(req, { 'content-type': 'application/json' }),
     body: JSON.stringify({
       mapCode: plan.code,
       mapTitle: form.fields.get('mapTitle') || plan.title,
@@ -153,10 +191,7 @@ async function uploadFloorPlan(req, res) {
 
   const payload = Buffer.from(await upstream.arrayBuffer())
 
-  res.writeHead(upstream.status, {
-    'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-    'content-length': payload.length
-  })
+  res.writeHead(upstream.status, relayHeaders(upstream, payload.length))
   res.end(payload)
 }
 

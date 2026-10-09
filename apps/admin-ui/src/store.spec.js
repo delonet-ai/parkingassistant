@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { boot, buildUrl, firstPopulatedFloor, loadDay, readUrl, state, submit } from './store'
+import { boot, buildUrl, endSession, firstPopulatedFloor, loadDay, readUrl, signIn, signOut, state, submit } from './store'
+
+const ME = {
+  status: 'ok',
+  user: { id: 'au1', login: 'sysadmin', displayName: 'Системный администратор', authStatus: 'active', roles: ['system_admin'] }
+}
 
 const DASHBOARD = {
   status: 'ok',
@@ -25,6 +30,7 @@ const LINES = {
 /** One canned answer per path, so a test exercises the real request/parse/assign path. */
 function stubApi(overrides = {}) {
   const answers = {
+    '/auth/me': ME,
     '/admin/dashboard': DASHBOARD,
     '/admin/places': { places: [{ id: 'p1', code: '118' }] },
     '/admin/place-lines': LINES,
@@ -61,9 +67,23 @@ function stubApi(overrides = {}) {
   }))
 }
 
+/** A response with a status, which the stub passes through as-is. */
+function refused(status, payload) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json' }
+  })
+}
+
 function resetState() {
   Object.assign(state, {
     ready: false,
+    authStage: 'loading',
+    authUser: null,
+    authRoles: [],
+    bootstrapLogin: null,
+    authError: null,
+    authBusy: false,
     bootError: null,
     today: null,
     date: null,
@@ -143,6 +163,119 @@ describe('loadDay', () => {
 
     expect(state.ready).toBe(false)
     expect(state.bootError).toContain('no stub')
+    // The session resolved; only the data did not. The operator stays inside the app.
+    expect(state.authStage).toBe('ready')
+  })
+})
+
+describe('session', () => {
+  const REFUSAL = { status: 'error', error: 'Authentication required' }
+
+  it('renders the app only when /auth/me names someone', async () => {
+    stubApi()
+
+    await boot()
+
+    expect(state.authStage).toBe('ready')
+    expect(state.ready).toBe(true)
+    expect(state.authUser.login).toBe('sysadmin')
+    expect(state.authRoles).toEqual(['system_admin'])
+  })
+
+  it('asks for a sign-in when nobody is signed in, and fetches no parking data', async () => {
+    stubApi({
+      '/auth/me': refused(401, REFUSAL),
+      '/auth/bootstrap-status': { status: 'ok', bootstrapUser: { login: 'sysadmin', authStatus: 'active' } }
+    })
+
+    await boot()
+
+    expect(state.authStage).toBe('login')
+    expect(state.ready).toBe(false)
+    expect(state.dashboard).toBeNull()
+  })
+
+  it('asks for a first password while the bootstrap operator is still invited', async () => {
+    stubApi({
+      '/auth/me': refused(401, REFUSAL),
+      '/auth/bootstrap-status': { status: 'ok', bootstrapUser: { login: 'sysadmin', authStatus: 'invited' } }
+    })
+
+    await boot()
+
+    expect(state.authStage).toBe('activate')
+    expect(state.bootstrapLogin).toBe('sysadmin')
+  })
+
+  it('shows the real reason when /auth/me fails for something other than a refusal', async () => {
+    stubApi({ '/auth/me': refused(500, { status: 'error', error: 'db unreachable' }) })
+
+    await boot()
+
+    // A password cannot fix this, so the screen says what actually happened.
+    expect(state.authStage).toBe('login')
+    expect(state.authError).toBe('db unreachable')
+  })
+
+  it('keeps the API message and no session after a refused sign-in', async () => {
+    stubApi({ '/auth/login': refused(401, { status: 'error', error: 'Invalid login or password' }) })
+
+    const result = await signIn({ login: 'sysadmin', password: 'wrong' })
+
+    expect(result.ok).toBe(false)
+    expect(state.authError).toBe('Invalid login or password')
+    expect(state.authUser).toBeNull()
+    expect(state.ready).toBe(false)
+  })
+
+  it('loads the day as soon as a sign-in succeeds', async () => {
+    stubApi({ '/auth/login': ME })
+
+    await signIn({ login: 'sysadmin', password: 'a-real-password' })
+
+    expect(state.authStage).toBe('ready')
+    expect(state.ready).toBe(true)
+    expect(state.lines).toHaveLength(1)
+  })
+
+  it('ends the session on a 401 from any other call, without an error toast', async () => {
+    stubApi()
+    await boot()
+
+    stubApi({ '/admin/audit-logs': refused(401, REFUSAL) })
+    const result = await loadDay()
+
+    expect(result.ok).toBe(false)
+    expect(state.authStage).toBe('login')
+    expect(state.ready).toBe(false)
+    expect(state.notice).toBeNull()
+    expect(state.authError).toBe('Сессия завершена. Войдите снова.')
+  })
+
+  it('logs out through the API and drops the screen without a message', async () => {
+    stubApi({ '/auth/logout': { status: 'ok', revoked: true } })
+    await boot()
+
+    await signOut()
+
+    expect(window.fetch.mock.calls.map((call) => String(call[0]))).toContain('/api/auth/logout')
+    expect(state.authStage).toBe('login')
+    expect(state.authUser).toBeNull()
+    // The operator asked for this, so there is nothing to explain.
+    expect(state.authError).toBeNull()
+  })
+
+  it('endSession clears what belonged to the session it ended', async () => {
+    stubApi()
+    await boot()
+    state.history = { kind: 'place', id: 'p1', data: null, error: null }
+    state.notice = { type: 'success', text: 'Назначено.' }
+
+    endSession('Сессия завершена. Войдите снова.')
+
+    expect(state.history).toBeNull()
+    expect(state.notice).toBeNull()
+    expect(state.ready).toBe(false)
   })
 })
 

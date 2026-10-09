@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 
-import { api, query } from './api'
+import { api, query, setUnauthorizedHandler } from './api'
 
 // Floor plans are static configuration; the inventory on them is not. Codes are plan ids,
 // parking_places.floor_label is the bare digit — this is the one place that conversion lives.
@@ -19,11 +19,25 @@ export const TABS = [
   { value: 'places', title: 'Места' }
 ]
 
+// Ours, not the API's: the API says "Authentication required", which is true but does not
+// tell the operator that the day they were working on is still there behind a sign-in.
+const SESSION_ENDED = 'Сессия завершена. Войдите снова.'
+
 export const state = reactive({
   ready: false,
   loading: false,
   bootError: null,
   view: 'day',
+  // What the shell renders: 'loading' until /auth/me has answered, then the login form, the
+  // first-run form, or the app. The API decides which — the UI never assumes a session.
+  authStage: 'loading',
+  authUser: null,
+  authRoles: [],
+  // The login of the single invited bootstrap user, when the database is still in that
+  // state; it prefills the first-run form so the operator does not have to guess it.
+  bootstrapLogin: null,
+  authError: null,
+  authBusy: false,
   // "Today" is the API's answer in APP_TIMEZONE, never the browser's clock: the 19:00 and
   // 07:00 rules are evaluated server-side and a browser in another zone would disagree.
   today: null,
@@ -217,15 +231,155 @@ export async function loadDay() {
 export async function boot(search = '') {
   Object.assign(state, readUrl(search))
 
-  const result = await loadDay()
+  await resolveSession()
+}
 
-  if (!result.ok) {
-    state.bootError = result.error
+function applySession(payload) {
+  const user = (payload && payload.user) || null
+
+  state.authUser = user
+  state.authRoles = (user && user.roles) || []
+}
+
+/** Boot asks the API who is signed in; the answer, not a stored flag, chooses the screen. */
+async function resolveSession() {
+  const me = await api.get('/auth/me')
+
+  if (me.ok) {
+    applySession(me.data)
+    await enterApp()
     return
   }
 
+  applySession(null)
+
+  if (me.status !== 401) {
+    // Not a refusal: the API is unreachable or broken. "Sign in" would blame the operator
+    // for something a password cannot fix, so the login form carries the real message.
+    state.authStage = 'login'
+    state.authError = me.error
+    return
+  }
+
+  await readBootstrapStage()
+}
+
+/**
+ * Nobody is signed in, so there are two possible screens: a sign-in form, or — if the
+ * database still holds only the invited bootstrap operator — the form that gives that
+ * account its first password. `POST /auth/activate` enforces the same rule server-side;
+ * this only decides what to show.
+ */
+async function readBootstrapStage() {
+  const bootstrap = await api.get('/auth/bootstrap-status')
+  const user = (bootstrap.ok && bootstrap.data && bootstrap.data.bootstrapUser) || null
+
+  if (user && user.authStatus === 'invited') {
+    state.bootstrapLogin = user.login
+    state.authStage = 'activate'
+    return
+  }
+
+  state.bootstrapLogin = null
+  state.authStage = 'login'
+}
+
+/** The session resolved; the shell is this operator's, and the day loads behind it. */
+async function enterApp() {
+  // Set before the load, not after: a day that fails to load is a data problem the signed-in
+  // operator should see inside the app, not a reason to show them a login form again.
+  state.authStage = 'ready'
+
+  const result = await loadDay()
+
+  if (!result.ok) {
+    // A 401 during the load has already dropped the UI to the login screen (see
+    // `setUnauthorizedHandler` below); reporting a data failure on top of it would blame
+    // the day for an expired session.
+    if (state.authStage !== 'login') {
+      state.bootError = result.error
+    }
+
+    return
+  }
+
+  state.bootError = null
+  state.authError = null
   state.ready = true
 }
+
+export async function signIn({ login, password }) {
+  state.authBusy = true
+  state.authError = null
+
+  try {
+    const result = await api.post('/auth/login', { login, password })
+
+    if (!result.ok) {
+      // Whatever the API said and nothing more specific: it answers one message for a wrong
+      // password and for an unknown login on purpose.
+      state.authError = result.error
+      return result
+    }
+
+    applySession(result.data)
+    await enterApp()
+
+    return result
+  } finally {
+    state.authBusy = false
+  }
+}
+
+/** First run: set the bootstrap password, then use it — the operator types it once. */
+export async function activateAccount({ login, password }) {
+  state.authBusy = true
+  state.authError = null
+
+  try {
+    const result = await api.post('/auth/activate', { login, password })
+
+    if (!result.ok) {
+      state.authError = result.error
+      return result
+    }
+
+    return await signIn({ login, password })
+  } finally {
+    state.authBusy = false
+  }
+}
+
+export async function signOut() {
+  state.authBusy = true
+
+  try {
+    await api.post('/auth/logout')
+  } finally {
+    state.authBusy = false
+  }
+
+  endSession()
+}
+
+/** The session is gone — ended here or expired under us. Either way the screen goes back. */
+export function endSession(message = null) {
+  applySession(null)
+  state.ready = false
+  state.bootError = null
+  state.notice = null
+  state.history = null
+  state.authStage = 'login'
+  state.authError = message
+}
+
+// Registered once, at module load, so a 401 is handled even by a screen that was mounted
+// without going through boot().
+setUnauthorizedHandler(() => {
+  if (state.authStage !== 'login') {
+    endSession(SESSION_ENDED)
+  }
+})
 
 export async function reloadAudit(filters) {
   state.auditFilters = { ...state.auditFilters, ...filters }

@@ -1,14 +1,15 @@
 <script setup>
 import { onMounted, watch } from 'vue'
-import { ViAlert, ViIcon, ViTabs, ViText } from '@vi-frontend/vision-ui'
+import { ViAlert, ViButton, ViIcon, ViTabs, ViText } from '@vi-frontend/vision-ui'
 
 import AuditPage from './pages/AuditPage.vue'
 import CatalogPage from './pages/CatalogPage.vue'
 import DayPage from './pages/DayPage.vue'
 import LinesPage from './pages/LinesPage.vue'
+import LoginPage from './pages/LoginPage.vue'
 import PlacesPage from './pages/PlacesPage.vue'
 import RequestsPage from './pages/RequestsPage.vue'
-import { TABS, boot, buildUrl, dismissNotice, state } from './store'
+import { TABS, boot, buildUrl, dismissNotice, signOut, state } from './store'
 
 const PAGES = { day: DayPage, requests: RequestsPage, lines: LinesPage, catalog: CatalogPage, audit: AuditPage, places: PlacesPage }
 
@@ -33,7 +34,17 @@ function selectTab(value) {
 </script>
 
 <template>
-  <div class="app-shell">
+  <!-- No session, no application: the tab strip is not rendered at all behind the login
+       screen, so nothing can fetch, flash or leak a day the API has not authorised. -->
+  <div v-if="state.authStage === 'loading'" class="app-shell">
+    <ViText tag="p" variant="body-M-wide" class="muted">Загрузка…</ViText>
+  </div>
+
+  <div v-else-if="state.authStage !== 'ready'" class="app-shell">
+    <LoginPage />
+  </div>
+
+  <div v-else class="app-shell">
     <header class="app-head">
       <div class="brand">
         <span class="brand-mark"><ViIcon icon="key" /></span>
@@ -43,6 +54,18 @@ function selectTab(value) {
             Управление офисной парковкой — все правила считает backend
           </ViText>
         </div>
+      </div>
+
+      <div class="session">
+        <div class="session-who">
+          <ViText tag="p" variant="body-M-wide">{{ state.authUser?.displayName || state.authUser?.login }}</ViText>
+          <ViText tag="p" variant="body-S-wide" class="muted">
+            {{ state.authRoles.length ? state.authRoles.join(', ') : state.authUser?.login }}
+          </ViText>
+        </div>
+        <ViButton variant="outlined" color="secondary" size="small" :loading="state.authBusy" @click="signOut">
+          Выйти
+        </ViButton>
       </div>
     </header>
 

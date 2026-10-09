@@ -6,6 +6,21 @@
 
 const BASE = '/api'
 
+// The session is the API's to end: it expires, it can be revoked, and the UI finds out by
+// being refused. One callback — the store's — hears about it, so a 401 anywhere drops the
+// whole screen to the login form instead of leaving fifteen error toasts over a half-loaded
+// day. The `/auth/*` calls are exempt: a refused login *is* the answer to that call, and
+// `/auth/me` answers 401 to mean "nobody is signed in", which is the boot path, not a loss.
+let unauthorizedHandler = null
+
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler
+}
+
+function isAuthPath(path) {
+  return path.startsWith('/auth/')
+}
+
 /** Both helpers resolve; a failed call is data, not an exception, so a screen can render it. */
 async function request(method, path, body) {
   let response = null
@@ -14,7 +29,9 @@ async function request(method, path, body) {
     response = await fetch(`${BASE}${path}`, {
       method,
       headers: body ? { 'content-type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? JSON.stringify(body) : undefined,
+      // Same origin, but stated: the session cookie must travel with every call.
+      credentials: 'same-origin'
     })
   } catch (error) {
     return { ok: false, status: 0, data: null, error: `сеть недоступна: ${error.message}` }
@@ -28,6 +45,10 @@ async function request(method, path, body) {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && !isAuthPath(path) && unauthorizedHandler) {
+      unauthorizedHandler()
+    }
+
     // The API answers {status:'error', error, code, details}; keep the message it chose.
     return {
       ok: false,

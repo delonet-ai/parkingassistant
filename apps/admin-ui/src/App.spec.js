@@ -2,13 +2,22 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App.vue'
-import { state } from './store'
+import { reloadAudit, state } from './store'
 
 // The component specs mount pieces. This one mounts the whole app the way the browser does,
 // because a runtime error in the shell — a bad `component :is`, a provider a component needs,
 // a boot path that throws — produces a blank page while every other check stays green.
 
+const OPERATOR = {
+  id: 'au1',
+  login: 'sysadmin',
+  displayName: 'Системный администратор',
+  authStatus: 'active',
+  roles: ['system_admin']
+}
+
 const ANSWERS = {
+  '/auth/me': { status: 'ok', user: OPERATOR },
   '/admin/dashboard': {
     status: 'ok',
     date: '2026-10-09',
@@ -63,6 +72,11 @@ const ANSWERS = {
   '/admin/map-diagnostics': { maps: [], diagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] } }
 }
 
+/** A stubbed answer is a payload, or `refused(status, payload)` when the status matters. */
+function refused(status, payload) {
+  return { __status: status, payload }
+}
+
 function stubApi(answers = ANSWERS) {
   vi.stubGlobal('fetch', vi.fn(async (url) => {
     const path = new URL(url, 'http://local').pathname.replace(/^\/api/, '')
@@ -71,6 +85,13 @@ function stubApi(answers = ANSWERS) {
     if (answer === undefined) {
       return new Response(JSON.stringify({ status: 'error', error: `no stub for ${path}` }), {
         status: 500,
+        headers: { 'content-type': 'application/json' }
+      })
+    }
+
+    if (answer && answer.__status) {
+      return new Response(JSON.stringify(answer.payload), {
+        status: answer.__status,
         headers: { 'content-type': 'application/json' }
       })
     }
@@ -84,9 +105,28 @@ function stubApi(answers = ANSWERS) {
 
 async function boot(answers) {
   stubApi(answers)
-  Object.assign(state, { ready: false, bootError: null, today: null, date: null, floorCode: null, selectedPlaceId: null, notice: null })
+  // The app writes its screen into the URL, so a previous test's address would otherwise
+  // decide which tab this one lands on.
+  window.history.replaceState(null, '', '/')
+  Object.assign(state, {
+    view: 'day',
+    ready: false,
+    bootError: null,
+    today: null,
+    date: null,
+    floorCode: null,
+    selectedPlaceId: null,
+    notice: null,
+    authStage: 'loading',
+    authUser: null,
+    authRoles: [],
+    bootstrapLogin: null,
+    authError: null,
+    authBusy: false
+  })
 
   const wrapper = mount(App)
+  await flushPromises()
   await flushPromises()
   await flushPromises()
 
@@ -216,10 +256,91 @@ describe('App', () => {
     expect(text).toContain('+ Тройное')
   })
 
-  it('says why it is empty when the API cannot be reached', async () => {
-    const wrapper = await boot({})
+  it('says why it is empty when the day cannot be loaded, with the session intact', async () => {
+    // Signed in, and nothing else answers: the failure is about data, so the operator stays
+    // inside the app with the API's message rather than being sent back to a login form.
+    const wrapper = await boot({ '/auth/me': ANSWERS['/auth/me'] })
 
     expect(wrapper.text()).toContain('Не удалось загрузить данные')
     expect(wrapper.text()).not.toContain('Загрузка…')
+    expect(wrapper.text()).toContain('Выйти')
+  })
+
+  it('names the signed-in operator and offers a way out', async () => {
+    const wrapper = await boot()
+
+    expect(wrapper.text()).toContain('Системный администратор')
+    expect(wrapper.text()).toContain('system_admin')
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Выйти')).toBe(true)
+  })
+
+  it('shows the login screen and no tab strip when nobody is signed in', async () => {
+    const wrapper = await boot({
+      '/auth/me': refused(401, { status: 'error', error: 'Authentication required' }),
+      '/auth/bootstrap-status': { status: 'ok', bootstrapUser: { login: 'sysadmin', authStatus: 'active' } }
+    })
+    const text = wrapper.text()
+
+    expect(text).toContain('Вход для администратора парковки')
+    // Not one tab, not one KPI, not one request to the parking endpoints.
+    for (const tab of ['День', 'Заявки', 'Линии', 'Справочники', 'Журнал', 'Места']) {
+      expect(text).not.toContain(tab)
+    }
+    expect(text).not.toContain('Первый вход')
+    expect(window.fetch.mock.calls.map((call) => String(call[0]))).toEqual([
+      '/api/auth/me',
+      '/api/auth/bootstrap-status'
+    ])
+  })
+
+  it('offers the first-run form only while the bootstrap operator is still invited', async () => {
+    const wrapper = await boot({
+      '/auth/me': refused(401, { status: 'error', error: 'Authentication required' }),
+      '/auth/bootstrap-status': { status: 'ok', bootstrapUser: { login: 'sysadmin', authStatus: 'invited' } }
+    })
+
+    expect(wrapper.text()).toContain('Первый вход')
+    expect(state.bootstrapLogin).toBe('sysadmin')
+  })
+
+  it('signs in from the login screen and renders the day', async () => {
+    const wrapper = await boot({
+      ...ANSWERS,
+      '/auth/me': refused(401, { status: 'error', error: 'Authentication required' }),
+      '/auth/bootstrap-status': { status: 'ok', bootstrapUser: { login: 'sysadmin', authStatus: 'active' } },
+      '/auth/login': { status: 'ok', user: OPERATOR }
+    })
+    const inputs = wrapper.findAll('input')
+
+    await inputs[0].setValue('sysadmin')
+    await inputs[1].setValue('a-real-password')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).not.toContain('Вход для администратора парковки')
+    expect(text).toContain('Отдано мест')
+    expect(text).toContain('Таблицы дня')
+    expect(state.authUser.login).toBe('sysadmin')
+  })
+
+  it('returns to the login screen when the session ends mid-session', async () => {
+    const wrapper = await boot()
+
+    expect(wrapper.text()).toContain('Таблицы дня')
+
+    // The session expires under the operator: the next read is refused.
+    stubApi({ '/admin/audit-logs': refused(401, { status: 'error', error: 'Authentication required' }) })
+    await reloadAudit({ action: 'queue_processed' })
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).toContain('Сессия завершена. Войдите снова.')
+    expect(text).toContain('Вход для администратора парковки')
+    expect(text).not.toContain('Таблицы дня')
+    expect(state.ready).toBe(false)
   })
 })
