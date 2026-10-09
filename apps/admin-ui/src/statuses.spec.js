@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { PLACE_STATUS_OPTIONS, positionLabel, statusColors, statusLabel } from './statuses'
+import {
+  PLACE_STATUS_OPTIONS,
+  positionLabel,
+  sourceColors,
+  sourceLabel,
+  statusColors,
+  statusLabel
+} from './statuses'
 
 describe('place statuses', () => {
   it('keeps the six statuses and their Russian words from the SSR UI', () => {
@@ -51,5 +58,27 @@ describe('place statuses', () => {
     expect(positionLabel(3, 3)).toBe('зад')
     expect(positionLabel(2, 1)).toBe('перёд')
     expect(positionLabel(1, 1)).toBe('')
+  })
+})
+
+describe('reservation sources', () => {
+  it('names every source the API can report', () => {
+    expect(sourceLabel('manual')).toBe('ручное')
+    expect(sourceLabel('auto')).toBe('авто')
+    expect(sourceLabel('queue')).toBe('очередь')
+    expect(sourceLabel('guest')).toBe('гость')
+    expect(sourceLabel('permanent')).toBe('постоянное')
+  })
+
+  it('shows an unknown source as itself rather than swallowing it', () => {
+    expect(sourceLabel('teleport')).toBe('teleport')
+    expect(sourceColors('teleport').backgroundColor).toMatch(/gray/)
+  })
+
+  it('colours sources from tokens, like the statuses', () => {
+    for (const source of ['manual', 'auto', 'queue', 'guest', 'permanent']) {
+      expect(sourceColors(source).backgroundColor).toMatch(/^var\(--vi-color-[a-z]+-\d+\)$/)
+      expect(sourceColors(source).textColor).toMatch(/^var\(--vi-color-[a-z]+-\d+\)$/)
+    }
   })
 })

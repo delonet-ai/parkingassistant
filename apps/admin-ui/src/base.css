@@ -155,3 +155,34 @@ body {
   display: block;
   margin: 20px 0 12px;
 }
+
+/* A tinted disc behind the icon: enough colour to tell six tiles apart at a glance, not
+   enough to compete with the number that is the point of the tile. */
+.kpi-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  font-size: 16px;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--vi-radius-m);
+  background: var(--vi-color-red-500);
+  color: var(--vi-color-white);
+  font-size: 22px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

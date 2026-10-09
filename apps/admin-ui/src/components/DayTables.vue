@@ -1,7 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { ViButton, ViTableSimple, ViText } from '@vi-frontend/vision-ui'
+import { ViButton, ViNameplate, ViTableSimple, ViText } from '@vi-frontend/vision-ui'
 
+import { sourceColors, sourceLabel } from '../statuses'
 import { state, submit } from '../store'
 
 // ViTableSimple renders a cell's `text`; a cell without one falls through to the #cell slot,
@@ -30,7 +31,8 @@ const releaseRows = computed(() =>
     { text: item.parkingPlace.code },
     { text: item.owner.displayName },
     { text: item.owner.department || '—' },
-    { text: item.isReserved ? 'назначено' : 'свободно' },
+    // The same vocabulary the slots use: a word plus a colour, never a colour alone.
+    { release: item.isReserved ? 'назначено' : 'свободно', reserved: item.isReserved },
     { text: item.releaseNotes || '—' }
   ])
 )
@@ -40,7 +42,7 @@ const reservationRows = computed(() =>
     { text: reservation.parkingPlace.code },
     { text: reservation.user ? reservation.user.displayName : '—' },
     { text: reservation.user?.department || '—' },
-    { text: reservation.source },
+    { source: reservation.source },
     { text: reservation.reason || '—' },
     { cancelReservationId: reservation.id }
   ])
@@ -60,7 +62,18 @@ async function cancel(reservationId) {
   <div class="stack">
     <ViText tag="h3" variant="title-h6">Отданные места на день</ViText>
     <div v-if="releaseRows.length" class="table-scroll">
-      <ViTableSimple :headers="RELEASE_HEADERS" :rows="releaseRows" />
+      <ViTableSimple :headers="RELEASE_HEADERS" :rows="releaseRows">
+        <template #cell="{ cell }">
+          <ViNameplate
+            v-if="cell.release"
+            size="small"
+            :background-color="cell.reserved ? 'var(--vi-color-yellow-200)' : 'var(--vi-color-green-200)'"
+            :text-color="cell.reserved ? 'var(--vi-color-yellow-900)' : 'var(--vi-color-green-900)'"
+          >
+            {{ cell.release }}
+          </ViNameplate>
+        </template>
+      </ViTableSimple>
     </div>
     <ViText v-else tag="p" variant="body-S-wide" class="muted">На этот день мест не отдано.</ViText>
 
@@ -68,6 +81,9 @@ async function cancel(reservationId) {
     <div v-if="reservationRows.length" class="table-scroll">
       <ViTableSimple :headers="RESERVATION_HEADERS" :rows="reservationRows">
         <template #cell="{ cell }">
+          <ViNameplate v-if="cell.source" size="small" v-bind="sourceColors(cell.source)">
+            {{ sourceLabel(cell.source) }}
+          </ViNameplate>
           <ViButton
             v-if="cell.cancelReservationId"
             size="small"

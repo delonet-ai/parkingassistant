@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, watch } from 'vue'
-import { ViAlert, ViTabs, ViText } from '@vi-frontend/vision-ui'
+import { ViAlert, ViIcon, ViTabs, ViText } from '@vi-frontend/vision-ui'
 
 import DayPage from './pages/DayPage.vue'
 import NotMigratedPage from './pages/NotMigratedPage.vue'
@@ -31,12 +31,14 @@ function selectTab(value) {
 <template>
   <div class="app-shell">
     <header class="app-head">
-      <div>
-        <ViText tag="h1" variant="title-h2">Parking Assistant</ViText>
-        <ViText tag="p" variant="body-M-wide" class="muted">
-          Управление офисной парковкой. Все правила считает backend — интерфейс только показывает и
-          отправляет.
-        </ViText>
+      <div class="brand">
+        <span class="brand-mark"><ViIcon icon="key" /></span>
+        <div>
+          <ViText tag="h1" variant="title-h3">Parking Assistant</ViText>
+          <ViText tag="p" variant="body-S-wide" class="muted">
+            Управление офисной парковкой — все правила считает backend
+          </ViText>
+        </div>
       </div>
     </header>
 

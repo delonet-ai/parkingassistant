@@ -49,8 +49,37 @@ export function statusColors(status) {
   const group = entry ? entry.group : 'gray'
 
   return {
-    backgroundColor: `var(--vi-color-${group}-100)`,
-    textColor: `var(--vi-color-${group}-800)`
+    backgroundColor: `var(--vi-color-${group}-200)`,
+    textColor: `var(--vi-color-${group}-900)`
+  }
+}
+
+// Where a reservation came from is the second thing the operator reads after the place code,
+// and it was plain grey text in a table. Same vocabulary as the slot statuses: a word, a
+// colour, and the colour never carries the meaning on its own.
+const RESERVATION_SOURCES = [
+  { source: 'manual', label: 'ручное', group: 'blue' },
+  { source: 'auto', label: 'авто', group: 'mint' },
+  { source: 'queue', label: 'очередь', group: 'purple' },
+  { source: 'guest', label: 'гость', group: 'orange' },
+  { source: 'permanent', label: 'постоянное', group: 'gray' }
+]
+
+const BY_SOURCE = new Map(RESERVATION_SOURCES.map((entry) => [entry.source, entry]))
+
+export function sourceLabel(source) {
+  const entry = BY_SOURCE.get(source)
+
+  return entry ? entry.label : source || '—'
+}
+
+export function sourceColors(source) {
+  const entry = BY_SOURCE.get(source)
+  const group = entry ? entry.group : 'gray'
+
+  return {
+    backgroundColor: `var(--vi-color-${group}-200)`,
+    textColor: `var(--vi-color-${group}-900)`
   }
 }
 
