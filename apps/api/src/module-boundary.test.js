@@ -180,6 +180,7 @@ test('every route the monolith served is still registered, with the same method'
     'POST /admin/places/update',
     'POST /admin/reservations/cancel',
     'POST /admin/reservations/manual',
+    'POST /auth/activate',
     'POST /bot/departure-plans',
     'POST /bot/line-occupancy',
     'POST /bot/line/position'

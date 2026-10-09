@@ -84,12 +84,12 @@ authenticated client in Task 3; that is the task's real work, not an afterthough
 - Create: `apps/api/src/modules/auth/{controller,service,repository}.js`
 - Modify: `apps/api/src/modules/index.js`
 
-- [ ] write `packages/shared/passwords.js`: `hashPassword(plain)` and `verifyPassword(plain, stored)` on `node:crypto` scrypt, a random 16-byte salt per hash, `timingSafeEqual` for the comparison, and a stored format that carries its own parameters (`scrypt$N$r$p$salt$hash`) so they can be raised later without invalidating existing hashes
-- [ ] write unit tests: a hash verifies against its own password, fails against another, two hashes of the same password differ (the salt is real), and a malformed stored value is refused rather than throwing
-- [ ] add `POST /auth/activate` accepting `{login, password}`: allowed **only** when exactly one row exists in `auth_users` and its status is `invited`; sets the hash, flips status to `active`, writes an audit row
-- [ ] add the refusal paths: a second activation attempt answers `409`, a password shorter than 10 characters answers `400`, an unknown login answers the same `409` as a wrong state so the endpoint does not enumerate logins
-- [ ] write integration tests in `apps/api/integration/auth.itest.js` for activation and each refusal
-- [ ] run `npm run check && npm run lint && npm test` — must pass before task 2
+- [x] write `packages/shared/passwords.js`: `hashPassword(plain)` and `verifyPassword(plain, stored)` on `node:crypto` scrypt, a random 16-byte salt per hash, `timingSafeEqual` for the comparison, and a stored format that carries its own parameters (`scrypt$N$r$p$salt$hash`) so they can be raised later without invalidating existing hashes
+- [x] write unit tests: a hash verifies against its own password, fails against another, two hashes of the same password differ (the salt is real), and a malformed stored value is refused rather than throwing
+- [x] add `POST /auth/activate` accepting `{login, password}`: allowed **only** when exactly one row exists in `auth_users` and its status is `invited`; sets the hash, flips status to `active`, writes an audit row
+- [x] add the refusal paths: a second activation attempt answers `409`, a password shorter than 10 characters answers `400`, an unknown login answers the same `409` as a wrong state so the endpoint does not enumerate logins
+- [x] write integration tests in `apps/api/integration/auth.itest.js` for activation and each refusal
+- [x] run `npm run check && npm run lint && npm test` — must pass before task 2
 
 ### Task 2: Sessions — login, logout, and who am I
 

@@ -7,9 +7,12 @@
 // client-bound one `withTransaction` yields. See ADR 003.
 
 // One insert shape for all 27 audit call sites the monolith used to carry.
-// `actor_user_id` is written explicitly rather than omitted: the column is nullable
-// and an explicit null is what the omitting variants produced anyway.
-async function insertAuditLog(db, { entityType, entityId = null, action, actorUserId = null, actorService, metadata = {} }) {
+// `actor_user_id` and `actor_auth_user_id` are written explicitly rather than omitted: both
+// columns are nullable and an explicit null is what the omitting variants produced anyway.
+async function insertAuditLog(
+  db,
+  { entityType, entityId = null, action, actorUserId = null, actorAuthUserId = null, actorService, metadata = {} }
+) {
   return db.queryOne(
     `
       insert into audit_logs (
@@ -17,13 +20,14 @@ async function insertAuditLog(db, { entityType, entityId = null, action, actorUs
         entity_id,
         action,
         actor_user_id,
+        actor_auth_user_id,
         actor_service,
         metadata
       )
-      values ($1, $2, $3, $4, $5, $6::jsonb)
+      values ($1, $2, $3, $4, $5, $6, $7::jsonb)
       returning id
     `,
-    [entityType, entityId, action, actorUserId, actorService, JSON.stringify(metadata)]
+    [entityType, entityId, action, actorUserId, actorAuthUserId, actorService, JSON.stringify(metadata)]
   );
 }
 
