@@ -26,6 +26,8 @@ test('normalizeApiErrorPayload preserves an explicit code and details', () => {
 
 test('normalizeApiErrorPayload maps known statuses to their default codes', () => {
   assert.equal(normalizeApiErrorPayload({ error: 'x' }, 400).code, 'bad_request');
+  assert.equal(normalizeApiErrorPayload({ error: 'x' }, 401).code, 'unauthorized');
+  assert.equal(normalizeApiErrorPayload({ error: 'x' }, 403).code, 'forbidden');
   assert.equal(normalizeApiErrorPayload({ error: 'x' }, 409).code, 'conflict');
   assert.equal(normalizeApiErrorPayload({ error: 'x' }, 422).code, 'validation_error');
   assert.equal(normalizeApiErrorPayload({ error: 'x' }, 500).code, 'internal_error');

@@ -11,7 +11,8 @@ const { errorPayload } = require('../../../packages/shared/errors');
 // A route entry is:
 //   { method, path | paths[] | pattern, handler, advertise? }
 //
-// `handler` receives one object: { req, url, searchParams, params }. Every route is
+// `handler` receives one object: { req, url, searchParams, params } and returns
+// { statusCode, payload, headers? }. Every route is
 // dispatched through the same catch: a handler that throws answers 500 and the process
 // stays up. `safe` is gone — it used to mean "this route catches", which left the write
 // endpoints letting a rejection escape the request listener into an unhandled rejection,
@@ -78,6 +79,16 @@ function createApiRouter({ modules, sendJson }) {
   async function dispatch(route, context, res) {
     try {
       const result = await route.handler(context);
+
+      // A handler may return `headers` alongside its payload; `set-cookie` on login and
+      // logout is the only use so far. They are set before `sendJson`, whose `writeHead`
+      // merges them with the content type rather than replacing them.
+      if (result.headers) {
+        for (const [name, value] of Object.entries(result.headers)) {
+          res.setHeader(name, value);
+        }
+      }
+
       sendJson(res, result.statusCode, result.payload);
     } catch (error) {
       // The real error goes to the log, never to the client: an unmapped failure is a

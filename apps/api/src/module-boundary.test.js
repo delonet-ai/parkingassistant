@@ -152,6 +152,7 @@ test('every route the monolith served is still registered, with the same method'
     'GET /admin/places',
     'GET /admin/users',
     'GET /auth/bootstrap-status',
+    'GET /auth/me',
     'GET /bot/line/blocking-contacts',
     'GET /health',
     'GET /health/db',
@@ -181,6 +182,8 @@ test('every route the monolith served is still registered, with the same method'
     'POST /admin/reservations/cancel',
     'POST /admin/reservations/manual',
     'POST /auth/activate',
+    'POST /auth/login',
+    'POST /auth/logout',
     'POST /bot/departure-plans',
     'POST /bot/line-occupancy',
     'POST /bot/line/position'

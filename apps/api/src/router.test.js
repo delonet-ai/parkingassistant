@@ -120,6 +120,29 @@ describe('createApiRouter error handling', () => {
     assert.deepEqual(await response.json(), { status: 'ok', service: 'api' });
   });
 
+  // The session cookie is the first thing a handler needs to put in a header rather than in
+  // the body, and `writeHead` would have dropped it had `sendJson` been left to win.
+  it('sends the headers a handler returns alongside the payload', async () => {
+    const { url } = await withRoutes([
+      {
+        method: 'POST',
+        path: '/with-cookie',
+        handler: async () => ({
+          statusCode: 200,
+          headers: { 'set-cookie': 'pa_session=token; Path=/; HttpOnly' },
+          payload: { status: 'ok' }
+        })
+      }
+    ]);
+
+    const response = await fetch(url('/with-cookie'), { method: 'POST' });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('set-cookie'), 'pa_session=token; Path=/; HttpOnly');
+    assert.match(response.headers.get('content-type'), /application\/json/);
+    assert.deepEqual(await response.json(), { status: 'ok' });
+  });
+
   // The second crash vector, and the cheaper one: no route, body or method had to be valid.
   // `Host` is client-controlled and used to be interpolated into the URL base, so a header
   // `new URL` could not parse threw before dispatch and escaped the request listener.

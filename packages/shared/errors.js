@@ -2,6 +2,8 @@
 
 const defaultErrorCodeByStatus = new Map([
   [400, 'bad_request'],
+  [401, 'unauthorized'],
+  [403, 'forbidden'],
   [404, 'not_found'],
   [409, 'conflict'],
   [422, 'validation_error'],

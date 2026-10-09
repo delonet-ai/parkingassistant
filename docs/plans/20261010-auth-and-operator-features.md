@@ -97,12 +97,21 @@ authenticated client in Task 3; that is the task's real work, not an afterthough
 - Modify: `apps/api/src/modules/auth/{controller,service,repository}.js`
 - Modify: `apps/api/integration/auth.itest.js`
 
-- [ ] add `POST /auth/login`: verifies the password, creates an `auth_sessions` row holding **only** the SHA-256 of the token, sets `pa_session` as `HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`, updates `last_login_at`, and answers the user with their roles
-- [ ] add `GET /auth/me` resolving the cookie to the user and their roles, and `POST /auth/logout` setting `revoked_at` and clearing the cookie
-- [ ] expire and revoke on read: a session past `expires_at` or with `revoked_at` set resolves to nobody, and a successful resolve bumps `last_seen_at`
-- [ ] make a wrong password and an unknown login answer the same `401` with the same body and no timing shortcut — the failure path must still run a verify
-- [ ] write integration tests: login then `/auth/me`, logout then `/auth/me` is `401`, an expired session is `401`, a tampered cookie is `401`
-- [ ] run `npm run check && npm run lint && npm test` — must pass before task 3
+- [x] add `POST /auth/login`: verifies the password, creates an `auth_sessions` row holding **only** the SHA-256 of the token, sets `pa_session` as `HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`, updates `last_login_at`, and answers the user with their roles
+- [x] add `GET /auth/me` resolving the cookie to the user and their roles, and `POST /auth/logout` setting `revoked_at` and clearing the cookie
+- [x] expire and revoke on read: a session past `expires_at` or with `revoked_at` set resolves to nobody, and a successful resolve bumps `last_seen_at`
+- [x] make a wrong password and an unknown login answer the same `401` with the same body and no timing shortcut — the failure path must still run a verify
+- [x] write integration tests: login then `/auth/me`, logout then `/auth/me` is `401`, an expired session is `401`, a tampered cookie is `401`
+- [x] run `npm run check && npm run lint && npm test` — must pass before task 3
+
+➕ the router now applies a handler's `headers` alongside its payload — `set-cookie` is the
+first response header a handler has needed, and `writeHead` in `sendJson` would otherwise have
+dropped it. `apps/api/src/support/cookies.js` parses and serializes the cookie; Task 3's guard
+reads the request header through the same helper.
+
+➕ `packages/shared/errors.js` maps 401 to `unauthorized` and 403 to `forbidden`, so the
+refusals Tasks 2 and 3 add carry a code like every other error payload. No existing endpoint
+answers either status, so no golden snapshot moved.
 
 ### Task 3: Close the API — deny by default at the router
 
