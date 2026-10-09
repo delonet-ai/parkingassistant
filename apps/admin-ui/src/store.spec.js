@@ -32,6 +32,10 @@ function stubApi(overrides = {}) {
     '/admin/line-occupancy': { occupancy: [] },
     '/admin/employee-parking-requests': { requests: [{ id: 'r1' }, { id: 'r2' }] },
     '/admin/guest-parking-requests': { requests: [{ id: 'g1' }] },
+    '/admin/line-groups': { lineGroups: [{ id: 'l1', code: 'line-4-118', capacity: 3 }] },
+    '/admin/departure-plans': { departurePlans: [] },
+    '/admin/conflicts': { conflicts: [] },
+    '/admin/contact-access-logs': { contactAccessLogs: [] },
     ...overrides
   }
 
@@ -68,7 +72,11 @@ function resetState() {
     employees: [],
     occupancy: [],
     employeeRequests: [],
-    guestRequests: []
+    guestRequests: [],
+    lineGroups: [],
+    departurePlans: [],
+    conflicts: [],
+    contactAccessLogs: []
   })
 }
 

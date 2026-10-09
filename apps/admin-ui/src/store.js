@@ -39,7 +39,11 @@ export const state = reactive({
   employees: [],
   occupancy: [],
   employeeRequests: [],
-  guestRequests: []
+  guestRequests: [],
+  lineGroups: [],
+  departurePlans: [],
+  conflicts: [],
+  contactAccessLogs: []
 })
 
 /**
@@ -104,15 +108,30 @@ export async function loadDay() {
   state.loading = true
 
   const date = state.date ? { date: state.date } : {}
-  const [dashboard, places, lines, employees, occupancy, employeeRequests, guestRequests] =
-    await Promise.all([
+  const [
+    dashboard,
+    places,
+    lines,
+    employees,
+    occupancy,
+    employeeRequests,
+    guestRequests,
+    lineGroups,
+    departurePlans,
+    conflicts,
+    contactAccessLogs
+  ] = await Promise.all([
       api.get(`/admin/dashboard${query(date)}`),
       api.get('/admin/places'),
       api.get(`/admin/place-lines${query(date)}`),
       api.get(`/admin/employees${query(date)}`),
       api.get(`/admin/line-occupancy${query(date)}`),
       api.get(`/admin/employee-parking-requests${query(date)}`),
-      api.get(`/admin/guest-parking-requests${query(date)}`)
+      api.get(`/admin/guest-parking-requests${query(date)}`),
+      api.get('/admin/line-groups'),
+      api.get(`/admin/departure-plans${query(date)}`),
+      api.get(`/admin/conflicts${query(date)}`),
+      api.get(`/admin/contact-access-logs${query(date)}`)
     ])
 
   const failed = [
@@ -122,7 +141,11 @@ export async function loadDay() {
     employees,
     occupancy,
     employeeRequests,
-    guestRequests
+    guestRequests,
+    lineGroups,
+    departurePlans,
+    conflicts,
+    contactAccessLogs
   ].find((result) => !result.ok)
   if (failed) {
     state.loading = false
@@ -136,6 +159,10 @@ export async function loadDay() {
   state.occupancy = occupancy.data.occupancy || []
   state.employeeRequests = employeeRequests.data.requests || []
   state.guestRequests = guestRequests.data.requests || []
+  state.lineGroups = lineGroups.data.lineGroups || []
+  state.departurePlans = departurePlans.data.departurePlans || []
+  state.conflicts = conflicts.data.conflicts || []
+  state.contactAccessLogs = contactAccessLogs.data.contactAccessLogs || []
   state.today = state.today || dashboard.data.date
   state.date = state.date || dashboard.data.date
 

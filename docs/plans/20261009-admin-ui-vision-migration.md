@@ -100,13 +100,18 @@ follows each endpoint as it is, and the specs use real payload shapes.
 - Create: a `*.spec.js` beside each
 - Modify: `apps/admin-ui/src/store.js`, `apps/admin-ui/src/App.vue`
 
-- [ ] add `loadLines()` reading `/admin/line-groups`, `/admin/line-occupancy`, `/admin/departure-plans`, `/admin/conflicts`, `/admin/contact-access-logs`
-- [ ] build `LineOccupancy.vue`: who stands in which position today, with the contact column (`телефон · email`, and the route-to-admin wording when the one in front is a guest), and a form posting `/admin/line-occupancy` whose position select is built from the chosen line rather than hardcoded 1/2/3
-- [ ] build `DeparturePlans.vue`: plans with the early flag, conflicts list, and a form posting `/admin/departure-plans`; a `409` from the 07:00 lock must render as the API's message, not as a crash
-- [ ] build `ContactAccessLog.vue`: read-only `ViTableSimple` of contact requests
-- [ ] register `lines` in `PAGES`
-- [ ] write specs: the position select follows the line's capacity, the guest-in-front wording appears, a locked plan shows the `409` message
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 3
+- [x] add the five reads to `loadDay()` rather than a second loader, matching Task 1 — `/admin/line-groups`, `/admin/line-occupancy`, `/admin/departure-plans`, `/admin/conflicts`, `/admin/contact-access-logs`
+- [x] build `LineOccupancy.vue`: who stands in which position today, with the contact column (`телефон · email`, and the route-to-admin wording when the one in front is a guest), and a form posting `/admin/line-occupancy` whose position select is built from the chosen line rather than hardcoded 1/2/3
+- [x] build `DeparturePlans.vue`: plans with the early flag, conflicts list, and a form posting `/admin/departure-plans`; a `409` from the 07:00 lock must render as the API's message, not as a crash
+- [x] build `ContactAccessLog.vue`: read-only `ViTableSimple` of contact requests
+- [x] register `lines` in `PAGES`
+- [x] write specs: the position select follows the line's capacity, the guest-in-front wording appears, a locked plan shows the `409` message
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — 85 UI specs, 299 node tests, green.
+
+⚠️ A masked `ViInput` emits the **unmasked** value: `mask="##:##"` shows `15:30` in the field
+and emits `"1530"`. Posting that would have been refused by the API with a format error, after
+the operator typed the time correctly. `src/time.js` puts the separator back, rejects an
+incomplete or impossible reading, and the save button follows it.
 
 ### Task 3: Справочники — employees, places and permanent assignments
 

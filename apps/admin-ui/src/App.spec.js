@@ -52,7 +52,11 @@ const ANSWERS = {
   '/admin/employees': { employees: [{ id: 'u1', displayName: 'Петров П. П.', department: 'СТМ' }] },
   '/admin/line-occupancy': { occupancy: [] },
   '/admin/employee-parking-requests': { requests: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }] },
-  '/admin/guest-parking-requests': { requests: [{ id: 'g1' }, { id: 'g2' }] }
+  '/admin/guest-parking-requests': { requests: [{ id: 'g1' }, { id: 'g2' }] },
+  '/admin/line-groups': { lineGroups: [] },
+  '/admin/departure-plans': { departurePlans: [] },
+  '/admin/conflicts': { conflicts: [] },
+  '/admin/contact-access-logs': { contactAccessLogs: [] }
 }
 
 function stubApi(answers = ANSWERS) {
@@ -152,11 +156,24 @@ describe('App', () => {
     expect(text).toContain('Гостевые заявки')
   })
 
-  it('shows the four not-yet-migrated tabs as such instead of an empty screen', async () => {
+  it('renders the Линии screen with occupancy, departures and the contact log', async () => {
+    const wrapper = await boot()
+
+    state.view = 'lines'
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).not.toContain('ещё не перенесена')
+    expect(text).toContain('Фактические позиции')
+    expect(text).toContain('Время выезда и конфликты')
+    expect(text).toContain('Запросы контактов')
+  })
+
+  it('shows the three not-yet-migrated tabs as such instead of an empty screen', async () => {
     const wrapper = await boot()
 
     for (const [value, title] of [
-      ['lines', 'Линии'],
       ['catalog', 'Справочники'],
       ['audit', 'Журнал'],
       ['places', 'Места']

@@ -3,11 +3,12 @@ import { onMounted, watch } from 'vue'
 import { ViAlert, ViIcon, ViTabs, ViText } from '@vi-frontend/vision-ui'
 
 import DayPage from './pages/DayPage.vue'
+import LinesPage from './pages/LinesPage.vue'
 import NotMigratedPage from './pages/NotMigratedPage.vue'
 import RequestsPage from './pages/RequestsPage.vue'
 import { TABS, boot, buildUrl, dismissNotice, state } from './store'
 
-const PAGES = { day: DayPage, requests: RequestsPage }
+const PAGES = { day: DayPage, requests: RequestsPage, lines: LinesPage }
 
 onMounted(() => boot(window.location.search))
 
