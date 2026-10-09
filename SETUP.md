@@ -107,7 +107,22 @@ mkdir -p /opt/git/parkingassistant/staging/env \
 Если `staging/postgres` уже непустой — там живой кластер, не трогайте его: compose примонтирует
 его как есть, а `migrate` накатит только недостающие миграции.
 
-### 3. Подготовить env
+### 3. Положить пакеты дизайн-системы
+
+`apps/admin-ui` собирается на Vision UI, а эти пакеты живут во внутреннем реестре и в git **не
+хранятся** — репозиторий публичный. Они кладутся на хост один раз, так же как `staging/env/app.env`:
+
+```text
+/opt/git/parkingassistant/vendor/
+├── vi-frontend-vision-ui-1.16.0.tgz
+└── vi-frontend-svgs-0.92.0.tgz
+```
+
+Без них `docker compose build admin-ui` падает на `npm ci` — громко, а не тихой сборкой без
+стилей. Версии зафиксированы в `apps/admin-ui/package.json` как `file:`-зависимости и должны
+совпадать с тем, что лежит в `vendor/`.
+
+### 4. Подготовить env
 
 ```bash
 cp .env.example staging/env/app.env
@@ -118,13 +133,13 @@ cp .env.example staging/env/app.env
 - пароли PostgreSQL;
 - `JWT_SECRET`, `SESSION_SECRET`;
 - параметры `Yandex Messenger` (пока не используются — `bot-adapter` в стек не входит);
-- порты стенда: `API_PORT=3330`, `ADMIN_WEB_PORT=3340`.
+- порты стенда: `API_PORT=3330`, `ADMIN_WEB_PORT=3340`, `ADMIN_UI_PORT=3360`.
 
 `POSTGRES_PASSWORD` действует **только при инициализации пустого кластера**. На уже существующем
 `staging/postgres` PostgreSQL сохраняет тот пароль, с которым его создали, и расхождение проявится
 как невозможность `api` подключиться к базе — не как потеря данных.
 
-### 4. Деплой
+### 5. Деплой
 
 Одна идемпотентная команда, запускается на сервере:
 
@@ -146,7 +161,7 @@ npm run smoke:stand
 Переменные: `SKIP_PULL=1` — собрать чекаут как есть (например, непушнутую ветку), `NO_BUILD=1` —
 перезапустить на уже собранных образах.
 
-### 5. Arcane
+### 6. Arcane
 
 Arcane остаётся наблюдателем и оператором уже запущенных контейнеров, но не собирает стек:
 

@@ -12,7 +12,20 @@ plain Node `http` (no web framework), PostgreSQL 16. Only runtime deps are `pg` 
 - `apps/api` — HTTP API. `src/server.js` is a bootstrap only; every bounded context lives in
   `src/modules/<context>/{controller,service,repository}.js` and the router composes their
   route tables. See `docs/adr/003-modular-architecture.md` for the layer rules.
-- `apps/admin-web` — server-rendered admin UI.
+- `apps/admin-web` — server-rendered admin UI. Being replaced tab by tab by `apps/admin-ui`;
+  the migration's last task deletes it (see `docs/adr/006-admin-ui-on-vision-ui.md`).
+- `apps/admin-ui` — the new admin UI: **Vue 3 + Vite on the Vision UI design system**. The one
+  ESM package in the repo, the one with a build step, and the one with its own test runner
+  (vitest + happy-dom). Its specs are `*.spec.js`, not `*.test.js`, so `node --test` does not
+  try to load them as CommonJS. Run them with `npm run test:ui`.
+
+  Three rules there are not stylistic:
+  - component props are **read from the design system, never guessed** — Vision UI inputs expose
+    `value` and bind with `v-model:value`, and a plain `v-model` renders fine while posting
+    nothing;
+  - colours, radii and spacing come from tokens (`rgb(var(--vi-color-…))`, `var(--vi-radius-…)`,
+    `var(--vi-vr-…)`); a hard-coded hex is a defect;
+  - no parking rule is evaluated in the UI. Statuses and "today" come from the API.
 - `apps/bot-adapter` — Yandex Messenger bot.
 - `apps/jobs` — scheduled jobs (19:00, 07:00, daily rules).
 - `packages/shared` — pure utilities (`dates`, `errors`, `http`, `html`). Easiest place to add tests.

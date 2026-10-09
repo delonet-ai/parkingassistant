@@ -1,0 +1,113 @@
+/*
+ * Only the page ground and layout primitives live here. Every colour, radius, spacing and
+ * type size comes from Vision UI tokens — see docs/adr/006-admin-ui-on-vision-ui.md.
+ *
+ * Vision UI components inherit the font (font-family: inherit) and never set it themselves,
+ * so without the binding on body the whole UI renders in the system serif instead of ViSans.
+ */
+body {
+  margin: 0;
+  font-family: var(--vi-font-family);
+  font-size: var(--vi-font-size);
+  color: rgb(var(--vi-color-gray-1000));
+  background: rgb(var(--vi-color-gray-50));
+}
+
+.app-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.app-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.day-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .day-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.line-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+/* A multi-slot element stacks its slots front-to-rear, so the card mirrors the real line. */
+.line-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slot-button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgb(var(--vi-color-gray-300));
+  border-radius: var(--vi-radius-s);
+  background: rgb(var(--vi-color-white));
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.slot-button:hover {
+  border-color: rgb(var(--vi-color-gray-500));
+}
+
+.slot-button[aria-pressed='true'] {
+  border-color: rgb(var(--vi-color-red-500));
+  box-shadow: 0 0 0 1px rgb(var(--vi-color-red-500));
+}
+
+.slot-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.muted {
+  color: rgb(var(--vi-color-gray-700));
+}

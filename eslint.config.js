@@ -5,7 +5,7 @@ const globals = require('globals');
 
 module.exports = [
   {
-    ignores: ['node_modules/**', 'infra/**', '**/*.min.js']
+    ignores: ['**/node_modules/**', '**/dist/**', 'infra/**', '**/*.min.js']
   },
   js.configs.recommended,
   {
@@ -23,6 +23,19 @@ module.exports = [
       eqeqeq: ['error', 'smart'],
       'prefer-const': 'error',
       'no-var': 'error'
+    }
+  },
+  {
+    // apps/admin-ui is the one ESM package in the repo: it is a browser bundle, so it has
+    // its own module system, its own globals and no `require`.
+    files: ['apps/admin-ui/**/*.js', 'apps/admin-ui/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        ...globals.node
+      }
     }
   },
   {

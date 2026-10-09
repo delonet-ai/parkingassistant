@@ -205,7 +205,7 @@ local changes
 
 ### Состав стека
 
-`docker-compose.yml` описывает пять сервисов, и только их:
+`docker-compose.yml` описывает шесть сервисов, и только их:
 
 | Сервис | Образ | Роль |
 |---|---|---|
@@ -213,6 +213,7 @@ local changes
 | `migrate` | `infra/docker/app.Dockerfile` | one-shot `npm run db:migrate`, стартует после healthy `postgres` |
 | `api` | `infra/docker/app.Dockerfile` | HTTP API, порт `3330` → 3000 |
 | `admin-web` | `infra/docker/admin-web.Dockerfile` | SSR-админка, порт `3340` → 3100 |
+| `admin-ui` | `infra/docker/admin-ui.Dockerfile` | Vue 3 админка на Vision UI, порт `3360` → 3100 |
 | `jobs` | `infra/docker/jobs.Dockerfile` | планировщик регулярных задач |
 
 `bot-adapter` в стек **намеренно не включён**: фаза Yandex Messenger отложена до финализации логики
@@ -303,7 +304,8 @@ Production storage mounts:
 Текущие production ports:
 
 - API: `3330`;
-- Admin Web: `3340`;
+- Admin Web (SSR, уходит): `3340`;
+- Admin UI (Vision UI): `3360`;
 - Bot Adapter: `3350`.
 
 ### Test Stand (staging)
@@ -593,7 +595,21 @@ Acceptance:
 `admin-web` в корпоративный CI и тянуть готовый образ из registry (это как раз вариант A из
 ADR 005), либо не вводить npm-зависимость вовсе — см. маршрут Б ниже.
 
-#### Решение, которое надо принять в начале milestone
+#### Статус
+
+Решение принято: **маршрут А**, Vue 3 на настоящих компонентах ДС. Зафиксировано в
+[ADR 006](adr/006-admin-ui-on-vision-ui.md), оба ограничения выше сняты — ДС есть локально
+(зеркало документации + MCP), пакеты пришли тарболами в `vendor/`.
+
+Сделано: приложение `apps/admin-ui` (Vue 3 + Vite), сервер статики с прокси `/api`, вкладка
+**День** целиком — дата, KPI, фильтры, список элементов со слотами, операционная карточка места
+со всеми пятью операциями, таблицы дня. 33 теста на vitest + happy-dom (`npm run test:ui`),
+сервис `admin-ui` в compose на порту `3360`.
+
+Осталось: вкладки `Заявки`, `Линии`, `Справочники`, `Журнал`, `Места` и удаление `admin-web`
+последней задачей. План — `docs/plans/20261009-admin-ui-vision-migration.md`.
+
+#### Решение, которое было принято в начале milestone
 
 Нынешний `admin-web` — SSR на голом `node:http`, без фреймворка, без build step и без единой
 сторонней зависимости; его образ собирается вообще без `node_modules`. Vision UI — библиотека

@@ -30,3 +30,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # apps/admin-ui is deliberately NOT built or tested here. It depends on the Vision UI
+      # packages, which live in an internal registry and reach this repository as tarballs in
+      # vendor/ — and vendor/ is gitignored because this repository is public. So `npm run
+      # test:ui` and `npm run admin-ui:build` are local/stand steps, run where the tarballs
+      # are. See docs/adr/006-admin-ui-on-vision-ui.md.

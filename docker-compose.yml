@@ -104,8 +104,39 @@ services:
       start_period: 10s
     command: ["npm", "run", "admin-web:start"]
 
+  # The Vue 3 admin on the Vision UI design system. It runs alongside admin-web while the
+  # migration goes tab by tab: admin-ui serves the tabs it has taken over, admin-web the rest
+  # (see docs/adr/006-admin-ui-on-vision-ui.md). The last task of the migration removes
+  # admin-web and this comment with it.
+  admin-ui:
+    build:
+      context: .
+      dockerfile: infra/docker/admin-ui.Dockerfile
+      target: runtime
+    container_name: parkingassistant-admin-ui
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3100
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
+      API_BASE_URL: http://api:3000
+      MAP_STORAGE_PATH: /app/storage/maps
+    ports:
+      - "${ADMIN_UI_PORT:-3360}:3100"
+    volumes:
+      - /opt/git/parkingassistant/staging/maps:/app/storage/maps
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3100/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # bot-adapter is intentionally absent from this stack: the Yandex Messenger phase is deferred
-  # post-MVP (see docs/plans/finalize-development.md → Deferred). The entrypoint and its
+  # post-MVP (see docs/plans/completed/finalize-development.md → Deferred). The entrypoint and its
   # `bot-adapter:start` script stay in the repo; only the deployed service is withheld.
 
   jobs:

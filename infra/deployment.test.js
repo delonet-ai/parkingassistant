@@ -42,7 +42,12 @@ function serviceBlocks(text) {
 const services = serviceBlocks(compose);
 
 test('the stack defines exactly the MVP services', () => {
-  assert.deepEqual([...services.keys()].sort(), ['admin-web', 'api', 'jobs', 'migrate', 'postgres']);
+  // admin-ui and admin-web both run while the Vision UI migration goes tab by tab; the
+  // migration's last task removes admin-web and this list shrinks with it (ADR 006).
+  assert.deepEqual(
+    [...services.keys()].sort(),
+    ['admin-ui', 'admin-web', 'api', 'jobs', 'migrate', 'postgres']
+  );
 });
 
 test('bot-adapter is not deployed while the Yandex phase is deferred', () => {
@@ -67,6 +72,7 @@ test('every storage mount from the README is wired to a service', () => {
   assert.ok(services.get('api').includes(mounts.maps));
   assert.ok(services.get('api').includes(mounts.imports));
   assert.ok(services.get('admin-web').includes(mounts.maps));
+  assert.ok(services.get('admin-ui').includes(mounts.maps));
   assert.ok(services.get('jobs').includes(mounts.backups));
 });
 
