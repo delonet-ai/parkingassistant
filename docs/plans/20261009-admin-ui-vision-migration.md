@@ -40,8 +40,10 @@ of the migration.
 - **constraints:**
   - no parking rule may be evaluated in the UI: statuses, `today` and warnings come from the API
   - colour never carries meaning alone — every status prints its word; selection is `aria-pressed`
-  - colours, radii and spacing are tokens only (`rgb(var(--vi-color-…))`, `var(--vi-radius-…)`,
-    `var(--vi-vr-…)`); a hard-coded hex is a defect
+  - colours, radii and spacing are tokens only — `var(--vi-color-…)`, `var(--vi-radius-…)`,
+    `var(--vi-vr-…)`; a hard-coded hex is a defect. **Never wrap a `--vi-color-*` token in
+    `rgb()`**: that layer holds hex values, only the deprecated `--vi-primary` layer holds
+    triplets, and `rgb(#cfeed7)` makes the browser drop the whole declaration
   - `vendor/*.tgz` must be present to build; CI cannot build this app at all
   - `apps/admin-web` stays deployed and working until the final task
 - **assumptions:**
@@ -75,13 +77,20 @@ of the migration.
 - Create: `apps/admin-ui/src/components/EmployeeRequests.spec.js`, `GuestRequests.spec.js`, `QueuePanel.spec.js`
 - Modify: `apps/admin-ui/src/store.js`, `apps/admin-ui/src/App.vue`
 
-- [ ] add `loadRequests()` to `store.js` reading `/admin/employee-parking-requests`, `/admin/guest-parking-requests` and `/admin/dashboard` for the selected date
-- [ ] build `EmployeeRequests.vue`: `ViTableSimple` of requests with status and reason, a create form (`ViSelect` employee + date) posting `/admin/employee-parking-requests`, and per-row cancel posting `/admin/employee-parking-requests/cancel`
-- [ ] build `GuestRequests.vue`: table of guest requests, create form posting `/admin/guest-parking-requests`, per-row `assign` and `cancel` posting `/admin/guest-parking-requests/assign` and `/cancel`
-- [ ] build `QueuePanel.vue`: queue state for the date plus a button posting `/admin/queue-run`, showing assigned/skipped counts from the response
-- [ ] register `requests` in `PAGES` in `App.vue`
-- [ ] write specs: tables render, a refused write shows the API message, an assign with warnings shows the warning text
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 2
+- [x] add `loadRequests()` to `store.js` reading `/admin/employee-parking-requests`, `/admin/guest-parking-requests` and `/admin/dashboard` for the selected date — **not added**: `loadDay()` already fetches all three for the selected date, and a second loader would have duplicated every request. The tab reads the same state.
+- [x] build `EmployeeRequests.vue`: `ViTableSimple` of requests with status and reason, a create form (`ViSelect` employee + date) posting `/admin/employee-parking-requests`, and per-row cancel posting `/admin/employee-parking-requests/cancel`
+- [x] build `GuestRequests.vue`: table of guest requests, create form posting `/admin/guest-parking-requests`, per-row `assign` and `cancel` posting `/admin/guest-parking-requests/assign` and `/cancel`
+- [x] build `QueuePanel.vue`: queue state for the date plus a button posting `/admin/queue-run`, showing assigned/skipped counts from the response
+- [x] register `requests` in `PAGES` in `App.vue`
+- [x] write specs: tables render, a refused write shows the API message, an assign with warnings shows the warning text
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — 63 UI specs, 299 node tests, all green.
+
+⚠️ Two payload shapes differ between endpoints and both silently rendered a dash until the
+screenshot showed it: `/admin/employee-parking-requests` flattens the place to
+`assignedReservation.parkingPlaceCode`, while `/admin/guest-parking-requests` and
+`/admin/dashboard` nest a whole `parkingPlace` object; and the guest request calls the
+inviting employee `host`, not `hostUser`. Worth aligning in the API later — the UI now
+follows each endpoint as it is, and the specs use real payload shapes.
 
 ### Task 2: Линии — positions, occupancy, departures and contact access
 
@@ -191,7 +200,7 @@ Component mapping, read out of Vision UI 1.16.0 and already used by the `Ден�
 | buttons | `ViButton` | `color`, `variant` (`filled`/`outlined`/`link`), `size`, `loading`, `disabled` |
 | static tables | `ViTableSimple` | `headers`, `rows`, slots `header`/`cell` — a cell without `text` falls to the `cell` slot |
 | sortable/selectable tables | `ViTable` | `headers`, `rows`, `rowKey`, `selectable`, `sortedHeader`, `stickyHeader` |
-| status words | `ViNameplate` | `size`, `textColor`, `backgroundColor` (plain CSS colours, so pass tokens) |
+| status words | `ViNameplate` | `size`, `textColor`, `backgroundColor` — plain CSS colours applied inline, so pass `var(--vi-color-…)` |
 | counters | `ViBadge` | `value`, `type`, `size` |
 | filter toggles | `ViChip` | `variant`, `color`, `selected`, `interactive` |
 | text fields | `ViInput` | `label`, `labelType`, `clearable`, `required`, `mask`; **`v-model:value`**; errors via the `error` slot |
@@ -201,6 +210,12 @@ Component mapping, read out of Vision UI 1.16.0 and already used by the `Ден�
 | dialogs | `ViModal` | `isOpened`/`useModel`, `title`, `width`, `hasCloseButton`, `disableOverlayClose` |
 | collapsibles | `ViSpoiler` | `title`, `update:isActive` |
 | icons | `ViIcon` | `icon` (glyph name from `vi-icons-font.css`), `size`, `spin` |
+
+Two stylesheets must be imported, not one: components from `/next` (`ViCard`,
+`ViCardContent`) ship their styles in `@vi-frontend/vision-ui/css/next`, and without it they
+render with hashed class names nothing defines — no background, no border, no padding.
+`ViCard` has no `padding` prop; padding belongs to `ViCardContent`. `ViSelect` needs
+`track-by-value` to match a primitive, or nothing ever shows as selected.
 
 Reading the docs: the `vision-ui-local` MCP server exposes `list_components`,
 `search_components`, `get_component`, `get_story` and `get_tokens`. Without it, the mirror files

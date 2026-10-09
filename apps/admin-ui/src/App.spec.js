@@ -137,11 +137,25 @@ describe('App', () => {
     expect(wrapper.findAll('button').some((button) => button.text() === 'Отменить')).toBe(true)
   })
 
-  it('shows the five not-yet-migrated tabs as such instead of an empty screen', async () => {
+  it('renders the Заявки screen, not the placeholder', async () => {
+    const wrapper = await boot()
+
+    state.view = 'requests'
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).not.toContain('ещё не перенесена')
+    expect(text).toContain('Заявки и очередь')
+    expect(text).toContain('Заявки сотрудников')
+    expect(text).toContain('Очередь')
+    expect(text).toContain('Гостевые заявки')
+  })
+
+  it('shows the four not-yet-migrated tabs as such instead of an empty screen', async () => {
     const wrapper = await boot()
 
     for (const [value, title] of [
-      ['requests', 'Заявки'],
       ['lines', 'Линии'],
       ['catalog', 'Справочники'],
       ['audit', 'Журнал'],

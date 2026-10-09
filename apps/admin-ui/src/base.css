@@ -186,3 +186,33 @@ body {
   align-items: center;
   gap: 12px;
 }
+
+.section-head {
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* Form fields keep a readable width instead of stretching across a wide card; the button
+   sizes to its label and stays on the same line. */
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.form-row > * {
+  flex: 0 1 220px;
+  min-width: 0;
+}
+
+.form-row > button {
+  flex: 0 0 auto;
+}
+
+.queue-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

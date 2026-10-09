@@ -88,3 +88,52 @@ export function positionLabel(capacity, position) {
 
   return labels ? labels[position - 1] || `позиция ${position}` : ''
 }
+
+// Request and queue states, in the same two-channel form as the place statuses: a Russian
+// word plus a colour. The SSR tab printed the raw English token for both.
+const REQUEST_STATES = [
+  { state: 'active', label: 'подана', group: 'blue' },
+  { state: 'queued', label: 'в очереди', group: 'purple' },
+  { state: 'assigned', label: 'выдано', group: 'green' },
+  { state: 'canceled', label: 'отменена', group: 'gray' }
+]
+
+const QUEUE_STATES = [
+  { state: 'waiting', label: 'ждёт', group: 'purple' },
+  { state: 'assigned', label: 'выдано', group: 'green' },
+  { state: 'skipped', label: 'пропущен', group: 'yellow' },
+  { state: 'canceled', label: 'отменён', group: 'gray' }
+]
+
+function lookup(entries, state) {
+  return entries.find((entry) => entry.state === state) || null
+}
+
+function tokens(entry) {
+  const group = entry ? entry.group : 'gray'
+
+  return {
+    backgroundColor: `var(--vi-color-${group}-200)`,
+    textColor: `var(--vi-color-${group}-900)`
+  }
+}
+
+export function requestLabel(state) {
+  const entry = lookup(REQUEST_STATES, state)
+
+  return entry ? entry.label : state || '—'
+}
+
+export function requestColors(state) {
+  return tokens(lookup(REQUEST_STATES, state))
+}
+
+export function queueLabel(state) {
+  const entry = lookup(QUEUE_STATES, state)
+
+  return entry ? entry.label : state || '—'
+}
+
+export function queueColors(state) {
+  return tokens(lookup(QUEUE_STATES, state))
+}
