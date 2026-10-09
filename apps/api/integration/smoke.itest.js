@@ -51,12 +51,23 @@ describe('api smoke (integration)', { skip: skipWithoutDatabase() }, () => {
   });
 
   it('answers the GET /admin/places read endpoint with 200 and a places array', async () => {
-    const response = await fetch(`${api.baseUrl}/admin/places`);
+    const response = await fetch(`${api.baseUrl}/admin/places`, { headers: { cookie: api.cookie } });
     const payload = await response.json();
 
     assert.equal(response.status, 200);
     assert.equal(payload.status, 'ok');
     assert.ok(Array.isArray(payload.places), 'expected payload.places to be an array');
+  });
+
+  // The guard, end to end: the same read without the cookie the harness obtained. The two
+  // health probes above answer anonymously because they are `public: true`; nothing else does.
+  it('refuses the same read with 401 when no session cookie is sent', async () => {
+    const response = await fetch(`${api.baseUrl}/admin/places`);
+    const payload = await response.json();
+
+    assert.equal(response.status, 401);
+    assert.equal(payload.code, 'unauthorized');
+    assert.equal(payload.error, 'Authentication required');
   });
 
   it('reads the seeded bootstrap administrator through the pool', async () => {

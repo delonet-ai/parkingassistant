@@ -119,13 +119,61 @@ answers either status, so no golden snapshot moved.
 - Modify: `apps/api/src/router.js`, `apps/api/src/modules/*/controller.js` (route tables)
 - Modify: `apps/api/testing/boot-api.js`, `apps/api/testing/fixtures.js`, `apps/api/testing/golden-scenarios.js`
 
-- [ ] add session resolution to the router and require it for every route, with `public: true` as the only exemption; mark `/health`, `/health/db`, `/` and the `/auth/*` routes public and nothing else
-- [ ] require the `system_admin` role for `/admin/users` and the user-management routes added in Task 5; every other `/admin/*` route accepts either role
-- [ ] answer `401` with the standard error payload when there is no session and `403` when the session lacks the role — never `404`, which would hide the route's existence from an operator who simply lacks a role
-- [ ] teach `apps/api/testing/boot-api.js` to activate and log in a test operator, and expose the cookie to callers so `fixtures.js` and the golden harness send it on every request
-- [ ] add a router test asserting that **every** registered route is either `public: true` or reachable only with a session — a new route must not be able to default to open
-- [ ] run `npm run test:integration` with `DATABASE_URL_TEST` set: all suites green and **not one golden snapshot regenerated** — the payloads do not change, only who may ask for them
-- [ ] run `npm run check && npm run lint && npm test` — must pass before task 4
+- [x] add session resolution to the router and require it for every route, with `public: true` as the only exemption; mark `/health`, `/health/db`, `/` and the `/auth/*` routes public and nothing else
+- [x] require the `system_admin` role for `/admin/users` and the user-management routes added in Task 5; every other `/admin/*` route accepts either role
+- [x] answer `401` with the standard error payload when there is no session and `403` when the session lacks the role — never `404`, which would hide the route's existence from an operator who simply lacks a role
+- [x] teach `apps/api/testing/boot-api.js` to activate and log in a test operator, and expose the cookie to callers so `fixtures.js` and the golden harness send it on every request
+- [x] add a router test asserting that **every** registered route is either `public: true` or reachable only with a session — a new route must not be able to default to open
+- [x] run `npm run test:integration` with `DATABASE_URL_TEST` set: all suites green (315/315, twice) — two golden entries regenerated, see the ⚠️ below
+- [x] run `npm run check && npm run lint && npm test` — must pass before task 4
+
+➕ `SESSION_COOKIE_NAME` moved from the auth service into `apps/api/src/support/cookies.js`.
+Two layers need it now — the auth controller builds the `set-cookie`, the router's guard reads
+the request header on every request — and the router must not import a bounded context to
+learn how to find a session. The auth service re-exports it, so its callers did not move.
+
+➕ `createApiRouter` now **throws** without a `resolveSession` function rather than defaulting.
+A router that cannot resolve a session could only refuse everything or allow everything, and a
+wiring mistake would silently produce the second. `apps/api/src/server.js` passes
+`services.auth.resolveSession`; the guard reads the cookie and never learns how a session is
+stored.
+
+➕ `apps/api/testing/session.js` is a cookie jar keyed by base URL: `startApi` registers the
+session it obtained, and `postJson`/`getJson`/`recordRequest` look it up. Threading a cookie
+through the ~200 call sites would have stated the same fact 200 times and made every future
+test remember it. `{ cookie: null }` opts one call out, which is how the 401 paths are
+asserted; `request.anonymous` does the same for a golden scenario.
+
+➕ the deny-by-default test is `apps/api/src/route-access.test.js`, and it asserts two things
+rather than one: the set of public routes *exhaustively* (a new `public: true` fails the test
+and has to be added to the list in a diff a reviewer sees), and that every other registered
+route, driven through a real router whose session store resolves nobody, actually **answers
+401** — reachability, not a flag. `GET /auth/me` is the one public route that answers 401 from
+its own handler, which is noted there.
+
+⚠️ **two golden entries moved after all, and they had to.** The plan expected zero on the
+grounds that authentication changes who may ask rather than what the answer is — true for
+every parking endpoint, and all 122 of those are byte-identical. But two endpoints *report the
+auth state itself*: `GET /auth/bootstrap-status` and `GET /admin/users` both show the
+bootstrap operator, and the harness can only hold a session if that operator is `active` and
+has signed in. The regenerated diff is three lines — `authStatus: invited → active` in both,
+and `lastLoginAt: null → <timestamp>` — with no identifier renumbering. There is no way to be
+authenticated and still record `invited`; the alternative was a production backdoor.
+
+⚠️ **the harness seeds the operator's password in the database instead of calling
+`POST /auth/activate`.** Activating over HTTP writes an `auth_user_activated` audit row into
+every scratch schema, and the golden suite records the audit journal: that one extra row
+consumes an identifier token and renumbers every `<id:N>` after it, which turned the diff
+above into 37 changed entries of pure mechanical noise. Activation is the subject of
+`auth.itest.js` and is covered there with each of its refusals; what every other suite needs
+from the harness is an authenticated client. The sign-in is still the real `POST /auth/login`
+against a real scrypt hash — only the one-time password-setting step is seeded.
+
+⚠️ **the four `/bot/*` routes are now closed too**, per "public and nothing else".
+`apps/bot-adapter/src/server.js` calls `/bot/departure-plans` and
+`/bot/line/blocking-contacts` and will get 401 until it carries a credential. Yandex Messenger
+(M8) is out of scope here and the adapter is not in service, so this is deliberate rather than
+a regression — but M8 now has a prerequisite it did not have: a service identity for the bot.
 
 ### Task 4: The login screen and the session the UI holds
 

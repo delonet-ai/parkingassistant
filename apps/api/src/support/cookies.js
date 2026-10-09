@@ -8,6 +8,12 @@
 // cookie and nobody could sign in. `HttpOnly` and `SameSite=Lax` are set, and the missing
 // `Secure` is a property of the deployment, not of this code: behind TLS it should be added.
 
+// The one name the session travels under. It lives here rather than in the auth service
+// because two layers need it: the auth controller builds the `set-cookie`, and the router's
+// guard reads the request header on every request — and the router must not have to import a
+// bounded context to learn how to find a session.
+const SESSION_COOKIE_NAME = 'pa_session';
+
 // `decodeURIComponent` throws on a dangling percent escape, and the header is whatever the
 // client sent. An undecodable value is handed back raw: it will simply not match any stored
 // session hash, which is the right answer for a tampered cookie.
@@ -75,6 +81,7 @@ function serializeCookie(name, value, { maxAge, path = '/', httpOnly = true, sam
 }
 
 module.exports = {
+  SESSION_COOKIE_NAME,
   parseCookies,
   readCookie,
   serializeCookie

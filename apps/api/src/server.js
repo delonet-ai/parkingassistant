@@ -30,7 +30,7 @@ function sendJson(res, statusCode, payload) {
   writeJson(res, statusCode, normalizeApiErrorPayload(payload, statusCode));
 }
 
-const { modules } = createModules({
+const { modules, services } = createModules({
   appTimezone,
   dbRepository,
   guestReserveMinimum,
@@ -38,7 +38,11 @@ const { modules } = createModules({
   startedAt
 });
 
-const server = http.createServer(createApiRouter({ modules, sendJson }));
+// The guard's session lookup is the auth context's `resolveSession`; the router reads the
+// cookie and never learns how a session is stored.
+const server = http.createServer(
+  createApiRouter({ modules, sendJson, resolveSession: services.auth.resolveSession })
+);
 
 server.listen(port, '0.0.0.0', () => {
   // The bound port, not the requested one: PORT=0 lets the OS pick, and the test

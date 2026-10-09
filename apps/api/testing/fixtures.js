@@ -10,6 +10,8 @@
 // single test file shares one scratch schema across all of its cases, and
 // parking_places.code / line_groups.code are unique.
 
+const { sessionHeaders } = require('./session');
+
 let sequence = 0;
 
 function nextSuffix() {
@@ -244,20 +246,39 @@ function createFixtures(db) {
   };
 }
 
-/** POST helper — every admin write endpoint takes and returns JSON. */
-async function postJson(baseUrl, pathname, body) {
+/**
+ * `target` is a base URL or the object `startApi` returned — both work, and the object reads
+ * better now that it carries the session too.
+ */
+function baseUrlOf(target) {
+  return typeof target === 'string' ? target : target.baseUrl;
+}
+
+/**
+ * POST helper — every admin write endpoint takes and returns JSON.
+ *
+ * The session cookie comes from the jar `startApi` filled (see testing/session.js), so a test
+ * does not restate it per call. `options.cookie = null` sends none, which is how the 401 paths
+ * are asserted; `options.cookie = '<name=value>'` sends another operator's session.
+ */
+async function postJson(target, pathname, body, options = {}) {
+  const baseUrl = baseUrlOf(target);
+
   const response = await fetch(`${baseUrl}${pathname}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...sessionHeaders(baseUrl, options) },
     body: JSON.stringify(body)
   });
 
   return { status: response.status, payload: await response.json() };
 }
 
-async function getJson(baseUrl, pathname) {
-  const response = await fetch(`${baseUrl}${pathname}`);
+async function getJson(target, pathname, options = {}) {
+  const baseUrl = baseUrlOf(target);
+
+  const response = await fetch(`${baseUrl}${pathname}`, { headers: sessionHeaders(baseUrl, options) });
+
   return { status: response.status, payload: await response.json() };
 }
 
-module.exports = { addDays, createFixtures, dayRange, getJson, postJson };
+module.exports = { addDays, baseUrlOf, createFixtures, dayRange, getJson, postJson };

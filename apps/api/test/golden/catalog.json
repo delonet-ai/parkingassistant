@@ -9,11 +9,11 @@
       "status": "ok",
       "users": [
         {
-          "authStatus": "invited",
+          "authStatus": "active",
           "createdAt": "<timestamp>",
           "displayName": "Initial System Administrator",
           "id": "<id:1>",
-          "lastLoginAt": null,
+          "lastLoginAt": "<timestamp>",
           "login": "sysadmin",
           "roles": [
             {

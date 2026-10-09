@@ -128,10 +128,28 @@ function createSystemController({ services, startedAt }) {
   return {
     name: 'system',
     routes: [
-      { method: 'GET', path: '/health', advertise: true, handler: () => handleHealth() },
-      { method: 'GET', path: '/health/db', advertise: true, handler: () => handleDbHealth() },
-      { method: 'GET', path: '/auth/bootstrap-status', advertise: true, handler: () => handleAuthBootstrapStatus() },
-      { method: 'GET', path: '/admin/users', advertise: true, handler: () => handleAdminUsersList() }
+      // The three public reads. `/health` and `/health/db` are what the container probes
+      // before anyone can sign in, and `/auth/bootstrap-status` is what the login screen asks
+      // to decide between "sign in" and "set the first password" — all three before a session
+      // can exist.
+      { method: 'GET', path: '/health', advertise: true, public: true, handler: () => handleHealth() },
+      { method: 'GET', path: '/health/db', advertise: true, public: true, handler: () => handleDbHealth() },
+      {
+        method: 'GET',
+        path: '/auth/bootstrap-status',
+        advertise: true,
+        public: true,
+        handler: () => handleAuthBootstrapStatus()
+      },
+      // Account management, not parking: a `parking_admin` runs the day and may not read the
+      // list of operators. Task 5 adds the writes behind the same role.
+      {
+        method: 'GET',
+        path: '/admin/users',
+        advertise: true,
+        roles: ['system_admin'],
+        handler: () => handleAdminUsersList()
+      }
     ]
   };
 }

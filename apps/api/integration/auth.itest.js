@@ -22,7 +22,10 @@ describe('auth activation (integration)', { skip: skipWithoutDatabase() }, () =>
 
   async function boot() {
     db = await createTestDatabase();
-    api = await startApi({ databaseUrl: db.connectionString });
+    // `authenticate: false`: the harness normally activates and signs in the bootstrap
+    // operator so the rest of the suites can reach the closed API, and this suite is the one
+    // that has to meet a database where neither has happened yet.
+    api = await startApi({ databaseUrl: db.connectionString, authenticate: false });
   }
 
   afterEach(async () => {
@@ -212,7 +215,10 @@ describe('auth sessions (integration)', { skip: skipWithoutDatabase() }, () => {
 
   before(async () => {
     db = await createTestDatabase();
-    api = await startApi({ databaseUrl: db.connectionString });
+    // `authenticate: false`: the harness normally activates and signs in the bootstrap
+    // operator so the rest of the suites can reach the closed API, and this suite is the one
+    // that has to meet a database where neither has happened yet.
+    api = await startApi({ databaseUrl: db.connectionString, authenticate: false });
 
     const activated = await postJson(api.baseUrl, '/auth/activate', {
       login: 'sysadmin',

@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 
 const { hashPassword, verifyPassword } = require('../../../../../packages/shared/passwords');
+const { SESSION_COOKIE_NAME } = require('../../support/cookies');
 const { withTransaction } = require('../../repositories/db');
 const { abortWith } = require('../../support/transaction');
 const auditRepository = require('../audit/repository');
@@ -21,7 +22,6 @@ const ACTIVATION_REFUSED = 'Activation is not available';
 const LOGIN_REFUSED = 'Invalid login or password';
 const NOT_AUTHENTICATED = 'Authentication required';
 
-const SESSION_COOKIE_NAME = 'pa_session';
 const SESSION_TTL_SECONDS = 43200; // 12 hours — one working day plus the evening jobs.
 const SESSION_TOKEN_BYTES = 32;
 

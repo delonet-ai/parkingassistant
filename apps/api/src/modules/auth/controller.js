@@ -197,13 +197,19 @@ function createAuthController({ services }) {
 
   // Not advertised: the endpoint index at `GET /` is pinned by a golden snapshot, and the
   // auth routes change who may ask, not what the API offers.
+  //
+  // All four are `public: true`, which is the one place in the API where that is not a
+  // weakness: these are the routes that *establish* a session, so requiring one would close
+  // the only door in. Each enforces its own rule instead — activation only while the database
+  // holds the single `invited` bootstrap user, login only against a verified password, and
+  // `/auth/me` answers 401 for a cookie that resolves to nobody.
   return {
     name: 'auth',
     routes: [
-      { method: 'POST', path: '/auth/activate', handler: ({ req }) => handleActivate(req) },
-      { method: 'POST', path: '/auth/login', handler: ({ req }) => handleLogin(req) },
-      { method: 'GET', path: '/auth/me', handler: ({ req }) => handleMe(req) },
-      { method: 'POST', path: '/auth/logout', handler: ({ req }) => handleLogout(req) }
+      { method: 'POST', path: '/auth/activate', public: true, handler: ({ req }) => handleActivate(req) },
+      { method: 'POST', path: '/auth/login', public: true, handler: ({ req }) => handleLogin(req) },
+      { method: 'GET', path: '/auth/me', public: true, handler: ({ req }) => handleMe(req) },
+      { method: 'POST', path: '/auth/logout', public: true, handler: ({ req }) => handleLogout(req) }
     ]
   };
 }

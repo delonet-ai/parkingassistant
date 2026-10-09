@@ -19,6 +19,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { sessionHeaders } = require('./session');
+
 const GOLDEN_DIR = path.join(__dirname, '..', 'test', 'golden');
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -202,9 +204,16 @@ async function recordRequest({ baseUrl, request, refs, normalize }) {
   const body = 'body' in resolved ? resolved.body : request.body;
   const method = request.method || 'GET';
 
+  // Every recorded request carries the harness's session (testing/session.js). Task 3 closed
+  // the API, and what it changed is *who may ask* — the recorded payloads are the same bytes
+  // an authenticated operator always got, which is why the snapshots do not move for it. A
+  // scenario can opt out with `anonymous: true` to record a refusal.
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    headers: {
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...sessionHeaders(baseUrl, request.anonymous === true ? { cookie: null } : {})
+    },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
 

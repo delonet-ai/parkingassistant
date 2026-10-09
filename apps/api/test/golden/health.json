@@ -87,7 +87,7 @@
     "status": 200,
     "payload": {
       "bootstrapUser": {
-        "authStatus": "invited",
+        "authStatus": "active",
         "displayName": "Initial System Administrator",
         "hasSystemAdminRole": true,
         "id": "<id:1>",

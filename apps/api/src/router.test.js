@@ -7,14 +7,23 @@ const { after, describe, it } = require('node:test');
 const { sendJson: writeJson } = require('../../../packages/shared/http');
 const { createApiRouter } = require('./router');
 
+// Every route the error-handling cases below register is `public: true`: they are about what
+// the router does with a handler's result, and a guard refusal would answer before the handler
+// ran. The guard itself has its own describe block at the bottom.
+const SESSION = {
+  session: { id: 'session-1', expiresAt: '2026-01-02T00:00:00.000Z' },
+  authUser: { id: 'user-1', login: 'operator', displayName: 'Operator', status: 'active' },
+  roles: ['parking_admin']
+};
+
 // A handler that throws used to be fatal. Routes carried a `safe` flag, and only the ones
 // marked with it were dispatched inside a try/catch; on every write endpoint a rejection
 // escaped the request listener, became an unhandled rejection, and took the process down
 // under Node's default. A malformed uuid in a POST body was enough to trigger it, so this
 // was a remote DoS rather than a tidiness problem. The router now catches every route.
-function startServer(routes) {
+function startServer(routes, { resolveSession = async () => SESSION } = {}) {
   const modules = [{ name: 'test', routes }];
-  const server = http.createServer(createApiRouter({ modules, sendJson: writeJson }));
+  const server = http.createServer(createApiRouter({ modules, sendJson: writeJson, resolveSession }));
 
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -31,8 +40,11 @@ describe('createApiRouter error handling', () => {
 
   after(() => Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve)))));
 
-  async function withRoutes(routes) {
-    const started = await startServer(routes);
+  async function withRoutes(routes, options) {
+    const started = await startServer(
+      routes.map((route) => ({ public: true, ...route })),
+      options
+    );
     servers.push(started.server);
     return started;
   }
@@ -227,5 +239,145 @@ describe('createApiRouter error handling', () => {
         `${path} still carries a \`safe\` route flag, which the router no longer reads`
       );
     }
+  });
+});
+
+// The guard (Task 3). What is asserted here is the router's half of it: a closed route needs
+// a session, a role-scoped route needs the role, and a public one needs neither. Which routes
+// are closed is asserted over the real composed table in route-access.test.js.
+describe('createApiRouter access control', () => {
+  const servers = [];
+
+  after(() => Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve)))));
+
+  async function withRoutes(routes, options) {
+    const started = await startServer(routes, options);
+    servers.push(started.server);
+    return started;
+  }
+
+  const okHandler = async () => ({ statusCode: 200, payload: { status: 'ok', service: 'api' } });
+
+  it('refuses a route with no `public` flag when no session resolves', async () => {
+    const { url } = await withRoutes([{ method: 'GET', path: '/admin/thing', handler: okHandler }], {
+      resolveSession: async () => null
+    });
+
+    const response = await fetch(url('/admin/thing'));
+
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), {
+      status: 'error',
+      service: 'api',
+      error: 'Authentication required',
+      code: 'unauthorized',
+      details: null
+    });
+  });
+
+  it('serves a public route without consulting the session store at all', async () => {
+    let resolveCalls = 0;
+
+    const { url } = await withRoutes([{ method: 'GET', path: '/health', public: true, handler: okHandler }], {
+      resolveSession: async () => {
+        resolveCalls += 1;
+        return null;
+      }
+    });
+
+    const response = await fetch(url('/health'));
+
+    assert.equal(response.status, 200);
+    // `/health` has to answer while the database is down, which it cannot do if resolving a
+    // session — a query — happens first.
+    assert.equal(resolveCalls, 0);
+  });
+
+  it('hands the resolved operator and roles to the handler', async () => {
+    let seen = null;
+
+    const { url } = await withRoutes([
+      {
+        method: 'GET',
+        path: '/admin/thing',
+        handler: async (context) => {
+          seen = { authUser: context.authUser, roles: context.roles, session: context.session };
+          return okHandler();
+        }
+      }
+    ]);
+
+    assert.equal((await fetch(url('/admin/thing'))).status, 200);
+    assert.deepEqual(seen, { authUser: SESSION.authUser, roles: SESSION.roles, session: SESSION.session });
+  });
+
+  it('passes a role-scoped route when the session holds one of the required roles', async () => {
+    const { url } = await withRoutes(
+      [{ method: 'GET', path: '/admin/users', roles: ['system_admin'], handler: okHandler }],
+      { resolveSession: async () => ({ ...SESSION, roles: ['parking_admin', 'system_admin'] }) }
+    );
+
+    assert.equal((await fetch(url('/admin/users'))).status, 200);
+  });
+
+  // 403 and not 404: an operator who is signed in but holds the wrong role has to be told
+  // that the route exists and is not theirs, or they report a broken screen instead of a
+  // missing role.
+  it('answers 403, not 404, when the session lacks the required role', async () => {
+    const { url } = await withRoutes([
+      { method: 'GET', path: '/admin/users', roles: ['system_admin'], handler: okHandler }
+    ]);
+
+    const response = await fetch(url('/admin/users'));
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      status: 'error',
+      service: 'api',
+      error: 'Your role does not allow this action',
+      code: 'forbidden',
+      details: null
+    });
+  });
+
+  it('refuses before the handler runs, so a closed route cannot do work anonymously', async () => {
+    let handlerCalls = 0;
+
+    const { url } = await withRoutes(
+      [
+        {
+          method: 'POST',
+          path: '/admin/write',
+          handler: async () => {
+            handlerCalls += 1;
+            return okHandler();
+          }
+        }
+      ],
+      { resolveSession: async () => null }
+    );
+
+    assert.equal((await fetch(url('/admin/write'), { method: 'POST' })).status, 401);
+    assert.equal(handlerCalls, 0);
+  });
+
+  it('answers 500 without leaking the driver message when session resolution throws', async () => {
+    const { url } = await withRoutes([{ method: 'GET', path: '/admin/thing', handler: okHandler }], {
+      resolveSession: async () => {
+        throw new Error('relation "auth_sessions" does not exist');
+      }
+    });
+
+    const response = await fetch(url('/admin/thing'));
+    const body = await response.json();
+
+    assert.equal(response.status, 500);
+    assert.equal(body.error, 'Internal server error');
+  });
+
+  // A router that cannot resolve a session could only refuse everything or allow everything,
+  // and a wiring mistake would silently produce the second.
+  it('refuses to be constructed without a resolveSession function', () => {
+    assert.throws(() => createApiRouter({ modules: [], sendJson: writeJson }), /resolveSession/);
   });
 });

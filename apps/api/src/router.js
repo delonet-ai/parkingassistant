@@ -2,6 +2,21 @@
 
 const { URL } = require('node:url');
 const { errorPayload } = require('../../../packages/shared/errors');
+const { SESSION_COOKIE_NAME, readCookie } = require('./support/cookies');
+
+// Deny by default. A route is closed unless its table entry says `public: true`, so a route
+// added later without a thought about access control is closed rather than open — the
+// direction a mistake has to fall. `apps/api/src/route-access.test.js` enumerates the
+// composed table and fails if the set of public routes is anything but the four kinds below
+// (`/health`, `/health/db`, `/auth/*` and the derived index at `GET /`), which is what makes
+// this a rule rather than an intention.
+//
+// `roles` narrows a closed route further: a session whose roles do not intersect it answers
+// 403. An empty or absent `roles` means "any signed-in operator", which with the two roles
+// the seed defines (`system_admin`, `parking_admin`) is every `/admin/*` route but the
+// user-management ones.
+const AUTHENTICATION_REQUIRED = 'Authentication required';
+const ROLE_REQUIRED = 'Your role does not allow this action';
 
 // The router owns no routes of its own. Each module publishes a route table and the router
 // composes them in the order `modules/index.js` lists the contexts; the endpoint index
@@ -9,10 +24,10 @@ const { errorPayload } = require('../../../packages/shared/errors');
 // cannot drift apart the way the hand-kept `rootEndpoints` array could.
 //
 // A route entry is:
-//   { method, path | paths[] | pattern, handler, advertise? }
+//   { method, path | paths[] | pattern, handler, advertise?, public?, roles? }
 //
-// `handler` receives one object: { req, url, searchParams, params } and returns
-// { statusCode, payload, headers? }. Every route is
+// `handler` receives one object: { req, url, searchParams, params, authUser, roles, session }
+// and returns { statusCode, payload, headers? }. Every route is
 // dispatched through the same catch: a handler that throws answers 500 and the process
 // stays up. `safe` is gone — it used to mean "this route catches", which left the write
 // endpoints letting a rejection escape the request listener into an unhandled rejection,
@@ -73,8 +88,60 @@ function findRoute({ exactRoutes, patternRoutes }, method, pathname) {
   return null;
 }
 
-function createApiRouter({ modules, sendJson }) {
+// 403, never 404. Hiding the route from an operator who is signed in but holds the wrong
+// role would turn "you may not do this" into "this does not exist", and the operator would
+// report a broken UI instead of a missing role.
+function accessRefusal(route, resolved) {
+  if (!resolved) {
+    return { statusCode: 401, error: AUTHENTICATION_REQUIRED };
+  }
+
+  const required = route.roles;
+
+  if (Array.isArray(required) && required.length > 0 && !required.some((role) => resolved.roles.includes(role))) {
+    return { statusCode: 403, error: ROLE_REQUIRED };
+  }
+
+  return null;
+}
+
+function createApiRouter({ modules, sendJson, resolveSession }) {
+  // Not optional, and not defaulted to something permissive: a router built without a way to
+  // resolve a session could only either refuse everything or allow everything, and the second
+  // is the one a wiring mistake would silently produce.
+  if (typeof resolveSession !== 'function') {
+    throw new TypeError('createApiRouter requires a resolveSession function');
+  }
+
   const table = buildRouteTable(modules);
+
+  // Resolved once per request and handed to the handler, so a service that needs to name the
+  // actor does not have to re-read the cookie. A public route resolves nobody and does not
+  // touch the database: `/health` has to answer while the pool is down.
+  async function authorize(route, req, res) {
+    if (route.public === true) {
+      return { allowed: true, resolved: null };
+    }
+
+    let resolved;
+
+    try {
+      resolved = await resolveSession(readCookie(req.headers.cookie, SESSION_COOKIE_NAME));
+    } catch (error) {
+      console.error('session resolution failed', error);
+      sendJson(res, 500, errorPayload('Internal server error'));
+      return { allowed: false };
+    }
+
+    const refusal = accessRefusal(route, resolved);
+
+    if (refusal) {
+      sendJson(res, refusal.statusCode, errorPayload(refusal.error, refusal.statusCode));
+      return { allowed: false };
+    }
+
+    return { allowed: true, resolved };
+  }
 
   async function dispatch(route, context, res) {
     try {
@@ -116,12 +183,21 @@ function createApiRouter({ modules, sendJson }) {
     const matched = findRoute(table, req.method, url.pathname);
 
     if (matched) {
+      const access = await authorize(matched.route, req, res);
+
+      if (!access.allowed) {
+        return;
+      }
+
       const context = {
         req,
         url,
         searchParams: url.searchParams,
         params: matched.params,
-        pathname: url.pathname
+        pathname: url.pathname,
+        authUser: access.resolved ? access.resolved.authUser : null,
+        roles: access.resolved ? access.resolved.roles : [],
+        session: access.resolved ? access.resolved.session : null
       };
 
       await dispatch(matched.route, context, res);

@@ -35,8 +35,10 @@ describe('demo dataset (integration)', { skip: skipWithoutDatabase() }, () => {
     return Number(result.rows[0].count);
   };
 
+  // The API is closed since Task 3; `startApi` signed in the bootstrap operator and hands
+  // back the cookie it got.
   const getJson = async (pathname) => {
-    const response = await fetch(`${api.baseUrl}${pathname}`);
+    const response = await fetch(`${api.baseUrl}${pathname}`, { headers: { cookie: api.cookie } });
     const payload = await response.json();
     assert.equal(response.status, 200, `${pathname} → ${response.status}`);
     return payload;
