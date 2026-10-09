@@ -52,10 +52,13 @@ fi
 
 log "Deploying $(git rev-parse --short HEAD) ($(git log -1 --format=%s))"
 
+# --remove-orphans: a service deleted from the compose file keeps running otherwise, and it
+# keeps its published port with it — which is how the old admin container went on answering
+# on 3340 while its replacement came up with no ports at all.
 if [ "${NO_BUILD:-0}" = "1" ]; then
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
 else
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --remove-orphans
 fi
 
 # `up -d` returns as soon as the containers are created; the one-shot migrate container and the
