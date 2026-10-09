@@ -3,7 +3,7 @@
 ## Files
 
 - `infra/docker/app.Dockerfile` - base runtime for `api`, `bot-adapter`, `jobs`
-- `infra/docker/admin-web.Dockerfile` - runtime for `admin-web`
+- `infra/docker/admin-ui.Dockerfile` - runtime for `admin-ui`
 
 ## Current State
 

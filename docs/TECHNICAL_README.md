@@ -16,7 +16,7 @@
 Текущие deployable units:
 
 - `api`: backend API, бизнес-операции, работа с PostgreSQL, audit/history, jobs endpoints.
-- `admin-web`: server-rendered admin UI, работает только через backend API.
+- `admin-ui`: admin UI на Vue 3 и дизайн-системе Vision UI; статика, планы этажей и прокси `/api` отдаются собственным сервером.
 - `bot-adapter`: HTTP adapter для сотруднических сценариев и будущей интеграции с Yandex Messenger.
 - `jobs`: scheduler-контейнер, вызывает backend job endpoints по расписанию.
 - `postgres`: основная БД и единственный источник истины.
@@ -40,7 +40,7 @@
 
 Что уже есть в admin UI:
 
-- вкладка `День`: дата, KPI, операционная карта, карточка места и дневные таблицы;
+- вкладка `День`: дата, KPI, список элементов со слотами, карточка места и дневные таблицы;
 - вкладка `Заявки`: заявки сотрудников, гости, очередь и обработка;
 - вкладка `Линии`: позиции, выезды, конфликты и contact logs;
 - вкладка `Справочники`: сотрудники, места, постоянные закрепления, истории;
@@ -53,7 +53,7 @@
 
 ```text
 Admin Browser
-  -> admin-web
+  -> admin-ui
     -> api
       -> postgres
 
@@ -70,7 +70,7 @@ jobs
 Ключевые правила архитектуры:
 
 - бизнес-логика находится в backend API;
-- admin-web и bot-adapter не должны дублировать парковочные правила;
+- admin-ui и bot-adapter не должны дублировать парковочные правила;
 - все важные изменения пишутся в audit/history;
 - все временные правила работают в `Europe/Moscow`;
 - PostgreSQL хранит канонические данные;
@@ -85,11 +85,11 @@ jobs
 - `apps/api/src/repositories/db.js`: `queryOne`/`queryMany` и `withTransaction`.
 - `apps/api/src/serializers`: общие row → JSON мапперы, которыми пользуются несколько контекстов.
 - `apps/api/src/support`: request-shaped helpers (`abortWith`, `parsePositiveLimit`, …).
-- `apps/admin-web/src/server.js`: bootstrap admin UI — config и listen, 17 строк.
-- `apps/admin-web/src/http/`: router и три route-группы (`assets`, `page`, `forms`); весь data-fetching живет здесь.
-- `apps/admin-web/src/api-client.js`: единственное место, откуда admin-web ходит в API.
-- `apps/admin-web/src/pages/`: по одному renderer на вкладку + общий shell (`layout.js`) и registry (`registry.js`).
-- `apps/admin-web/src/components/`: таблицы, формы и панели, из которых собираются вкладки.
+- `apps/admin-ui/server.js`: статика бандла, планы этажей, загрузка подложек и прокси `/api` — только node builtins.
+- `apps/admin-ui/src/api.js`: единственное место, откуда UI ходит в API.
+- `apps/admin-ui/src/store.js`: реактивное состояние дня; каждая запись перезагружает день.
+- `apps/admin-ui/src/pages/`: по одной странице на вкладку; `src/components/` — то, из чего они собраны.
+- `apps/admin-ui/src/statuses.js`: статусы мест, заявок, очереди и источников — слово плюс токен цвета.
 - `apps/bot-adapter/src/server.js`: текущий bot adapter entrypoint.
 - `apps/jobs/src/scheduler.js`: scheduler entrypoint.
 - `packages/shared`: общие helpers для HTTP, дат, HTML escaping и API errors.
@@ -101,7 +101,7 @@ jobs
 Текущие команды проверки:
 
 - `npm run check`: синтаксическая проверка JS entrypoints через `node --check`.
-- `npm run smoke:m1`: локально поднимает `api` и `admin-web`, проверяет health/root/error/404/SSR paths.
+- `npm run smoke:m1`: локально поднимает `api` и `admin-ui`, проверяет health, root, error и 404.
 
 ## Data Model
 
@@ -205,27 +205,26 @@ local changes
 
 ### Состав стека
 
-`docker-compose.yml` описывает шесть сервисов, и только их:
+`docker-compose.yml` описывает пять сервисов, и только их:
 
 | Сервис | Образ | Роль |
 |---|---|---|
 | `postgres` | `postgres:16-bookworm` | БД, healthcheck через `pg_isready` |
 | `migrate` | `infra/docker/app.Dockerfile` | one-shot `npm run db:migrate`, стартует после healthy `postgres` |
 | `api` | `infra/docker/app.Dockerfile` | HTTP API, порт `3330` → 3000 |
-| `admin-web` | `infra/docker/admin-web.Dockerfile` | SSR-админка, порт `3340` → 3100 |
-| `admin-ui` | `infra/docker/admin-ui.Dockerfile` | Vue 3 админка на Vision UI, порт `3360` → 3100 |
+| `admin-ui` | `infra/docker/admin-ui.Dockerfile` | Админка на Vision UI, порт `3340` → 3100 |
 | `jobs` | `infra/docker/jobs.Dockerfile` | планировщик регулярных задач |
 
 `bot-adapter` в стек **намеренно не включён**: фаза Yandex Messenger отложена до финализации логики
 и UI. Entrypoint и npm-скрипт остаются в репозитории — не развёрнут только сервис.
 
-`api` и `admin-web` имеют собственный container healthcheck (`node -e fetch(/health)`), поэтому
-`admin-web` и `jobs` ждут `api: service_healthy`, а не просто «процесс запустился».
+`api` и `admin-ui` имеют собственный container healthcheck (`node -e fetch(/health)`), поэтому
+`admin-ui` и `jobs` ждут `api: service_healthy`, а не просто «процесс запустился».
 
 Образы самодостаточны: исходники копируются на этапе build, в compose монтируется только storage.
 `app.Dockerfile` и `jobs.Dockerfile` ставят зависимости через `npm ci --omit=dev` по
-`package-lock.json`; `admin-web` живёт на builtins + `packages/shared` и не несёт `node_modules`
-вовсе. Топология закреплена тестом `infra/deployment.test.js` (он входит в `npm test`).
+`package-lock.json`; `admin-ui` собирается в двух стадиях — Vite собирает бандл, а runtime-слой
+несёт только `server.js`, `multipart.js` и `dist`, без `node_modules`. Топология закреплена тестом `infra/deployment.test.js` (он входит в `npm test`).
 
 ### Redeploy и smoke-проверка стенда
 
@@ -236,7 +235,7 @@ git push origin main
   -> ssh omv /opt/git/parkingassistant/scripts/deploy/stand.sh
      git pull --ff-only
      docker compose --env-file staging/env/app.env up -d --build
-     ожидание healthy у api и admin-web
+     ожидание healthy у api и admin-ui
   -> migrate отрабатывает сам, внутри compose
   -> npm run smoke:stand
 ```
@@ -246,8 +245,8 @@ git push origin main
 как есть, `NO_BUILD=1` перезапускает на уже собранных образах.
 
 `npm run smoke:stand` (`scripts/smoke/stand.js`) запускается из dev-контейнера и проверяет
-`3330/health`, `3330/health/db`, `3340/health`, рендер `3340/?view=day`, а также `3360/health`,
-оболочку SPA на `3360/` и прокси `3360/api/health`. Только чтение —
+`3330/health`, `3330/health/db`, `3340/health`, оболочку SPA на `3340/` и прокси
+`3340/api/health`. Только чтение —
 команда безопасна и против прода. Адрес переопределяется переменными
 `SMOKE_STAND_HOST`, `SMOKE_STAND_API_PORT`, `SMOKE_STAND_ADMIN_PORT`, `SMOKE_STAND_TIMEOUT_MS`
 (по умолчанию — стенд `192.168.0.100`).
@@ -305,8 +304,7 @@ Production storage mounts:
 Текущие production ports:
 
 - API: `3330`;
-- Admin Web (SSR, уходит): `3340`;
-- Admin UI (Vision UI): `3360`;
+- Admin UI: `3340`;
 - Bot Adapter: `3350`.
 
 ### Test Stand (staging)
@@ -370,7 +368,7 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 ### Code Structure
 
 - ~~`apps/api/src/server.js` все еще содержит крупные handler-группы и SQL-heavy business operations~~ — закрыто Phase 3: SQL вынесен в `modules/<context>/repository.js`, чистые правила в `packages/domain`, handlers в `modules/<context>/controller.js`. `server.js` — 65 строк bootstrap.
-- ~~`apps/admin-web/src/server.js` все еще содержит большую часть HTML render-функций и POST handlers~~ — закрыто Task 19: renderers разнесены по `pages/` и `components/`, data-fetching — в `http/routes/`, `server.js` — 17 строк bootstrap. HTML остался байт-в-байт прежним.
+- ~~`apps/admin-web/src/server.js` все еще содержит большую часть HTML render-функций и POST handlers~~ — закрыто Task 19, а сам `admin-web` удалён целиком вместе с переездом на Vision UI (M10).
 - `bot-adapter` пока остается отдельным adapter entrypoint без полноценной декомпозиции сценариев —
   это сознательно: фаза Yandex Messenger отложена, и сервис даже не входит в стек.
 - ~~Нет полноценного тестового harness с PostgreSQL fixture data~~ — закрыто: `packages/db/testing/harness.js`
@@ -393,7 +391,7 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
 - Авторизация и роли не включены в runtime: админка открыта, расчёт на одного оператора.
   Схема (`auth_users`, `auth_roles`, `auth_sessions`) есть, но ничего её не проверяет — M7.
 - Yandex Messenger и сценарии бота не реализованы — M8.
-- Визуальный слой admin-web — ad-hoc CSS одним инлайновым блоком; переход на дизайн-систему — M10.
+- ~~Визуальный слой — ad-hoc CSS одним инлайновым блоком~~ — закрыто M10: весь UI на Vision UI.
 - Нет структурных логов с correlation id, OpenAPI-описаний (`docs/api/` пуст) и описания формата
   Excel-каталога (`docs/catalog/` пуст).
 - **Перемещение между местами не является отдельным действием** (техдолг, не горячий): таблица
@@ -552,7 +550,7 @@ Acceptance:
 - ~~Зафиксировать единственный штатный деплой~~ — сделано: `scripts/deploy/stand.sh` из чекаута
   на хосте, [ADR 005](adr/005-stand-deploy-via-host-checkout.md).
 - ~~Добавить health/readiness checks для сервисов~~ — сделано: container healthcheck у `api` и
-  `admin-web`, `depends_on: service_healthy` у зависимых сервисов.
+  `admin-ui`, `depends_on: service_healthy` у зависимых сервисов.
 - ~~Добавить smoke-check checklist после redeploy~~ — сделано: `npm run smoke:stand`.
 - Описать backup/restore для PostgreSQL и mounted storage.
 - Усилить production env defaults и secrets: сейчас в `staging/env/app.env` лежат значения
@@ -596,40 +594,22 @@ Acceptance:
 `admin-web` в корпоративный CI и тянуть готовый образ из registry (это как раз вариант A из
 ADR 005), либо не вводить npm-зависимость вовсе — см. маршрут Б ниже.
 
-#### Статус
+#### Статус: выполнено
 
-Решение принято: **маршрут А**, Vue 3 на настоящих компонентах ДС. Зафиксировано в
-[ADR 006](adr/006-admin-ui-on-vision-ui.md), оба ограничения выше сняты — ДС есть локально
-(зеркало документации + MCP), пакеты пришли тарболами в `vendor/`.
+Маршрут **А** — Vue 3 на настоящих компонентах ДС, [ADR 006](adr/006-admin-ui-on-vision-ui.md).
+Оба ограничения сняты: документация ДС доступна локально (офлайн-зеркало и MCP), пакеты пришли
+тарболами в `vendor/`.
 
-Сделано: приложение `apps/admin-ui` (Vue 3 + Vite), сервер статики с прокси `/api`, вкладка
-**День** целиком — дата, KPI, фильтры, список элементов со слотами, операционная карточка места
-со всеми пятью операциями, таблицы дня. 33 теста на vitest + happy-dom (`npm run test:ui`),
-сервис `admin-ui` в compose на порту `3360`.
+Сделано целиком: приложение `apps/admin-ui` (Vue 3 + Vite) со своим сервером статики, планов
+этажей, загрузки подложек и прокси `/api`; все шесть вкладок — `День`, `Заявки`, `Линии`,
+`Справочники`, `Журнал`, `Места`; 108 тестов на vitest + happy-dom (`npm run test:ui`).
+`apps/admin-web` удалён вместе с Dockerfile, сервисом в compose и своими тестами; новая админка
+заняла привычный порт `3340`.
 
-Осталось: вкладки `Заявки`, `Линии`, `Справочники`, `Журнал`, `Места` и удаление `admin-web`
-последней задачей. План — `docs/plans/20261009-admin-ui-vision-migration.md`.
-
-#### Решение, которое было принято в начале milestone
-
-Нынешний `admin-web` — SSR на голом `node:http`, без фреймворка, без build step и без единой
-сторонней зависимости; его образ собирается вообще без `node_modules`. Vision UI — библиотека
-Vue 3. Поэтому миграция это не «поменять CSS», а выбор одного из двух:
-
-**Маршрут А — переписать `admin-web` как Vue 3 SPA на Vision UI.** Настоящие компоненты ДС,
-никакого расхождения с ней. Цена: уходит свойство «нет build step», появляется зависимость от
-внутреннего реестра (и ограничение 2 выше), переписываются все шесть вкладок, все формы и вместе
-с ними `tabs.test.js`, `pages.test.js` и селекторы `testing/page-model.js`. API не меняется.
-
-**Маршрут Б — оставить SSR и перенести из ДС токены и плоские классы.** Скилл поставляется с
-`references/tokens.md` (цвета RGB-триплетами, типографика, отступы, радиусы сборки 1.15.1) и
-`assets/vision-ui-preview.css` — самодостаточной CSS-реализацией классов `vi-button`, `vi-input`,
-`vi-card`, `vi-title-h2`. Это работает офлайн, без реестра и без Vue, и ломает ровно столько,
-сколько ломает смена стилей. Цена названа в самом скилле честно: превью-CSS — **приближение**
-для согласования, а не библиотека, и со временем разойдётся с настоящей ДС.
-
-Промежуточный шаг, полезный при любом выборе: собрать скиллом HTML-превью двух-трёх ключевых
-экранов (`День`, `Места`) и согласовать внешний вид **до** того, как трогать код.
+Чего миграция намеренно не трогала: ни одного эндпоинта и ни одного payload — 122 golden-снапшота
+остались байт-в-байт. Из-за этого в audit log действие оператора по-прежнему помечается
+`actorService: 'admin-web'`: это метка самого API в 32 местах, и её переименование — отдельное
+изменение API с перезаписью снапшотов.
 
 #### Что остаётся верным при любом маршруте
 
@@ -670,11 +650,11 @@ Yandex Messenger.
 
 Принципы:
 
-- бизнес-правил в этом UI нет вообще: он ходит в тот же `api`, что и admin-web, и ничего не решает
+- бизнес-правил в этом UI нет вообще: он ходит в тот же `api`, что и admin-ui, и ничего не решает
   сам — иначе появится второй источник истины для правил `19:00`/`07:00` и гостевого резерва;
 - API для всех шести сценариев **уже есть** (`/bot/*` и соответствующие admin-эндпоинты), поэтому
   milestone почти целиком про UI и идентификацию;
-- отдельный deployable unit (`apps/employee-web`) против новой роли внутри `admin-web` — решается
+- отдельный deployable unit (`apps/employee-web`) против новой роли внутри `admin-ui` — решается
   в начале milestone и фиксируется ADR: от этого зависит, как раскладываются порты и reverse proxy.
 
 **Зависимость, которую нельзя обойти: сотрудника надо опознать.** «Своё место» и «своя заявка» не
@@ -728,8 +708,8 @@ Smoke-check после деплоя:
 npm run smoke:stand
 ```
 
-Команда проверяет семь точек: `3330/health`, `3330/health/db`, `3340/health`, рендер
-`3340/?view=day`, `3360/health`, оболочку SPA на `3360/` и прокси `3360/api/health`,
+Команда проверяет пять точек: `3330/health`, `3330/health/db`, `3340/health`, оболочку SPA
+на `3340/` и прокси `3340/api/health`,
 печатает построчный отчёт и завершается с ненулевым кодом при первом же провале.
 
 Диагностика на сервере (из dev-контейнера; своего docker-демона у него нет):
@@ -737,7 +717,7 @@ npm run smoke:stand
 ```bash
 arcane ps                                   # контейнеры сервера
 arcane logs parkingassistant-api 100
-arcane logs parkingassistant-admin-web 100
+arcane logs parkingassistant-admin-ui 100
 arcane logs parkingassistant-jobs 100
 
 ssh omv docker ps --filter name=parkingassistant

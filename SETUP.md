@@ -133,7 +133,7 @@ cp .env.example staging/env/app.env
 - пароли PostgreSQL;
 - `JWT_SECRET`, `SESSION_SECRET`;
 - параметры `Yandex Messenger` (пока не используются — `bot-adapter` в стек не входит);
-- порты стенда: `API_PORT=3330`, `ADMIN_WEB_PORT=3340`, `ADMIN_UI_PORT=3360`.
+- порты стенда: `API_PORT=3330`, `ADMIN_UI_PORT=3340`.
 
 `POSTGRES_PASSWORD` действует **только при инициализации пустого кластера**. На уже существующем
 `staging/postgres` PostgreSQL сохраняет тот пароль, с которым его создали, и расхождение проявится
@@ -148,7 +148,7 @@ cp .env.example staging/env/app.env
 ```
 
 Что она делает: отказывается работать на грязном чекауте, делает `git pull --ff-only`, запускает
-`docker compose --env-file staging/env/app.env up -d --build` и ждёт, пока `api` и `admin-web`
+`docker compose --env-file staging/env/app.env up -d --build` и ждёт, пока `api` и `admin-ui`
 станут `healthy`. Ненулевой код возврата и последние 50 строк логов — если не дождалась.
 
 Из dev-контейнера:
@@ -168,7 +168,7 @@ Arcane остаётся наблюдателем и оператором уже 
 ```bash
 arcane ps                                   # что сейчас работает
 arcane logs parkingassistant-api 100
-arcane restart parkingassistant-admin-web
+arcane restart parkingassistant-admin-ui
 ```
 
 **Проект `parkingassistant` в Arcane с GitOps-привязкой трогать нельзя.** Его `redeploy` запустит
@@ -301,12 +301,13 @@ docker compose -f docker-compose.test.yml down
 
 ## Stand deployment
 
-Стек `docker-compose.yml`: `postgres`, one-shot `migrate`, `api` (`3330`), `admin-web` (`3340`),
+Стек `docker-compose.yml`: `postgres`, one-shot `migrate`, `api` (`3330`), `admin-ui` (`3340`),
 `jobs`. `bot-adapter` в стек не входит — фаза Yandex Messenger отложена.
 
-Образы собираются из `infra/docker/{app,admin-web,jobs}.Dockerfile` и самодостаточны: исходники
+Образы собираются из `infra/docker/{app,admin-ui,jobs}.Dockerfile` и самодостаточны: исходники
 копируются на этапе build, монтируется только storage (`postgres`, `maps`, `imports`, `logs`,
-`backups`). Placeholder-команд больше нет — у каждого образа реальный `CMD`.
+`backups`). У `admin-ui` сборка двухстадийная: Vite собирает бандл, в runtime-слой попадают
+только `server.js`, `multipart.js` и `dist`.
 
 После деплоя стенд проверяется одной командой:
 

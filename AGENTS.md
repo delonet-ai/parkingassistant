@@ -12,9 +12,9 @@ plain Node `http` (no web framework), PostgreSQL 16. Only runtime deps are `pg` 
 - `apps/api` — HTTP API. `src/server.js` is a bootstrap only; every bounded context lives in
   `src/modules/<context>/{controller,service,repository}.js` and the router composes their
   route tables. See `docs/adr/003-modular-architecture.md` for the layer rules.
-- `apps/admin-web` — server-rendered admin UI. Being replaced tab by tab by `apps/admin-ui`;
-  the migration's last task deletes it (see `docs/adr/006-admin-ui-on-vision-ui.md`).
-- `apps/admin-ui` — the new admin UI: **Vue 3 + Vite on the Vision UI design system**. The one
+- `apps/admin-ui` — the admin UI: **Vue 3 + Vite on the Vision UI design system**. It replaced
+  the server-rendered `apps/admin-web`, which is deleted (see
+  `docs/adr/006-admin-ui-on-vision-ui.md`). The one
   ESM package in the repo, the one with a build step, and the one with its own test runner
   (vitest + happy-dom). Its specs are `*.spec.js`, not `*.test.js`, so `node --test` does not
   try to load them as CommonJS. Run them with `npm run test:ui`.
@@ -135,15 +135,19 @@ tiebreaker.
 
 #### Rendering the admin UI in a test
 
-`apps/admin-web/testing/stub-api.js` boots the real `admin-web` process against a canned HTTP API,
-so every tab can be rendered and asserted without a database. admin-web is a pure proxy over the API
-— each tab is `fetchJson` plus a renderer — so a fixed payload per path exercises the real handler,
-the real renderers and the real HTML. `apps/admin-web/src/tabs.test.js` is the tab walk built on it,
-and it runs inside `npm test`. Use it for anything about *rendered markup*; use a `.itest.js` only
-when the assertion needs real SQL.
+The admin UI has its own runner: vitest with happy-dom, `npm run test:ui`, specs named
+`*.spec.js` beside the component. They mount the real Vision UI components against a stubbed
+`fetch`, so a tab can be rendered and asserted without a database and without a browser —
+`src/App.spec.js` boots the whole app the way the browser does, which is what catches a shell
+that renders blank while every other check is green.
 
-The stub records every path the UI requested, which is how a test asserts a request is **not** made
-(e.g. no page may fetch data no renderer reads).
+Three things the design system does silently, each of which cost a defect: `ViTableSimple`
+hands a cell to the `#cell` slot **only when it has no `text` key**; `ViModal` ignores
+`isOpened` unless `use-model` is passed, and teleports its content to `document.body`, so a
+spec must assert on the document; a masked `ViInput` emits the **unmasked** value.
+
+Assert the rendered result, never the prop you passed: a spec that checked `isOpened` passed
+while an empty modal sat over the screen.
 
 #### Characterization tests pin defects, they do not hide them
 

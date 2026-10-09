@@ -82,14 +82,14 @@
 
 - единый runtime stack на `Node.js 22`
 - `PostgreSQL 16`
-- отдельные deployable units: `admin-web`, `api`, `bot-adapter`, `jobs`
+- отдельные deployable units: `admin-ui`, `api`, `bot-adapter`, `jobs`
 - базовый app image на `node:22-bookworm-slim`
 - reverse proxy перед web и API
 
 Текущий runtime status:
 
 - `api` — рабочий backend API с parking operations, audit/history, jobs endpoints и выделенным router/module baseline.
-- `admin-web` — server-rendered admin UI поверх backend API, с вкладками `День`, `Заявки`, `Линии`, `Справочники`, `Журнал`, `Места`.
+- `admin-ui` — admin UI на Vue 3 и дизайн-системе Vision UI, с вкладками `День`, `Заявки`, `Линии`, `Справочники`, `Журнал`, `Места`.
 - `bot-adapter` — HTTP adapter для сотруднических сценариев и будущей интеграции с `Yandex Messenger`.
 - `jobs` — scheduler, вызывающий backend job endpoints по расписанию.
 
@@ -101,7 +101,7 @@
 - line occupancy, departure plans, conflicts и contact access logs;
 - инвентарь элементов-линий, подложки планов этажей, dashboard, audit logs и job runs.
 
-Текущий Admin Web baseline:
+Текущий Admin UI baseline:
 
 - ежедневный экран с KPI, операционной картой и карточкой места;
 - вкладки заявок, линий, справочников, журнала и инвентаря мест (`Места`);

@@ -195,7 +195,6 @@ module.exports = {
   PLACE_ROLES,
   PLACE_STATUSES,
   PLACE_TYPES,
-  PLACE_TYPE_BY_CAPACITY,
   assignSlotPositions,
   buildLineDefinition,
   derivePlaceStatus,

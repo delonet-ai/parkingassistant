@@ -3,14 +3,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
-const {
-  buildChecks,
-  evaluate,
-  DEFAULT_HOST,
-  DEFAULT_API_PORT,
-  DEFAULT_ADMIN_PORT,
-  DEFAULT_ADMIN_UI_PORT
-} = require('./stand');
+const { buildChecks, evaluate, DEFAULT_HOST, DEFAULT_API_PORT, DEFAULT_ADMIN_PORT } = require('./stand');
 
 test('buildChecks defaults to the documented stand coordinates', () => {
   const urls = buildChecks().map((check) => check.url);
@@ -19,25 +12,17 @@ test('buildChecks defaults to the documented stand coordinates', () => {
     `http://${DEFAULT_HOST}:${DEFAULT_API_PORT}/health`,
     `http://${DEFAULT_HOST}:${DEFAULT_API_PORT}/health/db`,
     `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/health`,
-    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/?view=day`,
-    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_UI_PORT}/health`,
-    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_UI_PORT}/`,
-    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_UI_PORT}/api/health`
+    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/`,
+    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/api/health`
   ]);
 });
 
 test('buildChecks honours host and port overrides', () => {
-  const checks = buildChecks({
-    host: 'stand.local',
-    apiPort: 3000,
-    adminPort: 3100,
-    adminUiPort: 3200
-  });
+  const checks = buildChecks({ host: 'stand.local', apiPort: 3000, adminPort: 3100 });
 
   assert.ok(checks.every((check) => check.url.startsWith('http://stand.local:')));
   assert.equal(checks[0].url, 'http://stand.local:3000/health');
-  assert.equal(checks[3].url, 'http://stand.local:3100/?view=day');
-  assert.equal(checks[6].url, 'http://stand.local:3200/api/health');
+  assert.equal(checks[4].url, 'http://stand.local:3100/api/health');
 });
 
 test('evaluate passes a healthy api response', () => {
@@ -70,9 +55,14 @@ test('evaluate fails when the database health check reports an error', () => {
   assert.equal(result.ok, false);
 });
 
-test('evaluate fails when admin-web returns HTML that is not the app shell', () => {
-  const dayView = buildChecks()[3];
+test('evaluate fails when the admin shell is served without a built bundle', () => {
+  // The SPA renders client-side, so a shell that loads no bundle is the only thing a
+  // read-only check can tell apart from a working screen.
+  const shell = buildChecks()[3];
 
-  assert.equal(evaluate(dayView, { status: 200, body: '<html><body>502 Bad Gateway</body></html>' }).ok, false);
-  assert.equal(evaluate(dayView, { status: 200, body: '<html><title>Parking Assistant</title></html>' }).ok, true);
+  assert.equal(evaluate(shell, { status: 200, body: '<html><body>502 Bad Gateway</body></html>' }).ok, false);
+  assert.equal(
+    evaluate(shell, { status: 200, body: '<div id="app"></div><script src="/assets/index-abc123.js"></script>' }).ok,
+    true
+  );
 });

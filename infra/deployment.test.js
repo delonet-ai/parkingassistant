@@ -42,12 +42,7 @@ function serviceBlocks(text) {
 const services = serviceBlocks(compose);
 
 test('the stack defines exactly the MVP services', () => {
-  // admin-ui and admin-web both run while the Vision UI migration goes tab by tab; the
-  // migration's last task removes admin-web and this list shrinks with it (ADR 006).
-  assert.deepEqual(
-    [...services.keys()].sort(),
-    ['admin-ui', 'admin-web', 'api', 'jobs', 'migrate', 'postgres']
-  );
+  assert.deepEqual([...services.keys()].sort(), ['admin-ui', 'api', 'jobs', 'migrate', 'postgres']);
 });
 
 test('every module the admin-ui server imports is copied into its image', () => {
@@ -88,7 +83,6 @@ test('every storage mount from the README is wired to a service', () => {
   assert.ok(services.get('postgres').includes(mounts.postgres));
   assert.ok(services.get('api').includes(mounts.maps));
   assert.ok(services.get('api').includes(mounts.imports));
-  assert.ok(services.get('admin-web').includes(mounts.maps));
   assert.ok(services.get('admin-ui').includes(mounts.maps));
   assert.ok(services.get('jobs').includes(mounts.backups));
 });
@@ -121,12 +115,12 @@ test('migrate is a one-shot step that runs db:migrate', () => {
 
 test('published ports match the documented stand ports', () => {
   assert.match(services.get('api'), /\$\{API_PORT:-3330\}:3000/);
-  assert.match(services.get('admin-web'), /\$\{ADMIN_WEB_PORT:-3340\}:3100/);
+  assert.match(services.get('admin-ui'), /\$\{ADMIN_UI_PORT:-3340\}:3100/);
 });
 
-test('api and admin-web expose a container healthcheck', () => {
+test('api and admin-ui expose a container healthcheck', () => {
   assert.match(services.get('api'), /healthcheck:[\s\S]*127\.0\.0\.1:3000\/health/);
-  assert.match(services.get('admin-web'), /healthcheck:[\s\S]*127\.0\.0\.1:3100\/health/);
+  assert.match(services.get('admin-ui'), /healthcheck:[\s\S]*127\.0\.0\.1:3100\/health/);
 });
 
 test('every service builds from a Dockerfile that exists', () => {
@@ -148,7 +142,7 @@ test('runtime images install dependencies reproducibly from the lockfile', () =>
 });
 
 test('no runtime image is left on a placeholder command', () => {
-  for (const name of ['app', 'admin-web', 'jobs']) {
+  for (const name of ['app', 'admin-ui', 'jobs']) {
     const dockerfile = fs.readFileSync(path.join(repoRoot, 'infra/docker', `${name}.Dockerfile`), 'utf8');
     assert.equal(dockerfile.includes('sleep infinity'), false, `${name}.Dockerfile still has a placeholder CMD`);
   }

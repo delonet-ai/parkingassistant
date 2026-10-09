@@ -7,7 +7,7 @@
 - `apps/api`: `Node.js 22`
 - `apps/bot-adapter`: `Node.js 22`
 - `packages/jobs`: `Node.js 22`
-- `apps/admin-web`: server-rendered UI на голом `node:http`, без фреймворка и build step
+- `apps/admin-ui`: Vue 3 + Vite на дизайн-системе Vision UI, со своим сервером статики и прокси `/api`
 - `PostgreSQL 16`
 - `Redis` опционально, только если позже понадобится очередь, rate limit или pub/sub
 
@@ -41,10 +41,10 @@
 
 Целевой образ:
 
-- `parkingassistant-admin-web`
+- `parkingassistant-admin-ui`
 
-`admin-web` не имеет сторонних зависимостей — только node builtins и `packages/shared`, — поэтому
-его образ собирается `infra/docker/admin-web.Dockerfile` вообще без `node_modules`.
+`infra/docker/admin-ui.Dockerfile` собирает его в двух стадиях: Vite собирает бандл, а в runtime
+попадают только `server.js`, `multipart.js` и `dist` — без `node_modules`.
 
 ### Infrastructure images
 
@@ -61,7 +61,7 @@
 ```text
 Internet
   -> Reverse Proxy
-    -> admin-web
+    -> admin-ui
     -> api
     -> bot-adapter webhook endpoint
   -> PostgreSQL
@@ -77,11 +77,11 @@ Internet
 - access logs
 - optional basic IP allowlist for admin entrypoints
 
-#### `admin-web`
+#### `admin-ui`
 
 - web UI for `parking_admin` and `system_admin`
 - no business logic
-- talks only to `api`
+- talks only to `api`, through a same-origin `/api` proxy on its own server
 
 #### `api`
 
@@ -120,7 +120,7 @@ Internet
 - один monorepo
 - один общий runtime stack на `Node.js 22`
 - четыре deployable units:
-  - `admin-web`
+  - `admin-ui`
   - `api`
   - `bot-adapter`
   - `jobs`
@@ -161,13 +161,13 @@ Internet
 
 ### External endpoints
 
-- `admin.example.com` -> `admin-web`
+- `admin.example.com` -> `admin-ui`
 - `api.example.com` -> `api`
 - `api.example.com/bot/yandex/*` -> `bot-adapter` или route через `api-gateway` слой reverse proxy
 
 ### Internal networking
 
-- `admin-web` -> `api`
+- `admin-ui` -> `api`
 - `bot-adapter` -> `api`
 - `jobs` -> `postgres`
 - `api` -> `postgres`
@@ -233,7 +233,7 @@ Internet
 
 - compose stack: [docker-compose.yml](../docker-compose.yml)
 - shared app runtime: [infra/docker/app.Dockerfile](../infra/docker/app.Dockerfile)
-- admin web runtime: [infra/docker/admin-web.Dockerfile](../infra/docker/admin-web.Dockerfile)
+- admin ui runtime: [infra/docker/admin-ui.Dockerfile](../infra/docker/admin-ui.Dockerfile)
 - env template: [.env.example](../.env.example)
 
 Placeholder-уровня здесь больше нет: у каждого образа реальный `CMD`, схема накатывается one-shot

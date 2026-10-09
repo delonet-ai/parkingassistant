@@ -98,7 +98,7 @@ async function run() {
 
   await waitForOk(`http://127.0.0.1:${apiPort}/health`);
 
-  startProcess('admin-web', 'node', ['apps/admin-web/src/server.js'], {
+  startProcess('admin-ui', 'node', ['apps/admin-ui/server.js'], {
     PORT: String(adminPort),
     API_BASE_URL: `http://127.0.0.1:${apiPort}`
   });
@@ -113,13 +113,10 @@ async function run() {
     (data) => data.status === 'error' && data.code === 'internal_error' && Object.prototype.hasOwnProperty.call(data, 'details')
   );
   await assertResponse(`http://127.0.0.1:${apiPort}/missing`, 404, (data) => data.code === 'not_found');
-  await assertResponse(`http://127.0.0.1:${adminPort}/health`, 200, (data) => data.status === 'ok' && data.service === 'admin-web');
+  await assertResponse(`http://127.0.0.1:${adminPort}/health`, 200, (data) => data.status === 'ok' && data.service === 'admin-ui');
 
-  const adminResponse = await fetch(`http://127.0.0.1:${adminPort}/`);
-  const adminHtml = await adminResponse.text();
-  if (!adminResponse.ok || !adminHtml.includes('Parking Assistant')) {
-    throw new Error(`admin-web / returned unexpected response: ${adminResponse.status}`);
-  }
+  // The shell itself is not asserted here: the admin UI is a built bundle, and this smoke
+  // runs against the sources. `npm run smoke:stand` checks the served shell on the stand.
 
   console.log('M1 smoke checks passed');
 }

@@ -20,9 +20,21 @@ const { describe, it } = require('node:test');
 
 const { currentDateInTimezone } = require('../../../packages/shared/dates');
 
+const ADMIN_UI_SRC = path.join(__dirname, '..', '..', 'admin-ui', 'src');
+
+function collectSources(directory) {
+  return fs
+    .readdirSync(directory, { withFileTypes: true, recursive: true })
+    .filter((entry) => entry.isFile() && /\.(js|vue)$/.test(entry.name))
+    .map((entry) => path.join(entry.parentPath || entry.path, entry.name));
+}
+
+// The admin UI takes "today" from the API rather than deriving it, which is the strongest
+// form of this guarantee — the guard stays so a handy `new Date()` cannot creep back in.
 const SOURCES = [
   path.join(__dirname, 'server.js'),
-  path.join(__dirname, '..', '..', 'admin-web', 'src', 'server.js')
+  path.join(__dirname, '..', '..', 'admin-ui', 'server.js'),
+  ...collectSources(ADMIN_UI_SRC)
 ];
 
 describe('"today" is always derived in APP_TIMEZONE', () => {

@@ -176,27 +176,38 @@ must assert on the document rather than on the wrapper.
 - Delete: `apps/admin-web/`, `infra/docker/admin-web.Dockerfile`
 - Modify: `docker-compose.yml`, `.env.example`, `infra/deployment.test.js`, `scripts/smoke/stand.js`, `package.json`
 
-- [ ] delete `apps/admin-web/` in full, including `testing/stub-api.js`, `src/tabs.test.js` and `src/pages/pages.test.js` — their subject is gone, so they are not ported
-- [ ] delete `infra/docker/admin-web.Dockerfile`, the `admin-web` compose service, the `admin-web:start` script and `ADMIN_WEB_PORT`
-- [ ] move `admin-ui` to the admin port the stand already publishes (`3340`) and drop `ADMIN_UI_PORT=3360`, so the operator's URL does not change
-- [ ] update `infra/deployment.test.js` to expect exactly `admin-ui`, `api`, `jobs`, `migrate`, `postgres`
-- [ ] update `scripts/smoke/stand.js`: the admin check hits the SPA shell and `/health` on the new service
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 7
+- [x] delete `apps/admin-web/` in full, including `testing/stub-api.js`, `src/tabs.test.js` and `src/pages/pages.test.js` — their subject is gone, so they are not ported
+- [x] delete `infra/docker/admin-web.Dockerfile`, the `admin-web` compose service, the `admin-web:start` script and `ADMIN_WEB_PORT`
+- [x] move `admin-ui` to the admin port the stand already publishes (`3340`) and drop `ADMIN_UI_PORT=3360`, so the operator's URL does not change
+- [x] update `infra/deployment.test.js` to expect exactly `admin-ui`, `api`, `jobs`, `migrate`, `postgres`
+- [x] update `scripts/smoke/stand.js`: the admin check hits the SPA shell and `/health` on the new service
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — 250 node tests, 108 UI specs.
+
+➕ `packages/shared/html.js` was deleted with it: `escapeHtml` existed for the SSR renderers and
+had no other consumer, so it would have survived as dead code the guards do not catch.
+
+➕ `scripts/smoke/m1.js` and `apps/api/src/today-default.test.js` both named `admin-web` by path;
+m1 now boots `apps/admin-ui/server.js` and the UTC-today guard scans the new app's sources.
+
+⚠️ The API labels an operator's write `actorService: 'admin-web'` in 32 places of its own code,
+and 25 of them are in the golden snapshots. Renaming it is an API change with a deliberate
+regeneration behind it — deliberately **not** done here, so the migration leaves the snapshots
+byte-identical. The audit log therefore still names an application that no longer exists.
 
 ### Task 7: Verify acceptance criteria
 
-- [ ] verify every tab in the Overview renders and operates: `День`, `Заявки`, `Линии`, `Справочники`, `Журнал`, `Места`
-- [ ] verify no tab reaches the backend outside `src/api.js` and no parking rule is evaluated in the UI
-- [ ] grep the app for hard-coded colours: `grep -rnE '#[0-9a-fA-F]{3,8}' apps/admin-ui/src` must return nothing
-- [ ] run `npm run test:integration` with `DATABASE_URL_TEST` set — 288/288, and **not one golden snapshot regenerated**
-- [ ] run `npm run admin-ui:build` — must pass with no unresolved-font warnings
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test`
+- [x] verify every tab in the Overview renders and operates: `День`, `Заявки`, `Линии`, `Справочники`, `Журнал`, `Места`
+- [x] verify no tab reaches the backend outside `src/api.js` and no parking rule is evaluated in the UI
+- [x] grep the app for hard-coded colours: `grep -rnE '#[0-9a-fA-F]{3,8}' apps/admin-ui/src` must return nothing
+- [x] run `npm run test:integration` with `DATABASE_URL_TEST` set — 288/288, and **not one golden snapshot regenerated**
+- [x] run `npm run admin-ui:build` — must pass with no unresolved-font warnings
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test`
 
 ### Task 8: Update documentation
 
-- [ ] update `docs/TECHNICAL_README.md`: M10 complete, stack composition without `admin-web`, ports
-- [ ] update `SETUP.md`, `README.md` and `AGENTS.md` for the single admin UI
-- [ ] record in `docs/adr/006-admin-ui-on-vision-ui.md` that the migration finished and `admin-web` is gone
+- [x] update `docs/TECHNICAL_README.md`: M10 complete, stack composition without `admin-web`, ports
+- [x] update `SETUP.md`, `README.md` and `AGENTS.md` for the single admin UI
+- [x] record in `docs/adr/006-admin-ui-on-vision-ui.md` that the migration finished and `admin-web` is gone
 
 ## Technical Details
 

@@ -47,8 +47,8 @@ apps/admin-ui/
 ├── src/api.js           the only place the app talks to the backend
 ├── src/store.js         reactive day state; every write reloads the day
 ├── src/statuses.js      the six place statuses → design-system palette groups
-├── src/components/      DateSelector, KpiStrip, PlaceLines, PlaceDrawer, DayTables
-└── src/pages/           DayPage, NotMigratedPage
+├── src/components/      per-screen pieces, each with a *.spec.js beside it
+└── src/pages/           DayPage, RequestsPage, LinesPage, CatalogPage, AuditPage, PlacesPage
 ```
 
 Rules the app holds to:
@@ -59,17 +59,21 @@ Rules the app holds to:
   the 19:00 and 07:00 rules are evaluated server-side.
 - **Colour never carries meaning alone.** Statuses print the word next to the nameplate, and
   selection is `aria-pressed` on a real `<button>`, not a colour.
-- **Tokens only.** Colours, radii and spacing are `rgb(var(--vi-color-…))`, `var(--vi-radius-…)`,
+- **Tokens only.** Colours, radii and spacing are `var(--vi-color-…)`, `var(--vi-radius-…)`,
   `var(--vi-vr-…)`. A hard-coded hex is a defect; a test asserts the status palette is tokens.
+  A `--vi-color-*` token is **never** wrapped in `rgb()` — that layer holds hex values, only the
+  deprecated `--vi-primary` layer holds triplets, and `rgb(#cfeed7)` makes the browser drop the
+  whole declaration. Getting this wrong cost the first build its entire visual layer.
 - **Same origin.** The browser talks to `/api/*` on this app's own server, which proxies to the
   API. No CORS — who may call the backend is a backend decision, not a UI convenience.
 
-**The migration runs tab by tab, with both UIs deployed.** `admin-ui` (port `3360`) serves the
-tabs it has taken over and says plainly which ones it has not; `admin-web` (port `3340`) keeps
-serving the rest. The repository's no-compatibility-layer rule still applies, with the unit being
-the migration rather than the commit: its final task deletes `apps/admin-web`, its service, its
-Dockerfile and its tests. `День` is migrated; `Заявки`, `Линии`, `Справочники`, `Журнал` and
-`Места` are not.
+**The migration ran tab by tab, with both UIs deployed, and is finished.** While it was in
+progress `admin-ui` served the tabs it had taken over on port `3360` and said plainly which ones
+it had not, while `admin-web` kept serving the rest on `3340`. All six tabs are migrated now, so
+the repository's no-compatibility-layer rule has been applied with the migration as its unit:
+`apps/admin-web`, its Dockerfile, its compose service, its tests and `packages/shared/html.js`
+(whose only consumer it was) are deleted, and `admin-ui` has taken over port `3340` so the
+operator's address did not change.
 
 ## Consequences
 
@@ -93,9 +97,16 @@ tests run on vitest + happy-dom (the design system's own choice) and are named `
 `node --test` does not try to load them as CommonJS. They mount real Vision UI components, which
 is what lets them assert the `v-model:value` binding rather than the markup around it.
 
-**The stand runs two admin UIs until the migration ends.** That is deliberate — an operator can
-fall back to a tab that already works — but it is also two ports to explain and two containers to
-watch, and the window should be short.
+**The design system is now a build-time dependency of the only admin UI there is.** While the
+migration ran, a broken screen had `admin-web` behind it; now it does not. What stands in for
+that fallback is the test layer: 108 specs that mount the real components, a smoke check that
+proves the served shell carries a built bundle and that the `/api` proxy answers, and a
+deployment test that refuses an image missing a module the server imports — the last one added
+after exactly that failure reached the stand.
 
 **Nothing about the API changed.** Not one endpoint, not one payload: the golden snapshots are
-untouched by this work. That is the property that makes a tab-by-tab migration safe at all.
+untouched by this work. That is the property that made a tab-by-tab migration safe at all, and it
+has one visible consequence — the API labels an operator's write `actorService: 'admin-web'` in 32
+places of its own code, so the audit log still names an application that no longer exists.
+Renaming it is an API change with a golden regeneration behind it, to be done deliberately rather
+than as a side effect of deleting a UI.
