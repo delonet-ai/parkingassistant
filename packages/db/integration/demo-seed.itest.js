@@ -233,3 +233,68 @@ describe('demo dataset (integration)', { skip: skipWithoutDatabase() }, () => {
     assert.equal(await count("select count(*) from users where email like '%@demo.invalid'"), 0);
   });
 });
+
+// The stand the demo dataset exists for already had a floor plan the operator uploaded
+// through the UI, and the seed used to insert its own g3/g4/g5 rows unconditionally — so on
+// that stand it failed outright with parking_place_maps_code_uniq and loaded nothing. The
+// suite above never caught it: its scratch schema has no real background to collide with.
+describe('demo dataset alongside a real floor plan (integration)', { skip: skipWithoutDatabase() }, () => {
+  let db = null;
+
+  const withClient = async (fn) => {
+    const client = await db.pool.connect();
+    try {
+      return await fn(client);
+    } finally {
+      client.release();
+    }
+  };
+
+  before(async () => {
+    db = await createTestDatabase();
+    await db.query(
+      `insert into parking_place_maps (code, title, floor_label, file_type, file_path, source_checksum, version)
+       values ('g4', 'Реальный план G4', '4', 'png', '/maps/parking-g4.png', 'e6d8984595c0', 2)`
+    );
+  });
+
+  after(async () => {
+    if (db) {
+      await db.drop();
+    }
+  });
+
+  it('loads instead of failing on the uploaded plan', async () => {
+    await withClient((client) => loadDemoData({ client }));
+
+    const places = await db.query("select count(*) from parking_places where catalog_source = 'demo'");
+    assert.equal(Number(places.rows[0].count), DEMO_PLACE_COUNT);
+  });
+
+  it('leaves the uploaded plan exactly as it was', async () => {
+    const real = await db.query("select title, version, source_checksum from parking_place_maps where code = 'g4'");
+
+    assert.equal(real.rowCount, 1);
+    assert.deepEqual(real.rows[0], {
+      title: 'Реальный план G4',
+      version: 2,
+      source_checksum: 'e6d8984595c0'
+    });
+  });
+
+  it('still fills in the floors that have no plan at all', async () => {
+    const demo = await db.query(
+      "select code from parking_place_maps where source_checksum = 'demo' order by code"
+    );
+
+    assert.deepEqual(demo.rows.map((row) => row.code), ['g3', 'g5']);
+  });
+
+  it('reset leaves the uploaded plan behind and takes only the demo ones', async () => {
+    await withClient((client) => resetDemoData({ client }));
+
+    const maps = await db.query('select code, source_checksum from parking_place_maps order by code');
+
+    assert.deepEqual(maps.rows, [{ code: 'g4', source_checksum: 'e6d8984595c0' }]);
+  });
+});

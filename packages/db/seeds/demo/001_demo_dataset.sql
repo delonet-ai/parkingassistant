@@ -81,11 +81,16 @@ JOIN line_groups lg ON lg.code = v.line_code;
 -- the source of truth for what exists, and the place role lives on parking_places.
 -- ---------------------------------------------------------------------------
 
+-- A floor plan the operator actually uploaded outranks a demo placeholder, and the reset
+-- only removes rows tagged `demo` — so inserting unconditionally made the whole seed fail
+-- with parking_place_maps_code_uniq on any stand that had a real background. DO NOTHING
+-- keeps the real row and fills in only the floors that have no plan at all.
 INSERT INTO parking_place_maps (code, title, floor_label, file_type, file_path, source_checksum)
 VALUES
   ('g3', 'Паркинг G3', '3', 'png', 'parking-g3.png', 'demo'),
   ('g4', 'Паркинг G4', '4', 'png', 'parking-g4.png', 'demo'),
-  ('g5', 'Паркинг G5', '5', 'png', 'parking-g5.png', 'demo');
+  ('g5', 'Паркинг G5', '5', 'png', 'parking-g5.png', 'demo')
+ON CONFLICT (code) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- People. Employees 001-004 and 008-013 own a place; 005-007 do not and are the
