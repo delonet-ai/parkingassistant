@@ -41,3 +41,6 @@ __pycache__/
 # typeface and the icon font. They are corporate assets AND build artifacts, so they are
 # rebuilt on every install and must never be committed.
 apps/admin-ui/public/
+
+# Local run environment for ralphex, never committed.
+/.ralphex-env.sh
