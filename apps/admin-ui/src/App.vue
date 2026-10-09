@@ -1,14 +1,26 @@
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { ViAlert, ViTabs, ViText } from '@vi-frontend/vision-ui'
 
 import DayPage from './pages/DayPage.vue'
 import NotMigratedPage from './pages/NotMigratedPage.vue'
-import { TABS, boot, dismissNotice, state } from './store'
+import { TABS, boot, buildUrl, dismissNotice, state } from './store'
 
 const PAGES = { day: DayPage }
 
-onMounted(boot)
+onMounted(() => boot(window.location.search))
+
+// The URL follows the screen, so a reload or a pasted link lands on the same place on the
+// same day — replaceState rather than pushState, because selecting slots is browsing, not
+// navigation, and every click would otherwise fill the back button with noise.
+watch(
+  () => [state.view, state.date, state.floorCode, state.selectedPlaceId],
+  () => {
+    if (state.ready) {
+      window.history.replaceState(null, '', buildUrl())
+    }
+  }
+)
 
 function selectTab(value) {
   state.view = value

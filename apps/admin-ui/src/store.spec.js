@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { boot, firstPopulatedFloor, loadDay, state, submit } from './store'
+import { boot, buildUrl, firstPopulatedFloor, loadDay, readUrl, state, submit } from './store'
 
 const DASHBOARD = {
   status: 'ok',
@@ -165,5 +165,43 @@ describe('submit', () => {
 
     expect(state.dashboard).not.toBeNull()
     expect(state.lines).toHaveLength(1)
+  })
+})
+
+describe('URL state', () => {
+  it('reads the four keys the SSR admin used, rejecting anything malformed', () => {
+    expect(readUrl('?view=lines&date=2026-10-09&mapCode=g5&placeId=abc')).toEqual({
+      view: 'lines',
+      date: '2026-10-09',
+      floorCode: 'g5',
+      selectedPlaceId: 'abc'
+    })
+
+    // An unknown tab, a non-ISO date and a floor that is not configured fall back rather
+    // than being handed to the API.
+    expect(readUrl('?view=hack&date=09.10.2026&mapCode=g9')).toEqual({
+      view: 'day',
+      date: null,
+      floorCode: null,
+      selectedPlaceId: null
+    })
+  })
+
+  it('writes back only what is set, so a bare day keeps a clean address', () => {
+    Object.assign(state, { view: 'day', date: '2026-10-09', floorCode: 'g4', selectedPlaceId: null })
+    expect(buildUrl()).toBe('?view=day&date=2026-10-09&mapCode=g4')
+
+    state.selectedPlaceId = 'p1'
+    expect(buildUrl()).toBe('?view=day&date=2026-10-09&mapCode=g4&placeId=p1')
+  })
+
+  it('boot honours a deep link to a place on a floor', async () => {
+    stubApi()
+
+    await boot('?mapCode=g5&placeId=p1&date=2026-10-08')
+
+    expect(state.floorCode).toBe('g5')
+    expect(state.selectedPlaceId).toBe('p1')
+    expect(state.date).toBe('2026-10-08')
   })
 })

@@ -42,6 +42,43 @@ export const state = reactive({
   guestRequests: []
 })
 
+/**
+ * The screen's address is the URL, as it was in the SSR admin: a selected place, a date, a
+ * floor and a tab survive a reload and can be sent to someone else. The old UI pushed the
+ * same four, and dropping them in the rewrite would have been a silent regression.
+ */
+const URL_KEYS = ['view', 'date', 'mapCode', 'placeId']
+
+export function readUrl(search) {
+  const params = new URLSearchParams(search)
+  const view = params.get('view')
+
+  return {
+    view: TABS.some((tab) => tab.value === view) ? view : 'day',
+    date: /^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '') ? params.get('date') : null,
+    floorCode: FLOORS.some((floor) => floor.code === params.get('mapCode')) ? params.get('mapCode') : null,
+    selectedPlaceId: params.get('placeId') || null
+  }
+}
+
+export function buildUrl() {
+  const params = new URLSearchParams()
+  const values = {
+    view: state.view,
+    date: state.date,
+    mapCode: state.floorCode,
+    placeId: state.selectedPlaceId
+  }
+
+  for (const key of URL_KEYS) {
+    if (values[key]) {
+      params.set(key, values[key])
+    }
+  }
+
+  return `?${params.toString()}`
+}
+
 export function notify(type, text) {
   state.notice = { type, text }
 }
@@ -111,7 +148,9 @@ export async function loadDay() {
   return { ok: true, error: null }
 }
 
-export async function boot() {
+export async function boot(search = '') {
+  Object.assign(state, readUrl(search))
+
   const result = await loadDay()
 
   if (!result.ok) {

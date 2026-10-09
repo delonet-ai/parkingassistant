@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { ViCard } from '@vi-frontend/vision-ui/next'
+import { ViCard, ViCardContent } from '@vi-frontend/vision-ui/next'
 import { ViButton, ViInput, ViNameplate, ViSelect, ViSpoiler, ViText } from '@vi-frontend/vision-ui'
 
 import { statusColors, statusLabel } from '../statuses'
@@ -132,161 +132,170 @@ const createGuest = () =>
 </script>
 
 <template>
-  <ViCard variant="outlined" padding="16px">
-    <template v-if="!selected">
-      <ViText tag="h3" variant="title-h5">Место не выбрано</ViText>
-      <ViText tag="p" variant="body-M-wide" class="muted">
-        Выберите место в списке элементов, чтобы открыть операционную карточку.
-      </ViText>
-    </template>
+  <ViCard variant="outlined">
+    <ViCardContent>
+      <template v-if="!selected">
+        <ViText tag="h3" variant="title-h5">Место не выбрано</ViText>
+        <ViText tag="p" variant="body-M-wide" class="muted">
+          Выберите место в списке элементов, чтобы открыть операционную карточку.
+        </ViText>
+      </template>
 
-    <template v-else>
-      <div class="slot-line">
-        <div>
-          <ViText tag="h3" variant="title-h5">{{ selected.place.code }} · {{ selected.place.title }}</ViText>
-          <ViText tag="p" variant="body-XS-wide" class="muted">
-            {{ selected.place.floorLabel ? `этаж ${selected.place.floorLabel}` : 'без этажа' }} ·
-            {{ selected.place.placeType }} ·
-            {{ selected.place.lineGroup ? `линия ${selected.place.lineGroup.code}` : 'без линии' }}
-          </ViText>
-        </div>
-        <ViNameplate v-bind="statusColors(selected.status)">
-          {{ statusLabel(selected.status) }}
-        </ViNameplate>
-      </div>
-
-      <div class="kpi-grid" style="margin-top: 12px">
-        <div>
-          <ViText tag="p" variant="body-S-wide" class="muted">Владелец</ViText>
-          <ViText tag="p" variant="body-M-wide">
-            {{ selected.place.permanentOwner ? selected.place.permanentOwner.displayName : '—' }}
-          </ViText>
-        </div>
-        <div>
-          <ViText tag="p" variant="body-S-wide" class="muted">Назначение</ViText>
-          <ViText tag="p" variant="body-M-wide">
-            <template v-if="selected.reservation">
-              {{ selected.reservation.source }} ·
-              {{
-                selected.reservation.user?.displayName || selected.guestRequest?.guestName || 'гость'
-              }}
+      <template v-else>
+        <div class="slot-line">
+          <div>
+            <ViText tag="h3" variant="title-h5">
+            {{ selected.place.code }}
+            <template v-if="selected.place.title && selected.place.title !== selected.place.code">
+              · {{ selected.place.title }}
             </template>
-            <template v-else>—</template>
           </ViText>
+            <ViText tag="p" variant="body-XS-wide" class="muted">
+              {{ selected.place.floorLabel ? `этаж ${selected.place.floorLabel}` : 'без этажа' }} ·
+              {{ selected.place.placeType }} ·
+              {{ selected.place.lineGroup ? `линия ${selected.place.lineGroup.code}` : 'без линии' }}
+            </ViText>
+          </div>
+          <ViNameplate v-bind="statusColors(selected.status)">
+            {{ statusLabel(selected.status) }}
+          </ViNameplate>
         </div>
-        <div>
-          <ViText tag="p" variant="body-S-wide" class="muted">Отдача</ViText>
-          <ViText tag="p" variant="body-M-wide">
-            {{ selected.release ? selected.release.owner.displayName : '—' }}
+
+        <div class="kpi-grid" style="margin-top: 12px">
+          <div>
+            <ViText tag="p" variant="body-S-wide" class="muted">Владелец</ViText>
+            <ViText tag="p" variant="body-M-wide">
+              {{ selected.place.permanentOwner ? selected.place.permanentOwner.displayName : '—' }}
+            </ViText>
+          </div>
+          <div>
+            <ViText tag="p" variant="body-S-wide" class="muted">Назначение</ViText>
+            <ViText tag="p" variant="body-M-wide">
+              <template v-if="selected.reservation">
+                {{ selected.reservation.source }} ·
+                {{
+                  selected.reservation.user?.displayName || selected.guestRequest?.guestName || 'гость'
+                }}
+              </template>
+              <template v-else>—</template>
+            </ViText>
+          </div>
+          <div>
+            <ViText tag="p" variant="body-S-wide" class="muted">Отдача</ViText>
+            <ViText tag="p" variant="body-M-wide">
+              {{ selected.release ? selected.release.owner.displayName : '—' }}
+            </ViText>
+          </div>
+          <div>
+            <ViText tag="p" variant="body-S-wide" class="muted">Позиция</ViText>
+            <ViText tag="p" variant="body-M-wide">
+              {{ selected.occupancy ? `позиция ${selected.occupancy.position}` : '—' }}
+            </ViText>
+          </div>
+        </div>
+
+        <ViText tag="h4" variant="title-h6" class="section-gap">Операции по месту</ViText>
+
+        <div class="stack">
+          <template v-if="selected.place.permanentOwner">
+            <ViInput
+              v-model:value="releaseNotes"
+              label="Комментарий к отдаче"
+              label-type="static"
+              clearable
+            />
+            <ViButton color="primary" :loading="busy" @click="release">
+              Отдать на {{ state.date }}
+            </ViButton>
+          </template>
+          <ViText v-else tag="p" variant="body-S-wide" class="muted">
+            У места нет постоянного владельца, отдача недоступна.
           </ViText>
-        </div>
-        <div>
-          <ViText tag="p" variant="body-S-wide" class="muted">Позиция</ViText>
-          <ViText tag="p" variant="body-M-wide">
-            {{ selected.occupancy ? `позиция ${selected.occupancy.position}` : '—' }}
+
+          <template v-if="selected.release && !selected.reservation">
+            <ViSelect
+              :value="assignUserId"
+              :options="employeeOptions"
+              label="Назначить сотрудника"
+              label-type="static"
+              text-field-name="text"
+              value-field-name="value"
+              track-by-value
+              has-search
+              clearable
+              @update:value="assignUserId = $event"
+            />
+            <ViInput v-model:value="assignReason" label="Причина" label-type="static" clearable />
+            <ViButton color="primary" :loading="busy" :disabled="!assignUserId" @click="assign">
+              Назначить
+            </ViButton>
+          </template>
+          <ViText v-else tag="p" variant="body-S-wide" class="muted">
+            Ручное назначение доступно только для отданного и свободного места.
           </ViText>
-        </div>
-      </div>
 
-      <ViText tag="h4" variant="title-h6" margin>Операции по месту</ViText>
-
-      <div class="stack">
-        <template v-if="selected.place.permanentOwner">
-          <ViInput
-            v-model:value="releaseNotes"
-            label="Комментарий к отдаче"
-            label-type="static"
-            clearable
-          />
-          <ViButton color="primary" :loading="busy" @click="release">
-            Отдать на {{ state.date }}
-          </ViButton>
-        </template>
-        <ViText v-else tag="p" variant="body-S-wide" class="muted">
-          У места нет постоянного владельца, отдача недоступна.
-        </ViText>
-
-        <template v-if="selected.release && !selected.reservation">
-          <ViSelect
-            :value="assignUserId"
-            :options="employeeOptions"
-            label="Назначить сотрудника"
-            label-type="static"
-            text-field-name="text"
-            value-field-name="value"
-            has-search
-            clearable
-            @update:value="assignUserId = $event"
-          />
-          <ViInput v-model:value="assignReason" label="Причина" label-type="static" clearable />
-          <ViButton color="primary" :loading="busy" :disabled="!assignUserId" @click="assign">
-            Назначить
-          </ViButton>
-        </template>
-        <ViText v-else tag="p" variant="body-S-wide" class="muted">
-          Ручное назначение доступно только для отданного и свободного места.
-        </ViText>
-
-        <ViButton
-          v-if="selected.reservation"
-          color="secondary"
-          variant="outlined"
-          :loading="busy"
-          @click="cancelReservation"
-        >
-          Отменить назначение
-        </ViButton>
-
-        <template v-if="selected.release">
           <ViButton
+            v-if="selected.reservation"
             color="secondary"
             variant="outlined"
             :loading="busy"
-            :disabled="Boolean(selected.reservation)"
-            @click="cancelRelease"
+            @click="cancelReservation"
           >
-            Вернуть место владельцу
+            Отменить назначение
           </ViButton>
-          <ViText tag="p" variant="body-XS-wide" class="muted">
-            {{
-              selected.reservation
-                ? 'Сначала отмените назначение — место уже отдано кому-то на этот день.'
-                : 'Отменяет отдачу: место снова закреплено за владельцем.'
-            }}
-          </ViText>
-        </template>
-      </div>
 
-      <ViSpoiler title="Создать гостевую заявку">
-        <div class="stack">
-          <ViText tag="p" variant="body-XS-wide" class="muted">
-            Место для гостя выбирает backend по приоритету single → double → triple и гостевому
-            резерву.
-          </ViText>
-          <ViSelect
-            :value="guest.hostUserId"
-            :options="hostOptions"
-            label="Приглашающий"
-            label-type="static"
-            text-field-name="text"
-            value-field-name="value"
-            has-search
-            clearable
-            @update:value="guest.hostUserId = $event"
-          />
-          <ViInput v-model:value="guest.guestName" label="Гость" label-type="static" required />
-          <ViInput v-model:value="guest.guestPhone" label="Телефон" label-type="static" />
-          <ViInput v-model:value="guest.vehiclePlateNumber" label="Авто" label-type="static" />
-          <ViButton
-            color="primary"
-            :loading="busy"
-            :disabled="!guest.hostUserId || !guest.guestName"
-            @click="createGuest"
-          >
-            Создать гостя
-          </ViButton>
+          <template v-if="selected.release">
+            <ViButton
+              color="secondary"
+              variant="outlined"
+              :loading="busy"
+              :disabled="Boolean(selected.reservation)"
+              @click="cancelRelease"
+            >
+              Вернуть место владельцу
+            </ViButton>
+            <ViText tag="p" variant="body-XS-wide" class="muted">
+              {{
+                selected.reservation
+                  ? 'Сначала отмените назначение — место уже отдано кому-то на этот день.'
+                  : 'Отменяет отдачу: место снова закреплено за владельцем.'
+              }}
+            </ViText>
+          </template>
         </div>
-      </ViSpoiler>
-    </template>
+
+        <ViSpoiler title="Создать гостевую заявку">
+          <div class="stack">
+            <ViText tag="p" variant="body-XS-wide" class="muted">
+              Место для гостя выбирает backend по приоритету single → double → triple и гостевому
+              резерву.
+            </ViText>
+            <ViSelect
+              :value="guest.hostUserId"
+              :options="hostOptions"
+              label="Приглашающий"
+              label-type="static"
+              text-field-name="text"
+              value-field-name="value"
+              track-by-value
+              has-search
+              clearable
+              @update:value="guest.hostUserId = $event"
+            />
+            <ViInput v-model:value="guest.guestName" label="Гость" label-type="static" required />
+            <ViInput v-model:value="guest.guestPhone" label="Телефон" label-type="static" />
+            <ViInput v-model:value="guest.vehiclePlateNumber" label="Авто" label-type="static" />
+            <ViButton
+              color="primary"
+              :loading="busy"
+              :disabled="!guest.hostUserId || !guest.guestName"
+              @click="createGuest"
+            >
+              Создать гостя
+            </ViButton>
+          </div>
+        </ViSpoiler>
+      </template>
+    </ViCardContent>
   </ViCard>
 </template>

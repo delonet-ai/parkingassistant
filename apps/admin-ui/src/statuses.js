@@ -36,14 +36,21 @@ export function statusLabel(status) {
   return entry ? entry.label : status || '—'
 }
 
-/** Vision UI nameplates take plain CSS colours, so tokens go in as rgb(var(--…)). */
+/**
+ * Vision UI nameplates take plain CSS colours and apply them as inline styles.
+ *
+ * The token goes in as `var(--vi-color-…)`, NOT wrapped in `rgb()`: the `--vi-color-*` layer
+ * holds hex values (`#cfeed7`), while the deprecated `--vi-primary` layer holds RGB triplets.
+ * `rgb(#cfeed7)` is invalid and the browser drops the declaration — which is what left the
+ * first build with colourless nameplates.
+ */
 export function statusColors(status) {
   const entry = BY_STATUS.get(status)
   const group = entry ? entry.group : 'gray'
 
   return {
-    backgroundColor: `rgb(var(--vi-color-${group}-100))`,
-    textColor: `rgb(var(--vi-color-${group}-800))`
+    backgroundColor: `var(--vi-color-${group}-100)`,
+    textColor: `var(--vi-color-${group}-800)`
   }
 }
 

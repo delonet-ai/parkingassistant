@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { ViCard } from '@vi-frontend/vision-ui/next'
+import { ViCard, ViCardContent } from '@vi-frontend/vision-ui/next'
 import { ViNameplate, ViText } from '@vi-frontend/vision-ui'
 
 const props = defineProps({
@@ -33,23 +33,27 @@ const reserve = computed(() => props.dashboard?.guestReserve || { minimum: 5, av
 
 <template>
   <div class="kpi-grid">
-    <ViCard v-for="tile in tiles" :key="tile.label" variant="outlined" padding="16px">
-      <ViText tag="p" variant="body-S-wide" class="muted">{{ tile.label }}</ViText>
-      <ViText tag="p" variant="title-h4">{{ tile.value }}</ViText>
+    <ViCard v-for="tile in tiles" :key="tile.label" variant="outlined">
+      <ViCardContent padding="s">
+        <ViText tag="p" variant="body-S-wide" class="muted">{{ tile.label }}</ViText>
+        <ViText tag="p" variant="title-h3">{{ tile.value }}</ViText>
+      </ViCardContent>
     </ViCard>
 
-    <ViCard variant="outlined" padding="16px">
-      <ViText tag="p" variant="body-S-wide" class="muted">Гостевой резерв</ViText>
-      <ViText tag="p" variant="title-h4">{{ reserve.availablePlaces }}/{{ reserve.minimum }}</ViText>
+    <ViCard variant="outlined">
+      <ViCardContent padding="s">
+        <ViText tag="p" variant="body-S-wide" class="muted">Гостевой резерв</ViText>
+        <ViText tag="p" variant="title-h3">{{ reserve.availablePlaces }}/{{ reserve.minimum }}</ViText>
       <!-- The reserve is a rule, not a decoration: the API says whether it holds, and the
            word is printed next to the colour so the state survives a greyscale print. -->
-      <ViNameplate
-        size="small"
-        :background-color="reserve.status === 'ok' ? 'rgb(var(--vi-color-green-100))' : 'rgb(var(--vi-color-red-100))'"
-        :text-color="reserve.status === 'ok' ? 'rgb(var(--vi-color-green-800))' : 'rgb(var(--vi-color-red-800))'"
-      >
-        {{ reserve.status === 'ok' ? 'в норме' : 'ниже минимума' }}
-      </ViNameplate>
+        <ViNameplate
+          size="small"
+          :background-color="reserve.status === 'ok' ? 'var(--vi-color-green-100)' : 'var(--vi-color-red-100)'"
+          :text-color="reserve.status === 'ok' ? 'var(--vi-color-green-800)' : 'var(--vi-color-red-800)'"
+        >
+          {{ reserve.status === 'ok' ? 'в норме' : 'ниже минимума' }}
+        </ViNameplate>
+      </ViCardContent>
     </ViCard>
   </div>
 </template>

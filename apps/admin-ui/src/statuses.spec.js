@@ -33,11 +33,15 @@ describe('place statuses', () => {
   })
 
   it('colours every status from design-system tokens, never a hard-coded hex', () => {
+    // The form matters as much as the token. --vi-color-* holds a hex (#cfeed7), while the
+    // deprecated --vi-primary layer holds an RGB triplet — so wrapping a new token in rgb()
+    // produces rgb(#cfeed7), which the browser drops along with the whole declaration. That
+    // is what left the first build with no nameplates, no slot borders and a flat white page.
     for (const option of PLACE_STATUS_OPTIONS) {
       const colors = statusColors(option.status)
 
-      expect(colors.backgroundColor).toMatch(/^rgb\(var\(--vi-color-[a-z]+-\d+\)\)$/)
-      expect(colors.textColor).toMatch(/^rgb\(var\(--vi-color-[a-z]+-\d+\)\)$/)
+      expect(colors.backgroundColor).toMatch(/^var\(--vi-color-[a-z]+-\d+\)$/)
+      expect(colors.textColor).toMatch(/^var\(--vi-color-[a-z]+-\d+\)$/)
     }
   })
 

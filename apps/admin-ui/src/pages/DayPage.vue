@@ -1,7 +1,7 @@
 <script setup>
-import { computed } from 'vue'
-import { ViCard } from '@vi-frontend/vision-ui/next'
-import { ViChip, ViSelect, ViText } from '@vi-frontend/vision-ui'
+import { computed, ref } from 'vue'
+import { ViCard, ViCardContent } from '@vi-frontend/vision-ui/next'
+import { ViButton, ViChip, ViSelect, ViText } from '@vi-frontend/vision-ui'
 
 import DateSelector from '../components/DateSelector.vue'
 import DayTables from '../components/DayTables.vue'
@@ -13,6 +13,11 @@ import { FLOORS, currentFloor, dismissNotice, loadDay, state } from '../store'
 
 const floorOptions = FLOORS.map((floor) => ({ value: floor.code, text: `Этаж ${floor.title}` }))
 const floorLabel = computed(() => currentFloor().floorLabel)
+
+// The plan is a reference, not the work surface: it is tall, it does not change during a day,
+// and leaving it open pushed the element list — the thing the operator actually clicks —
+// below the fold.
+const planOpen = ref(false)
 
 async function changeDate(next) {
   state.date = next
@@ -34,12 +39,22 @@ function toggleType(type) {
 
 <template>
   <div class="stack">
-    <ViCard variant="outlined" padding="16px">
-      <ViText tag="h2" variant="title-h4">День</ViText>
-      <ViText tag="p" variant="body-M-wide" class="muted">
-        Кто где стоит {{ state.date }} и что меняется на этот день.
-      </ViText>
-      <DateSelector :model-value="state.date" :today="state.today" @update:model-value="changeDate" />
+    <ViCard variant="outlined">
+      <ViCardContent>
+        <div class="card-head">
+          <div>
+            <ViText tag="h2" variant="title-h4">День</ViText>
+            <ViText tag="p" variant="body-M-wide" class="muted">
+              Кто где стоит {{ state.date }} и что меняется на этот день.
+            </ViText>
+          </div>
+          <DateSelector
+            :model-value="state.date"
+            :today="state.today"
+            @update:model-value="changeDate"
+          />
+        </div>
+      </ViCardContent>
     </ViCard>
 
     <KpiStrip
@@ -49,68 +64,84 @@ function toggleType(type) {
     />
 
     <div class="day-columns">
-      <ViCard variant="outlined" padding="16px">
-        <div class="row">
-          <ViSelect
-            :value="state.floorCode"
-            :options="floorOptions"
-            label="Этаж"
-            label-type="static"
-            text-field-name="text"
-            value-field-name="value"
-            @update:value="state.floorCode = $event"
+      <ViCard variant="outlined">
+        <ViCardContent>
+          <div class="card-head">
+            <ViText tag="h3" variant="title-h5">Места на этаже</ViText>
+            <div class="row">
+              <ViSelect
+                :value="state.floorCode"
+                :options="floorOptions"
+                label="Этаж"
+                label-type="static"
+                text-field-name="text"
+                value-field-name="value"
+                track-by-value
+                @update:value="state.floorCode = $event"
+              />
+              <ViButton variant="outlined" color="secondary" @click="planOpen = !planOpen">
+                {{ planOpen ? 'Скрыть план' : 'Показать план' }}
+              </ViButton>
+            </div>
+          </div>
+
+          <div class="filters">
+            <ViText tag="span" variant="body-XS-wide" class="muted filters__label">Статус</ViText>
+            <ViChip
+              v-for="option in PLACE_STATUS_OPTIONS"
+              :key="option.status"
+              interactive
+              :selected="state.statusFilter === option.status"
+              @click="toggleStatus(option.status)"
+            >
+              {{ option.label }}
+            </ViChip>
+          </div>
+
+          <div class="filters">
+            <ViText tag="span" variant="body-XS-wide" class="muted filters__label">Тип</ViText>
+            <ViChip
+              v-for="option in PLACE_TYPE_OPTIONS"
+              :key="option.value"
+              interactive
+              :selected="state.typeFilter === option.value"
+              @click="toggleType(option.value)"
+            >
+              {{ option.label }}
+            </ViChip>
+          </div>
+
+          <!-- The floor plan stays a static reference image; the element list under it is the
+               source of truth for what exists (ADR 004). -->
+          <img
+            v-show="planOpen"
+            class="floor-plan"
+            :src="`/maps/parking-${state.floorCode}.png`"
+            :alt="`План этажа ${currentFloor().title}`"
+            onerror="this.style.display='none'"
           />
-        </div>
 
-        <div class="row" style="margin-top: 12px">
-          <ViChip
-            v-for="option in PLACE_STATUS_OPTIONS"
-            :key="option.status"
-            interactive
-            :selected="state.statusFilter === option.status"
-            @click="toggleStatus(option.status)"
-          >
-            {{ option.label }}
-          </ViChip>
-        </div>
-
-        <div class="row" style="margin-top: 8px">
-          <ViChip
-            v-for="option in PLACE_TYPE_OPTIONS"
-            :key="option.value"
-            interactive
-            :selected="state.typeFilter === option.value"
-            @click="toggleType(option.value)"
-          >
-            {{ option.label }}
-          </ViChip>
-        </div>
-
-        <!-- The floor plan stays a static reference image; the element list under it is the
-             source of truth for what exists (ADR 004). -->
-        <img
-          :src="`/maps/parking-${state.floorCode}.png`"
-          :alt="`План этажа ${currentFloor().title}`"
-          style="max-width: 100%; margin: 12px 0; border-radius: var(--vi-radius-s)"
-          onerror="this.style.display='none'"
-        />
-
-        <PlaceLines
-          :lines="state.lines"
-          :floor-label="floorLabel"
-          :status-filter="state.statusFilter"
-          :type-filter="state.typeFilter"
-          :selected-place-id="state.selectedPlaceId"
-          @select="state.selectedPlaceId = $event"
-        />
+          <PlaceLines
+            :lines="state.lines"
+            :floor-label="floorLabel"
+            :status-filter="state.statusFilter"
+            :type-filter="state.typeFilter"
+            :selected-place-id="state.selectedPlaceId"
+            @select="state.selectedPlaceId = $event"
+          />
+        </ViCardContent>
       </ViCard>
 
-      <PlaceDrawer />
+      <div class="drawer-column">
+        <PlaceDrawer />
+      </div>
     </div>
 
-    <ViCard variant="outlined" padding="16px">
-      <ViText tag="h2" variant="title-h5">Таблицы дня</ViText>
-      <DayTables />
+    <ViCard variant="outlined">
+      <ViCardContent>
+        <ViText tag="h2" variant="title-h5" margin>Таблицы дня</ViText>
+        <DayTables />
+      </ViCardContent>
     </ViCard>
   </div>
 </template>

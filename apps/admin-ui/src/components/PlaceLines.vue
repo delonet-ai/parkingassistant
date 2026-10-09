@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { ViCard } from '@vi-frontend/vision-ui/next'
+import { ViCard, ViCardContent } from '@vi-frontend/vision-ui/next'
 import { ViNameplate, ViText } from '@vi-frontend/vision-ui'
 
 import { CAPACITY_LABELS, positionLabel, statusColors, statusLabel } from '../statuses'
@@ -32,38 +32,40 @@ const visible = computed(() =>
 
 <template>
   <div v-if="visible.length" class="line-grid">
-    <ViCard v-for="line in visible" :key="line.lineId" variant="outlined" padding="12px">
-      <div class="slot-line">
-        <ViText tag="p" variant="body-Sm-wide">{{ line.name || line.code }}</ViText>
-        <ViText tag="span" variant="body-XS-wide" class="muted">
-          {{ CAPACITY_LABELS[line.capacity] || line.capacity }}
-        </ViText>
-      </div>
-
-      <div class="line-slots">
-        <!-- A real button, so the slot keeps keyboard focus, Enter/Space activation and a
-             native selected state — the property that made this list more accessible than
-             the SVG zones it replaced. -->
-        <button
-          v-for="slot in line.slots"
-          :key="slot.placeId"
-          type="button"
-          class="slot-button"
-          :aria-pressed="slot.placeId === selectedPlaceId"
-          @click="emit('select', slot.placeId)"
-        >
-          <span class="slot-line">
-            <ViText tag="span" variant="body-Mm-tight">{{ slot.code }}</ViText>
-            <ViNameplate size="small" v-bind="statusColors(slot.status)">
-              {{ statusLabel(slot.status) }}
-            </ViNameplate>
-          </span>
+    <ViCard v-for="line in visible" :key="line.lineId" variant="outlined">
+      <ViCardContent padding="s">
+        <div class="slot-line">
+          <ViText tag="p" variant="body-Sm-wide">{{ line.name || line.code }}</ViText>
           <ViText tag="span" variant="body-XS-wide" class="muted">
-            {{ positionLabel(line.capacity, slot.position) }}
-            <template v-if="slot.userDisplayName"> · {{ slot.userDisplayName }}</template>
+            {{ CAPACITY_LABELS[line.capacity] || line.capacity }}
           </ViText>
-        </button>
-      </div>
+        </div>
+
+        <div class="line-slots">
+          <!-- A real button, so the slot keeps keyboard focus, Enter/Space activation and a
+               native selected state — the property that made this list more accessible than
+               the SVG zones it replaced. -->
+          <button
+            v-for="slot in line.slots"
+            :key="slot.placeId"
+            type="button"
+            class="slot-button"
+            :aria-pressed="slot.placeId === selectedPlaceId"
+            @click="emit('select', slot.placeId)"
+          >
+            <span class="slot-line">
+              <ViText tag="span" variant="body-Mm-tight">{{ slot.code }}</ViText>
+              <ViNameplate size="small" v-bind="statusColors(slot.status)">
+                {{ statusLabel(slot.status) }}
+              </ViNameplate>
+            </span>
+            <ViText tag="span" variant="body-XS-wide" class="muted">
+              {{ positionLabel(line.capacity, slot.position) }}
+              <template v-if="slot.userDisplayName"> · {{ slot.userDisplayName }}</template>
+            </ViText>
+          </button>
+        </div>
+      </ViCardContent>
     </ViCard>
   </div>
 

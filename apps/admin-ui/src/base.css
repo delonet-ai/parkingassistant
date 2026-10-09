@@ -9,8 +9,8 @@ body {
   margin: 0;
   font-family: var(--vi-font-family);
   font-size: var(--vi-font-size);
-  color: rgb(var(--vi-color-gray-1000));
-  background: rgb(var(--vi-color-gray-50));
+  color: var(--vi-color-gray-1000);
+  background: var(--vi-color-gray-50);
 }
 
 .app-shell {
@@ -19,7 +19,7 @@ body {
   padding: 24px 20px 64px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 .app-head {
@@ -28,6 +28,42 @@ body {
   gap: 16px;
   align-items: flex-end;
   justify-content: space-between;
+}
+
+/* Heading on the left, the control that belongs to it on the right. */
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.filters__label {
+  min-width: 48px;
+}
+
+.floor-plan {
+  display: block;
+  max-width: 100%;
+  margin: 12px 0 16px;
+  border: 1px solid var(--vi-color-gray-200);
+  border-radius: var(--vi-radius-m);
+}
+
+/* The drawer follows the operator down a long element list instead of scrolling away. */
+.drawer-column {
+  position: sticky;
+  top: 16px;
 }
 
 .stack {
@@ -45,8 +81,8 @@ body {
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
 }
 
 .day-columns {
@@ -64,8 +100,10 @@ body {
 
 .line-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  /* Cards size to their own content: a single must not stand as tall as a triple beside it. */
+  align-items: start;
+  gap: 10px;
 }
 
 /* A multi-slot element stacks its slots front-to-rear, so the card mirrors the real line. */
@@ -79,22 +117,23 @@ body {
   display: block;
   width: 100%;
   text-align: left;
-  border: 1px solid rgb(var(--vi-color-gray-300));
+  border: 1px solid var(--vi-color-gray-300);
   border-radius: var(--vi-radius-s);
-  background: rgb(var(--vi-color-white));
+  background: var(--vi-color-white);
   padding: 8px 10px;
   cursor: pointer;
   font: inherit;
   color: inherit;
+  transition: border-color 0.1s ease, box-shadow 0.1s ease;
 }
 
 .slot-button:hover {
-  border-color: rgb(var(--vi-color-gray-500));
+  border-color: var(--vi-color-gray-500);
 }
 
 .slot-button[aria-pressed='true'] {
-  border-color: rgb(var(--vi-color-red-500));
-  box-shadow: 0 0 0 1px rgb(var(--vi-color-red-500));
+  border-color: var(--vi-color-red-500);
+  box-shadow: 0 0 0 1px var(--vi-color-red-500);
 }
 
 .slot-line {
@@ -109,5 +148,10 @@ body {
 }
 
 .muted {
-  color: rgb(var(--vi-color-gray-700));
+  color: var(--vi-color-gray-700);
+}
+
+.section-gap {
+  display: block;
+  margin: 20px 0 12px;
 }
