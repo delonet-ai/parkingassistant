@@ -7,7 +7,7 @@ tabs still run in the old server-rendered `apps/admin-web`: `Заявки`, `Л�
 `Журнал` and `Места`. This plan moves each of them, then deletes `apps/admin-web` entirely —
 its sources, its Dockerfile, its compose service, its tests and its port.
 
-The decision and its constraints are [ADR 006](../adr/006-admin-ui-on-vision-ui.md). Nothing
+The decision and its constraints are [ADR 006](../../adr/006-admin-ui-on-vision-ui.md). Nothing
 about the API changes: not an endpoint, not a payload, so the 122 golden snapshots must stay
 byte-identical throughout. If one moves, the migration broke something.
 
