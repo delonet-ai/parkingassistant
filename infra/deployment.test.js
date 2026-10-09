@@ -50,6 +50,23 @@ test('the stack defines exactly the MVP services', () => {
   );
 });
 
+test('every module the admin-ui server imports is copied into its image', () => {
+  // server.js is ESM and loads its siblings at startup, so a file left out of the COPY makes
+  // the container exit with ERR_MODULE_NOT_FOUND after a build that looked fine.
+  const dockerfile = fs.readFileSync(path.join(__dirname, 'docker', 'admin-ui.Dockerfile'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'apps', 'admin-ui', 'server.js'), 'utf8');
+  const localImports = [...serverSource.matchAll(/from '\.\/([^']+)'/g)].map((match) => match[1]);
+
+  assert.ok(localImports.length > 0, 'expected server.js to import at least one local module');
+
+  for (const moduleName of localImports) {
+    assert.ok(
+      dockerfile.includes(`apps/admin-ui/${moduleName}`),
+      `admin-ui.Dockerfile does not copy ${moduleName}, which server.js imports`
+    );
+  }
+});
+
 test('bot-adapter is not deployed while the Yandex phase is deferred', () => {
   assert.equal(services.has('bot-adapter'), false);
   assert.equal(compose.includes('parkingassistant-bot-adapter'), false);

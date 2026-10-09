@@ -38,7 +38,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY apps/admin-ui/package.json /app/package.json
-COPY apps/admin-ui/server.js /app/server.js
+COPY apps/admin-ui/server.js apps/admin-ui/multipart.js /app/
 COPY --from=build /build/apps/admin-ui/dist /app/dist
 
 ENTRYPOINT ["dumb-init", "--"]
