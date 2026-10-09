@@ -60,23 +60,23 @@ fi
 
 # `up -d` returns as soon as the containers are created; the one-shot migrate container and the
 # health checks are what actually say the stand is up.
-log "Waiting for api and admin-web to report healthy (max ${HEALTH_TIMEOUT_SECONDS}s)"
+log "Waiting for api and admin-ui to report healthy (max ${HEALTH_TIMEOUT_SECONDS}s)"
 
 waited=0
 while [ "$waited" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
   api_state="$(docker inspect --format '{{.State.Health.Status}}' parkingassistant-api 2>/dev/null || echo missing)"
-  admin_state="$(docker inspect --format '{{.State.Health.Status}}' parkingassistant-admin-web 2>/dev/null || echo missing)"
+  admin_state="$(docker inspect --format '{{.State.Health.Status}}' parkingassistant-admin-ui 2>/dev/null || echo missing)"
 
   if [ "$api_state" = "healthy" ] && [ "$admin_state" = "healthy" ]; then
-    log "api and admin-web are healthy"
+    log "api and admin-ui are healthy"
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
     log "Now verify from the dev container: npm run smoke:stand"
     exit 0
   fi
 
   if [ "$api_state" = "unhealthy" ] || [ "$admin_state" = "unhealthy" ]; then
-    echo "Service reported unhealthy (api=$api_state admin-web=$admin_state)" >&2
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail 50 api admin-web >&2
+    echo "Service reported unhealthy (api=$api_state admin-ui=$admin_state)" >&2
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail 50 api admin-ui >&2
     exit 1
   fi
 
@@ -84,7 +84,7 @@ while [ "$waited" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
   waited=$((waited + 5))
 done
 
-echo "Timed out after ${HEALTH_TIMEOUT_SECONDS}s (api=$api_state admin-web=$admin_state)" >&2
+echo "Timed out after ${HEALTH_TIMEOUT_SECONDS}s (api=$api_state admin-ui=$admin_state)" >&2
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps >&2
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail 50 migrate api admin-web >&2
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --tail 50 migrate api admin-ui >&2
 exit 1

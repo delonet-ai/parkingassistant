@@ -62,6 +62,18 @@ test('every module the admin-ui server imports is copied into its image', () => 
   }
 });
 
+test('the deploy script waits for containers the stack actually defines', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'deploy', 'stand.sh'), 'utf8');
+  const waited = [...script.matchAll(/parkingassistant-([a-z-]+)/g)].map((match) => match[1]);
+  const defined = new Set([...services.keys()]);
+
+  assert.ok(waited.length > 0, 'expected the deploy script to wait for at least one container');
+
+  for (const name of new Set(waited)) {
+    assert.ok(defined.has(name), `stand.sh waits for ${name}, which docker-compose.yml does not define`);
+  }
+});
+
 test('bot-adapter is not deployed while the Yandex phase is deferred', () => {
   assert.equal(services.has('bot-adapter'), false);
   assert.equal(compose.includes('parkingassistant-bot-adapter'), false);
