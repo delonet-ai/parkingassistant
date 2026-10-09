@@ -152,9 +152,9 @@
       "departurePlan": {
         "createdAt": "<timestamp>",
         "departureTime": "15:30",
-        "id": "<id:71>",
+        "id": "<id:137>",
         "isEarly": true,
-        "planDate": "<today>",
+        "planDate": "<today+1>",
         "updatedAt": "<timestamp>",
         "user": {
           "displayName": "Иванов Иван Иванович",
@@ -174,9 +174,9 @@
       "departurePlan": {
         "createdAt": "<timestamp>",
         "departureTime": "20:15",
-        "id": "<id:71>",
+        "id": "<id:137>",
         "isEarly": false,
-        "planDate": "<today>",
+        "planDate": "<today+1>",
         "updatedAt": "<timestamp>",
         "user": {
           "displayName": "Иванов Иван Иванович",
@@ -196,7 +196,7 @@
       "occupancy": {
         "createdAt": "<timestamp>",
         "guestParkingRequest": null,
-        "id": "<id:137>",
+        "id": "<id:138>",
         "lineGroup": {
           "capacity": 2,
           "code": "demo-line-3-201",

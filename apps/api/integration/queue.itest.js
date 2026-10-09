@@ -256,8 +256,20 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
   });
 
   describe('interaction with manual assignment', () => {
+    // These two dates are derived from today rather than hard-coded. The suite shares one
+    // scratch schema, and the «defaults an omitted date to today» test above runs the job
+    // for the current date — so a hard-coded date collides with it on exactly the day the
+    // calendar catches up, and the assertions below ("one run for this date", "two
+    // reservations") see the extra run's work. The literals used to be 2026-10-08/09, and
+    // that is precisely the pair of days they would have failed on.
+    const offsetFromToday = (days) => {
+      const date = new Date(`${currentDateInTimezone('Europe/Moscow')}T00:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+
     it('skips a queued user whose request was already assigned', async () => {
-      const date = '2026-10-08';
+      const date = offsetFromToday(7);
       await fixtures.insertReleasedPlace({ date, place: { code: 'Q-H1', placeType: 'double' } });
 
       const assigned = await fixtures.insertEmployee();
@@ -293,7 +305,7 @@ describe('queue processing (integration)', { skip: skipWithoutDatabase() }, () =
       //
       // Task 7 fixed both halves: the manual endpoint closes the request it just
       // answered, and the queue run skips anyone who already holds a place.
-      const date = '2026-10-09';
+      const date = offsetFromToday(8);
       const { place } = await fixtures.insertReleasedPlace({
         date,
         place: { code: 'Q-I1', placeType: 'double' }

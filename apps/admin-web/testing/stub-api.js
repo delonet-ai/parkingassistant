@@ -10,7 +10,6 @@
 
 const { spawn } = require('node:child_process');
 const http = require('node:http');
-const net = require('node:net');
 const path = require('node:path');
 
 const PLACE_ID = '11111111-1111-4111-8111-111111111111';
@@ -214,17 +213,6 @@ function historyPayload(pathname) {
   return null;
 }
 
-async function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-    probe.on('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
 /** Records every path the UI asked for, so a test can assert a request is NOT made. */
 function startStubApi() {
   const requestedPaths = [];
@@ -249,12 +237,35 @@ function startStubApi() {
   });
 }
 
-/** Boots the real admin-web process against the stub and waits for /health. */
+/**
+ * Boots the real admin-web process against the stub and waits for /health.
+ *
+ * PORT=0 and the port is read back from the startup line: choosing a free port here and
+ * passing it in loses the race against the parallel suites, which showed up as EADDRINUSE.
+ */
 async function startAdminWeb({ apiBaseUrl }) {
-  const port = await freePort();
+  const chunks = [];
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'server.js')], {
-    env: { ...process.env, PORT: String(port), API_BASE_URL: apiBaseUrl },
+    env: { ...process.env, PORT: '0', API_BASE_URL: apiBaseUrl },
     stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  child.stdout.on('data', (chunk) => chunks.push(chunk.toString()));
+  child.stderr.on('data', (chunk) => chunks.push(chunk.toString()));
+
+  const port = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('admin-web did not report a port in time')), 10_000);
+    child.stdout.on('data', () => {
+      const match = /listening on port (\d+)/.exec(chunks.join(''));
+      if (match) {
+        clearTimeout(timer);
+        resolve(Number(match[1]));
+      }
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      reject(new Error(`admin-web exited before listening (code ${code}): ${chunks.join('')}`));
+    });
   });
 
   const baseUrl = `http://127.0.0.1:${port}`;

@@ -560,11 +560,14 @@ function buildScenarios() {
           resolve: (refs) => ({ body: { requestId: refs.goldenGuestRequestId } })
         },
         {
+          // The plan is for TOMORROW on purpose. The product rule closes editing of the
+          // current day at 07:00, so recording this against `today` made the snapshot pass
+          // only before 07:00 Europe/Moscow and fail with 409 for the rest of the day.
           name: 'POST /admin/departure-plans',
           method: 'POST',
           path: '/admin/departure-plans',
           resolve: (refs) => ({
-            body: { userId: refs.employeeByNo.get('DEMO-001'), planDate: today, departureTime: '15:30' }
+            body: { userId: refs.employeeByNo.get('DEMO-001'), planDate: tomorrow, departureTime: '15:30' }
           })
         },
         {
@@ -572,7 +575,7 @@ function buildScenarios() {
           method: 'POST',
           path: '/admin/departure-plans',
           resolve: (refs) => ({
-            body: { userId: refs.employeeByNo.get('DEMO-001'), planDate: today, departureTime: '20:15' }
+            body: { userId: refs.employeeByNo.get('DEMO-001'), planDate: tomorrow, departureTime: '20:15' }
           })
         },
         {

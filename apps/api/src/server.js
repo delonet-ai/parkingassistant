@@ -41,7 +41,9 @@ const { modules } = createModules({
 const server = http.createServer(createApiRouter({ modules, sendJson }));
 
 server.listen(port, '0.0.0.0', () => {
-  console.log(`parkingassistant api listening on port ${port}`);
+  // The bound port, not the requested one: PORT=0 lets the OS pick, and the test
+  // harness reads this line to learn which port it got.
+  console.log(`parkingassistant api listening on port ${server.address().port}`);
 });
 
 async function shutdown(signal) {
