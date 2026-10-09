@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { ViAlert, ViButton, ViIcon, ViTabs, ViText } from '@vi-frontend/vision-ui'
 
 import AuditPage from './pages/AuditPage.vue'
@@ -9,9 +9,24 @@ import LinesPage from './pages/LinesPage.vue'
 import LoginPage from './pages/LoginPage.vue'
 import PlacesPage from './pages/PlacesPage.vue'
 import RequestsPage from './pages/RequestsPage.vue'
-import { TABS, boot, buildUrl, dismissNotice, signOut, state } from './store'
+import UsersPage from './pages/UsersPage.vue'
+import { allowedTabs, boot, buildUrl, dismissNotice, signOut, state } from './store'
 
-const PAGES = { day: DayPage, requests: RequestsPage, lines: LinesPage, catalog: CatalogPage, audit: AuditPage, places: PlacesPage }
+const PAGES = {
+  day: DayPage,
+  requests: RequestsPage,
+  lines: LinesPage,
+  catalog: CatalogPage,
+  audit: AuditPage,
+  places: PlacesPage,
+  access: UsersPage
+}
+
+// The tab strip follows the operator's roles: Доступ is a `system_admin` screen, and every
+// request it makes would answer 403 for anyone else. The store drops `state.view` back to the
+// day if a pasted URL names a tab this operator may not open, so the component resolved below
+// is always one of the visible ones.
+const tabs = computed(() => allowedTabs())
 
 onMounted(() => boot(window.location.search))
 
@@ -70,7 +85,7 @@ function selectTab(value) {
     </header>
 
     <ViTabs
-      :tabs="TABS"
+      :tabs="tabs"
       :active-tab="state.view"
       @update:active-tab="selectTab"
     />

@@ -22,6 +22,19 @@ const ACTIVATION_REFUSED = 'Activation is not available';
 const LOGIN_REFUSED = 'Invalid login or password';
 const NOT_AUTHENTICATED = 'Authentication required';
 
+const LOGIN_TAKEN = 'A user with this login already exists';
+const USER_NOT_FOUND = 'Auth user not found';
+const ROLE_REQUIRED = 'A user must hold at least one role';
+const SELF_DEMOTION_REFUSED =
+  'You cannot remove your own system_admin role — ask another system administrator to do it';
+const SELF_DISABLE_REFUSED =
+  'You cannot disable your own account — ask another system administrator to do it';
+
+// The role that manages accounts. Named here because the self-demotion rule is about this
+// role specifically: losing `parking_admin` is an inconvenience, losing the last way into
+// user management is a locked door.
+const SYSTEM_ADMIN_ROLE = 'system_admin';
+
 const SESSION_TTL_SECONDS = 43200; // 12 hours — one working day plus the evening jobs.
 const SESSION_TOKEN_BYTES = 32;
 
@@ -169,11 +182,193 @@ function createAuthService({ dbRepository, pool }) {
     return { revoked: Boolean(revoked) };
   }
 
+  // --- user management (Task 5) -------------------------------------------------------------
+  //
+  // Reached only by a `system_admin` — the router refuses everyone else before a handler runs,
+  // so nothing below re-checks the caller's role. What it does check is the two mistakes the
+  // role cannot protect against: an administrator removing their own `system_admin` role, and
+  // one disabling their own account. Both would leave the system with one fewer way in and,
+  // with a single administrator, with none at all.
+
+  // Every user carries at least one role. The router treats a closed route without a `roles`
+  // list as "any signed-in operator", so a user with no roles would still reach every parking
+  // endpoint — "no access" has to be `disabled`, not an empty role set.
+  async function resolveRoles(repo, roleCodes) {
+    if (roleCodes.length === 0) {
+      throw abortWith(400, ROLE_REQUIRED);
+    }
+
+    const roles = await repository.findRolesByCodes(repo, roleCodes);
+
+    if (roles.length !== roleCodes.length) {
+      const known = new Set(roles.map((role) => role.code));
+      const unknown = roleCodes.filter((code) => !known.has(code));
+
+      throw abortWith(400, `Unknown role: ${unknown.join(', ')}`);
+    }
+
+    return roles;
+  }
+
+  function rolePayload(roles) {
+    return roles.map((role) => ({ code: role.code, name: role.name }));
+  }
+
+  async function auditUserChange(repo, { actor, user, action, metadata }) {
+    await auditRepository.insertAuditLog(repo, {
+      entityType: 'auth_user',
+      entityId: user.id,
+      action,
+      actorAuthUserId: actor ? actor.id : null,
+      actorService: 'admin-ui',
+      metadata: { login: user.login, ...metadata }
+    });
+  }
+
+  async function createUser({ actor, login, displayName, password, roleCodes }) {
+    // Outside the transaction: scrypt is the slow part and the rows below stay locked only
+    // for the check and the writes.
+    const passwordHash = await hashPassword(password);
+
+    return withTransaction(pool, async (repo) => {
+      const existing = await repository.findAnyAuthUserByLogin(repo, login);
+
+      if (existing) {
+        throw abortWith(409, LOGIN_TAKEN);
+      }
+
+      const roles = await resolveRoles(repo, roleCodes);
+      // `active`, not `invited`: the password is set here, so there is nothing left to
+      // activate. `invited` exists for the seeded bootstrap user, whose hash is a placeholder.
+      const user = await repository.insertAuthUser(repo, {
+        login,
+        displayName,
+        passwordHash,
+        status: 'active'
+      });
+
+      await repository.replaceAuthUserRoles(repo, {
+        authUserId: user.id,
+        roleIds: roles.map((role) => role.id),
+        createdByAuthUserId: actor ? actor.id : null
+      });
+
+      await auditUserChange(repo, {
+        actor,
+        user,
+        action: 'auth_user_created',
+        metadata: { displayName: user.display_name, roles: roles.map((role) => role.code) }
+      });
+
+      return { user, roles: rolePayload(roles) };
+    });
+  }
+
+  async function setUserRoles({ actor, authUserId, roleCodes }) {
+    return withTransaction(pool, async (repo) => {
+      const user = await repository.lockAuthUserById(repo, authUserId);
+
+      if (!user) {
+        throw abortWith(404, USER_NOT_FOUND);
+      }
+
+      const roles = await resolveRoles(repo, roleCodes);
+
+      if (actor && actor.id === user.id && !roles.some((role) => role.code === SYSTEM_ADMIN_ROLE)) {
+        throw abortWith(409, SELF_DEMOTION_REFUSED);
+      }
+
+      await repository.replaceAuthUserRoles(repo, {
+        authUserId: user.id,
+        roleIds: roles.map((role) => role.id),
+        createdByAuthUserId: actor ? actor.id : null
+      });
+
+      await auditUserChange(repo, {
+        actor,
+        user,
+        action: 'auth_user_roles_set',
+        metadata: { roles: roles.map((role) => role.code) }
+      });
+
+      return { user, roles: rolePayload(roles) };
+    });
+  }
+
+  async function setUserPassword({ actor, authUserId, password }) {
+    const passwordHash = await hashPassword(password);
+
+    return withTransaction(pool, async (repo) => {
+      const user = await repository.lockAuthUserById(repo, authUserId);
+
+      if (!user) {
+        throw abortWith(404, USER_NOT_FOUND);
+      }
+
+      // An `invited` user cannot sign in, so setting their password and leaving the status
+      // alone would hand the operator a credential that does not work. A `disabled` user
+      // stays disabled: the password is not what is stopping them.
+      const activated = user.status === 'invited';
+      const updated = await repository.setAuthUserPassword(repo, {
+        id: user.id,
+        passwordHash,
+        status: activated ? 'active' : null
+      });
+
+      await auditUserChange(repo, {
+        actor,
+        user,
+        action: 'auth_user_password_set',
+        metadata: { activated }
+      });
+
+      return { user: updated, roles: rolePayload(await repository.listAuthUserRoles(repo, user.id)) };
+    });
+  }
+
+  // `disabled` → the account is refused at login and its live sessions are revoked in the
+  // same transaction, so the change takes effect now rather than at the next expiry.
+  // `active` → the account is usable again; the revoked sessions stay revoked and the
+  // operator signs in anew, which is the honest meaning of "re-enable".
+  async function setUserStatus({ actor, authUserId, status }) {
+    return withTransaction(pool, async (repo) => {
+      const user = await repository.lockAuthUserById(repo, authUserId);
+
+      if (!user) {
+        throw abortWith(404, USER_NOT_FOUND);
+      }
+
+      if (status === 'disabled' && actor && actor.id === user.id) {
+        throw abortWith(409, SELF_DISABLE_REFUSED);
+      }
+
+      const updated = await repository.setAuthUserStatus(repo, { id: user.id, status });
+      const revoked = status === 'disabled' ? await repository.revokeSessionsForAuthUser(repo, user.id) : [];
+
+      await auditUserChange(repo, {
+        actor,
+        user,
+        action: status === 'disabled' ? 'auth_user_disabled' : 'auth_user_enabled',
+        metadata: { revokedSessions: revoked.length }
+      });
+
+      return {
+        user: updated,
+        roles: rolePayload(await repository.listAuthUserRoles(repo, user.id)),
+        revokedSessions: revoked.length
+      };
+    });
+  }
+
   return {
     activate,
+    createUser,
     login,
     logout,
-    resolveSession
+    resolveSession,
+    setUserPassword,
+    setUserRoles,
+    setUserStatus
   };
 }
 
@@ -182,5 +377,6 @@ module.exports = {
   NOT_AUTHENTICATED,
   SESSION_COOKIE_NAME,
   SESSION_TTL_SECONDS,
+  SYSTEM_ADMIN_ROLE,
   createAuthService
 };

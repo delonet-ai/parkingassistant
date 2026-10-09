@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const { after, afterEach, before, describe, it } = require('node:test');
 
 const { startApi } = require('../testing/boot-api');
-const { postJson } = require('../testing/fixtures');
+const { getJson, postJson } = require('../testing/fixtures');
 const { verifyPassword } = require('../../../packages/shared/passwords');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
 
@@ -460,5 +460,493 @@ describe('auth sessions (integration)', { skip: skipWithoutDatabase() }, () => {
 
     assert.equal((await get('/auth/me', first.token)).status, 401);
     assert.equal((await get('/auth/me', second.token)).status, 200);
+  });
+});
+
+// User management (Task 5): the five writes behind `system_admin`, the role guard that keeps
+// a `parking_admin` out of all six account routes, and the two self-inflicted mistakes the
+// role cannot prevent — an administrator removing their own `system_admin` role or disabling
+// their own account.
+//
+// One scratch database for the whole suite: the harness signs in the seeded `sysadmin`, which
+// is the operator every case acts as unless it says otherwise.
+
+describe('auth user management (integration)', { skip: skipWithoutDatabase() }, () => {
+  let db = null;
+  let api = null;
+  let sysadminId = null;
+
+  before(async () => {
+    db = await createTestDatabase();
+    api = await startApi({ databaseUrl: db.connectionString });
+    sysadminId = api.operator.user.id;
+  });
+
+  after(async () => {
+    if (api) {
+      await api.stop();
+    }
+    if (db) {
+      await db.drop();
+    }
+  });
+
+  let loginSequence = 0;
+
+  function nextLogin(prefix) {
+    loginSequence += 1;
+    return `${prefix}-${loginSequence}`;
+  }
+
+  async function createUser(overrides = {}, options = {}) {
+    const login = overrides.login || nextLogin('operator');
+
+    return postJson(
+      api.baseUrl,
+      '/admin/users',
+      {
+        login,
+        // `??`, not `||`: a case that asserts an empty display name is refused has to be
+        // able to send one.
+        displayName: overrides.displayName ?? `Operator ${login}`,
+        password: overrides.password || 'a-new-operator-password',
+        roles: overrides.roles || ['parking_admin'],
+        ...(overrides.extra || {})
+      },
+      options
+    );
+  }
+
+  // A session of this user's own, as a `name=value` cookie the request helpers accept.
+  async function sessionCookieFor(login, password) {
+    const response = await fetch(`${api.baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login, password })
+    });
+
+    assert.equal(response.status, 200, `could not sign in as ${login}`);
+
+    const header = response.headers.get('set-cookie');
+    const match = /(pa_session=[^;]+)/.exec(header);
+    assert.ok(match, 'login must set the session cookie');
+
+    return match[1];
+  }
+
+  async function auditRowsFor(entityId) {
+    const result = await db.query(
+      `
+        select action, actor_auth_user_id, actor_service, metadata
+        from audit_logs
+        where entity_type = 'auth_user' and entity_id = $1
+        order by occurred_at, id
+      `,
+      [entityId]
+    );
+
+    return result.rows;
+  }
+
+  async function userRow(id) {
+    const result = await db.query('select id, login, status, password_hash from auth_users where id = $1', [id]);
+    return result.rows[0] || null;
+  }
+
+  async function roleCodesOf(id) {
+    const result = await db.query(
+      `
+        select ar.code
+        from auth_user_roles aur
+        join auth_roles ar on ar.id = aur.auth_role_id
+        where aur.auth_user_id = $1
+        order by ar.code
+      `,
+      [id]
+    );
+
+    return result.rows.map((row) => row.code);
+  }
+
+  it('creates a user with an initial password and roles, and names the actor in the audit row', async () => {
+    const login = nextLogin('created');
+    const { status, payload } = await createUser({ login, roles: ['parking_admin'] });
+
+    assert.equal(status, 201, JSON.stringify(payload));
+    assert.equal(payload.user.login, login);
+    assert.equal(payload.user.authStatus, 'active');
+    assert.deepEqual(
+      payload.user.roles.map((role) => role.code),
+      ['parking_admin']
+    );
+    assert.ok(payload.user.roles.every((role) => typeof role.name === 'string' && role.name.length > 0));
+    assert.equal(JSON.stringify(payload).includes('scrypt$'), false, 'the hash must not leave the API');
+
+    const row = await userRow(payload.user.id);
+    assert.match(row.password_hash, /^scrypt\$16384\$8\$1\$/);
+    assert.equal(await verifyPassword('a-new-operator-password', row.password_hash), true);
+
+    const audit = await auditRowsFor(payload.user.id);
+    assert.deepEqual(
+      audit.map((entry) => entry.action),
+      ['auth_user_created']
+    );
+    assert.equal(audit[0].actor_auth_user_id, sysadminId, 'the audit row must name the operator who acted');
+    assert.equal(audit[0].actor_service, 'admin-ui');
+    assert.deepEqual(audit[0].metadata.roles, ['parking_admin']);
+  });
+
+  it('lets the new user sign in with the password it was created with', async () => {
+    const login = nextLogin('signs-in');
+    const created = await createUser({ login, password: 'brand-new-password' });
+    assert.equal(created.status, 201);
+
+    const cookie = await sessionCookieFor(login, 'brand-new-password');
+    const me = await getJson(api.baseUrl, '/auth/me', { cookie });
+
+    assert.equal(me.status, 200);
+    assert.equal(me.payload.user.login, login);
+    assert.deepEqual(me.payload.user.roles, ['parking_admin']);
+  });
+
+  it('shows the new user in GET /admin/users with their roles and status', async () => {
+    const login = nextLogin('listed');
+    const created = await createUser({ login, roles: ['parking_admin', 'system_admin'] });
+    assert.equal(created.status, 201);
+
+    const { status, payload } = await getJson(api.baseUrl, '/admin/users');
+
+    assert.equal(status, 200);
+    const listed = payload.users.find((user) => user.login === login);
+    assert.ok(listed, 'the created user must appear in the list');
+    assert.equal(listed.authStatus, 'active');
+    assert.deepEqual(
+      listed.roles.map((role) => role.code),
+      ['parking_admin', 'system_admin']
+    );
+  });
+
+  it('refuses a login that is already taken with 409, and writes nothing', async () => {
+    const login = nextLogin('taken');
+    assert.equal((await createUser({ login })).status, 201);
+
+    const before = await db.query('select count(*)::int as count from auth_users');
+    const { status, payload } = await createUser({ login, displayName: 'Someone else' });
+
+    assert.equal(status, 409);
+    assert.equal(payload.code, 'conflict');
+    assert.match(payload.error, /already exists/);
+    assert.deepEqual((await db.query('select count(*)::int as count from auth_users')).rows, before.rows);
+  });
+
+  it('refuses a creation whose fields the system would not accept, with 400 each', async () => {
+    const refusals = await Promise.all([
+      createUser({ password: '123456789' }),
+      createUser({ roles: ['nope'] }),
+      createUser({ roles: [] }),
+      createUser({ login: 'ab' }),
+      createUser({ displayName: '' })
+    ]);
+
+    assert.deepEqual(
+      refusals.map((refusal) => refusal.status),
+      [400, 400, 400, 400, 400]
+    );
+    assert.match(refusals[0].payload.error, /10 characters/);
+    assert.match(refusals[1].payload.error, /Unknown role: nope/);
+    assert.match(refusals[2].payload.error, /at least one role/);
+  });
+
+  it('replaces the role set, in both directions', async () => {
+    const created = await createUser({ roles: ['parking_admin'] });
+    const id = created.payload.user.id;
+
+    const granted = await postJson(api.baseUrl, '/admin/users/roles', {
+      authUserId: id,
+      roles: ['parking_admin', 'system_admin']
+    });
+
+    assert.equal(granted.status, 200, JSON.stringify(granted.payload));
+    assert.deepEqual(
+      granted.payload.user.roles.map((role) => role.code),
+      ['parking_admin', 'system_admin']
+    );
+    assert.deepEqual(await roleCodesOf(id), ['parking_admin', 'system_admin']);
+
+    const revoked = await postJson(api.baseUrl, '/admin/users/roles', {
+      authUserId: id,
+      roles: ['parking_admin']
+    });
+
+    assert.equal(revoked.status, 200);
+    assert.deepEqual(await roleCodesOf(id), ['parking_admin']);
+    assert.deepEqual(
+      (await auditRowsFor(id)).map((entry) => entry.action),
+      ['auth_user_created', 'auth_user_roles_set', 'auth_user_roles_set']
+    );
+  });
+
+  it('refuses to remove the acting administrator’s own system_admin role, with 409', async () => {
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/roles', {
+      authUserId: sysadminId,
+      roles: ['parking_admin']
+    });
+
+    assert.equal(status, 409);
+    assert.equal(payload.code, 'conflict');
+    assert.match(payload.error, /your own system_admin role/);
+    assert.deepEqual(await roleCodesOf(sysadminId), ['system_admin'], 'the role set must be untouched');
+    assert.equal((await getJson(api.baseUrl, '/admin/users')).status, 200, 'the door must still be open');
+  });
+
+  it('lets the acting administrator keep system_admin while adding another role', async () => {
+    const { status } = await postJson(api.baseUrl, '/admin/users/roles', {
+      authUserId: sysadminId,
+      roles: ['parking_admin', 'system_admin']
+    });
+
+    assert.equal(status, 200);
+    assert.deepEqual(await roleCodesOf(sysadminId), ['parking_admin', 'system_admin']);
+
+    // Back to where the suite found it, so the cases after this one see one role.
+    await postJson(api.baseUrl, '/admin/users/roles', { authUserId: sysadminId, roles: ['system_admin'] });
+    assert.deepEqual(await roleCodesOf(sysadminId), ['system_admin']);
+  });
+
+  it('refuses to disable the acting administrator’s own account, with 409', async () => {
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/disable', { authUserId: sysadminId });
+
+    assert.equal(status, 409);
+    assert.equal(payload.code, 'conflict');
+    assert.match(payload.error, /your own account/);
+    assert.equal((await userRow(sysadminId)).status, 'active');
+    assert.equal((await getJson(api.baseUrl, '/auth/me')).status, 200, 'the acting session must survive');
+  });
+
+  it('disables a user, revokes their live sessions in the same breath and refuses their login', async () => {
+    const login = nextLogin('disabled');
+    const created = await createUser({ login, password: 'about-to-be-disabled' });
+    const id = created.payload.user.id;
+    const cookie = await sessionCookieFor(login, 'about-to-be-disabled');
+    assert.equal((await getJson(api.baseUrl, '/auth/me', { cookie })).status, 200);
+
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/disable', { authUserId: id });
+
+    assert.equal(status, 200, JSON.stringify(payload));
+    assert.equal(payload.user.authStatus, 'disabled');
+    assert.equal(payload.revokedSessions, 1);
+
+    assert.equal((await userRow(id)).status, 'disabled');
+    assert.equal(
+      (await getJson(api.baseUrl, '/auth/me', { cookie })).status,
+      401,
+      'a disabled account must not keep a live session'
+    );
+    assert.equal((await getJson(api.baseUrl, '/admin/places', { cookie })).status, 401);
+
+    const refused = await fetch(`${api.baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login, password: 'about-to-be-disabled' })
+    });
+    assert.equal(refused.status, 401);
+
+    const revokedSessions = await db.query(
+      'select count(*)::int as count from auth_sessions where auth_user_id = $1 and revoked_at is not null',
+      [id]
+    );
+    assert.equal(revokedSessions.rows[0].count, 1);
+
+    const audit = await auditRowsFor(id);
+    assert.equal(audit[audit.length - 1].action, 'auth_user_disabled');
+    assert.equal(audit[audit.length - 1].metadata.revokedSessions, 1);
+  });
+
+  it('re-enables a disabled user, who then signs in anew', async () => {
+    const login = nextLogin('re-enabled');
+    const created = await createUser({ login, password: 'off-and-on-again' });
+    const id = created.payload.user.id;
+
+    assert.equal((await postJson(api.baseUrl, '/admin/users/disable', { authUserId: id })).status, 200);
+    const enabled = await postJson(api.baseUrl, '/admin/users/enable', { authUserId: id });
+
+    assert.equal(enabled.status, 200);
+    assert.equal(enabled.payload.user.authStatus, 'active');
+    assert.equal((await userRow(id)).status, 'active');
+
+    const cookie = await sessionCookieFor(login, 'off-and-on-again');
+    assert.equal((await getJson(api.baseUrl, '/auth/me', { cookie })).status, 200);
+
+    const audit = await auditRowsFor(id);
+    assert.deepEqual(
+      audit.map((entry) => entry.action),
+      ['auth_user_created', 'auth_user_disabled', 'auth_user_enabled']
+    );
+  });
+
+  it('sets a new password: the new one works and the old one does not', async () => {
+    const login = nextLogin('rotated');
+    const created = await createUser({ login, password: 'the-first-password' });
+    const id = created.payload.user.id;
+
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/password', {
+      authUserId: id,
+      password: 'the-second-password'
+    });
+
+    assert.equal(status, 200, JSON.stringify(payload));
+    assert.deepEqual(
+      payload.user.roles.map((role) => role.code),
+      ['parking_admin'],
+      'the answer must still describe the user, roles included'
+    );
+
+    const row = await userRow(id);
+    assert.equal(await verifyPassword('the-second-password', row.password_hash), true);
+    assert.equal(await verifyPassword('the-first-password', row.password_hash), false);
+
+    const refused = await fetch(`${api.baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login, password: 'the-first-password' })
+    });
+    assert.equal(refused.status, 401);
+    await sessionCookieFor(login, 'the-second-password');
+  });
+
+  it('activates an invited user when their password is set — a credential that works', async () => {
+    const login = nextLogin('invited');
+    const inserted = await db.query(
+      `
+        insert into auth_users (login, password_hash, display_name, status)
+        values ($1, '{PENDING_IMPLEMENTATION}', 'Invited Operator', 'invited')
+        returning id
+      `,
+      [login]
+    );
+    const id = inserted.rows[0].id;
+    await postJson(api.baseUrl, '/admin/users/roles', { authUserId: id, roles: ['parking_admin'] });
+
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/password', {
+      authUserId: id,
+      password: 'finally-a-real-password'
+    });
+
+    assert.equal(status, 200, JSON.stringify(payload));
+    assert.equal(payload.user.authStatus, 'active');
+    assert.equal((await userRow(id)).status, 'active');
+    await sessionCookieFor(login, 'finally-a-real-password');
+
+    const audit = await auditRowsFor(id);
+    assert.equal(audit[audit.length - 1].action, 'auth_user_password_set');
+    assert.equal(audit[audit.length - 1].metadata.activated, true);
+  });
+
+  it('leaves a disabled user disabled when their password is set', async () => {
+    const created = await createUser();
+    const id = created.payload.user.id;
+    await postJson(api.baseUrl, '/admin/users/disable', { authUserId: id });
+
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/password', {
+      authUserId: id,
+      password: 'still-not-allowed-in'
+    });
+
+    assert.equal(status, 200);
+    assert.equal(payload.user.authStatus, 'disabled', 'a password is not what is stopping them');
+  });
+
+  it('answers 404 for a user that does not exist and 400 for an id that is not one', async () => {
+    const missing = '00000000-0000-0000-0000-000000000000';
+
+    for (const [pathname, body] of [
+      ['/admin/users/roles', { authUserId: missing, roles: ['parking_admin'] }],
+      ['/admin/users/password', { authUserId: missing, password: 'a-valid-password' }],
+      ['/admin/users/disable', { authUserId: missing }],
+      ['/admin/users/enable', { authUserId: missing }]
+    ]) {
+      const { status, payload } = await postJson(api.baseUrl, pathname, body);
+      assert.equal(status, 404, `${pathname} answered ${status}`);
+      assert.equal(payload.code, 'not_found');
+    }
+
+    const malformed = await postJson(api.baseUrl, '/admin/users/disable', { authUserId: 'not-a-uuid' });
+    assert.equal(malformed.status, 400);
+    assert.match(malformed.payload.error, /valid uuid/);
+
+    const absent = await postJson(api.baseUrl, '/admin/users/enable', {});
+    assert.equal(absent.status, 400);
+    assert.match(absent.payload.error, /authUserId is required/);
+  });
+
+  // The role guard, which is the point of the whole task: a `parking_admin` runs the parking
+  // and may not see or touch an account. 403, never 404 — an operator who simply lacks a role
+  // must be told that, not that the route does not exist.
+  it('refuses a parking_admin on every user-management route with 403, while the parking stays open', async () => {
+    const login = nextLogin('parking-admin');
+    const created = await createUser({ login, password: 'only-runs-the-parking', roles: ['parking_admin'] });
+    assert.equal(created.status, 201);
+    const cookie = await sessionCookieFor(login, 'only-runs-the-parking');
+    const victim = await createUser();
+
+    const list = await getJson(api.baseUrl, '/admin/users', { cookie });
+    assert.equal(list.status, 403);
+    assert.equal(list.payload.code, 'forbidden');
+
+    const writes = [
+      ['/admin/users', { login: 'sneaky-operator', displayName: 'Sneaky', password: 'a-valid-password', roles: ['system_admin'] }],
+      ['/admin/users/roles', { authUserId: victim.payload.user.id, roles: ['system_admin'] }],
+      ['/admin/users/password', { authUserId: victim.payload.user.id, password: 'a-valid-password' }],
+      ['/admin/users/disable', { authUserId: victim.payload.user.id }],
+      ['/admin/users/enable', { authUserId: victim.payload.user.id }]
+    ];
+
+    for (const [pathname, body] of writes) {
+      const { status, payload } = await postJson(api.baseUrl, pathname, body, { cookie });
+
+      assert.equal(status, 403, `${pathname} answered ${status} for a parking_admin`);
+      assert.equal(payload.code, 'forbidden');
+      assert.notEqual(status, 404, 'a missing role must not be reported as a missing route');
+    }
+
+    // Nothing was written by any of the five.
+    assert.equal(
+      (await db.query(`select count(*)::int as count from auth_users where login = 'sneaky-operator'`)).rows[0].count,
+      0
+    );
+    assert.deepEqual(await roleCodesOf(victim.payload.user.id), ['parking_admin']);
+    assert.equal((await userRow(victim.payload.user.id)).status, 'active');
+
+    // And the day is still theirs to run.
+    assert.equal((await getJson(api.baseUrl, '/admin/places', { cookie })).status, 200);
+    assert.equal((await getJson(api.baseUrl, '/admin/dashboard', { cookie })).status, 200);
+  });
+
+  it('refuses every user-management route without a session at all, with 401', async () => {
+    for (const [method, pathname] of [
+      ['GET', '/admin/users'],
+      ['POST', '/admin/users'],
+      ['POST', '/admin/users/roles'],
+      ['POST', '/admin/users/password'],
+      ['POST', '/admin/users/disable'],
+      ['POST', '/admin/users/enable']
+    ]) {
+      const result =
+        method === 'GET'
+          ? await getJson(api.baseUrl, pathname, { cookie: null })
+          : await postJson(api.baseUrl, pathname, {}, { cookie: null });
+
+      assert.equal(result.status, 401, `${method} ${pathname} answered ${result.status} anonymously`);
+      assert.equal(result.payload.code, 'unauthorized');
+    }
+  });
+
+  it('keeps the bootstrap operator usable throughout — the suite never locked itself out', async () => {
+    const me = await getJson(api.baseUrl, '/auth/me');
+
+    assert.equal(me.status, 200);
+    assert.equal(me.payload.user.login, 'sysadmin');
+    assert.deepEqual(me.payload.user.roles, ['system_admin']);
+    assert.equal((await userRow(sysadminId)).status, 'active');
   });
 });

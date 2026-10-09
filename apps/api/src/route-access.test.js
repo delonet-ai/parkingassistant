@@ -40,7 +40,15 @@ const EXPECTED_PUBLIC_ROUTES = [
 ];
 
 // Account management, not parking. Every other `/admin/*` route accepts either seeded role.
-const EXPECTED_ROLE_SCOPED_ROUTES = [['GET /admin/users', ['system_admin']]];
+// The five writes are Task 5's; a `parking_admin` runs the day and may not touch accounts.
+const EXPECTED_ROLE_SCOPED_ROUTES = [
+  ['GET /admin/users', ['system_admin']],
+  ['POST /admin/users', ['system_admin']],
+  ['POST /admin/users/disable', ['system_admin']],
+  ['POST /admin/users/enable', ['system_admin']],
+  ['POST /admin/users/password', ['system_admin']],
+  ['POST /admin/users/roles', ['system_admin']]
+];
 
 function sendJson(res, statusCode, payload) {
   writeJson(res, statusCode, normalizeApiErrorPayload(payload, statusCode));

@@ -10,14 +10,32 @@ export const FLOORS = [
   { code: 'g5', title: 'G5', floorLabel: '5' }
 ]
 
+// `roles` on a tab is the same rule the API enforces, stated once more so the operator is
+// not offered a screen every request from which would answer 403. The API is still what
+// decides: `allowedTabs()` only hides the tab.
 export const TABS = [
   { value: 'day', title: 'День' },
   { value: 'requests', title: 'Заявки' },
   { value: 'lines', title: 'Линии' },
   { value: 'catalog', title: 'Справочники' },
   { value: 'audit', title: 'Журнал' },
-  { value: 'places', title: 'Места' }
+  { value: 'places', title: 'Места' },
+  { value: 'access', title: 'Доступ', roles: ['system_admin'] }
 ]
+
+// The two roles `packages/db/seeds/001_bootstrap_system_admin.sql` defines. The API refuses
+// any other code, so this list is a set of labels, not a source of truth: a role added to the
+// seed has to be added here too, and until it is the Доступ tab simply will not offer it.
+export const AUTH_ROLES = [
+  { code: 'system_admin', title: 'Системный администратор' },
+  { code: 'parking_admin', title: 'Администратор парковки' }
+]
+
+export const AUTH_STATUS_LABELS = {
+  active: 'активен',
+  disabled: 'отключён',
+  invited: 'приглашён'
+}
 
 // Ours, not the API's: the API says "Authentication required", which is true but does not
 // tell the operator that the day they were working on is still there behind a sign-in.
@@ -33,6 +51,10 @@ export const state = reactive({
   authStage: 'loading',
   authUser: null,
   authRoles: [],
+  // The account list behind the Доступ tab. Not part of `loadDay()`: `/admin/users` is
+  // `system_admin`-only, and asking for it as a `parking_admin` would turn every day load
+  // into a 403.
+  authUsers: [],
   // The login of the single invited bootstrap user, when the database is still in that
   // state; it prefills the first-run form so the operator does not have to guess it.
   bootstrapLogin: null,
@@ -112,6 +134,11 @@ export function notify(type, text) {
 
 export function dismissNotice() {
   state.notice = null
+}
+
+/** The tabs this operator's roles allow. A tab without `roles` is everyone's. */
+export function allowedTabs() {
+  return TABS.filter((tab) => !tab.roles || tab.roles.some((role) => state.authRoles.includes(role)))
 }
 
 /** The first configured floor that actually holds lines — landing on an empty one reads
@@ -286,6 +313,12 @@ async function readBootstrapStage() {
 
 /** The session resolved; the shell is this operator's, and the day loads behind it. */
 async function enterApp() {
+  // A pasted `?view=access` must not survive a sign-in as somebody whose roles do not reach
+  // that screen: the tab would be hidden and the page would render behind it anyway.
+  if (!allowedTabs().some((tab) => tab.value === state.view)) {
+    state.view = 'day'
+  }
+
   // Set before the load, not after: a day that fails to load is a data problem the signed-in
   // operator should see inside the app, not a reason to show them a login form again.
   state.authStage = 'ready'
@@ -365,6 +398,7 @@ export async function signOut() {
 /** The session is gone — ended here or expired under us. Either way the screen goes back. */
 export function endSession(message = null) {
   applySession(null)
+  state.authUsers = []
   state.ready = false
   state.bootError = null
   state.notice = null
@@ -417,9 +451,39 @@ export function closeHistory() {
   state.history = null
 }
 
+/**
+ * The account list behind the Доступ tab, read on demand. It is not part of the day: the
+ * endpoint is `system_admin`-only, and a `parking_admin` loading the day must not be refused
+ * for a list they never asked to see.
+ */
+export async function loadUsers() {
+  const result = await api.get('/admin/users')
+
+  if (!result.ok) {
+    state.authUsers = []
+    return result
+  }
+
+  state.authUsers = result.data.users || []
+
+  return result
+}
+
 /** Every write goes through here: one place decides what a failure looks like, and a
  * successful write always reloads the day so the screen cannot drift from the backend. */
 export async function submit(path, body, successText) {
+  return postAndReload(path, body, successText, loadDay)
+}
+
+/**
+ * An account write reloads the account list, not the parking day: nothing on the day screen
+ * depends on who may sign in, and disabling an operator must not cost fifteen requests.
+ */
+export async function submitUser(path, body, successText) {
+  return postAndReload(path, body, successText, loadUsers)
+}
+
+async function postAndReload(path, body, successText, reload) {
   const result = await api.post(path, body)
 
   if (!result.ok) {
@@ -433,7 +497,7 @@ export async function submit(path, body, successText) {
     (warning) => warning.message || warning.type || String(warning)
   )
   notify('success', warnings.length ? `${successText} Предупреждение: ${warnings.join('; ')}` : successText)
-  await loadDay()
+  await reload()
 
   return result
 }

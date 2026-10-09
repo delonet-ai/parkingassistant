@@ -103,11 +103,11 @@ function stubApi(answers = ANSWERS) {
   }))
 }
 
-async function boot(answers) {
+async function boot(answers, search = '/') {
   stubApi(answers)
   // The app writes its screen into the URL, so a previous test's address would otherwise
   // decide which tab this one lands on.
-  window.history.replaceState(null, '', '/')
+  window.history.replaceState(null, '', search)
   Object.assign(state, {
     view: 'day',
     ready: false,
@@ -131,6 +131,15 @@ async function boot(answers) {
   await flushPromises()
 
   return wrapper
+}
+
+/**
+ * The tab strip's own titles. `wrapper.text()` is not specific enough for this one: the day
+ * screen says «Доступно к назначению», which contains the word «Доступ» and would make a
+ * hidden tab look present.
+ */
+function tabTitles(wrapper) {
+  return wrapper.findAll('[class*="tab-name"]').map((node) => node.text())
 }
 
 afterEach(() => {
@@ -324,6 +333,66 @@ describe('App', () => {
     expect(text).toContain('Отдано мест')
     expect(text).toContain('Таблицы дня')
     expect(state.authUser.login).toBe('sysadmin')
+  })
+
+  // The Доступ tab is the one screen a role decides. The API refuses `/admin/users` for a
+  // `parking_admin`, so offering them the tab would be offering them a 403.
+  it('offers the Доступ tab to a system_admin and renders the account list on it', async () => {
+    const wrapper = await boot({
+      ...ANSWERS,
+      '/admin/users': {
+        status: 'ok',
+        users: [
+          {
+            id: 'au1',
+            login: 'sysadmin',
+            displayName: 'Системный администратор',
+            authStatus: 'active',
+            lastLoginAt: null,
+            roles: [{ code: 'system_admin', name: 'Системный администратор' }]
+          }
+        ]
+      }
+    })
+
+    expect(tabTitles(wrapper)).toContain('Доступ')
+
+    state.view = 'access'
+    await flushPromises()
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).toContain('Новая учётная запись')
+    expect(text).toContain('Учётные записи · 1')
+    expect(text).toContain('sysadmin')
+  })
+
+  it('hides the Доступ tab from a parking_admin, and never asks for the account list', async () => {
+    const wrapper = await boot({
+      ...ANSWERS,
+      '/auth/me': { status: 'ok', user: { ...OPERATOR, login: 'operator', roles: ['parking_admin'] } }
+    })
+    const text = wrapper.text()
+
+    // The day is theirs; the account list is not.
+    expect(text).toContain('Таблицы дня')
+    expect(tabTitles(wrapper)).toEqual(['День', 'Заявки', 'Линии', 'Справочники', 'Журнал', 'Места'])
+    expect(window.fetch.mock.calls.map((call) => String(call[0]))).not.toContain('/api/admin/users')
+  })
+
+  it('drops a pasted ?view=access back to the day for an operator whose role cannot open it', async () => {
+    const wrapper = await boot(
+      {
+        ...ANSWERS,
+        '/auth/me': { status: 'ok', user: { ...OPERATOR, login: 'operator', roles: ['parking_admin'] } }
+      },
+      '/?view=access'
+    )
+
+    expect(state.view).toBe('day')
+    expect(wrapper.text()).toContain('Таблицы дня')
+    expect(wrapper.text()).not.toContain('Новая учётная запись')
   })
 
   it('returns to the login screen when the session ends mid-session', async () => {

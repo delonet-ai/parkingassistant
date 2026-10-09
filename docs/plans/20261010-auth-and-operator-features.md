@@ -220,12 +220,43 @@ the `v-if` **inside** it. Added to the trap list in `AGENTS.md`.
 - Create: `apps/admin-ui/src/pages/UsersPage.vue`, `apps/admin-ui/src/pages/UsersPage.spec.js`
 - Modify: `apps/admin-ui/src/store.js`, `src/App.vue`
 
-- [ ] add the write endpoints behind `system_admin`: create a user with an initial password and roles, set roles, set a new password, disable and re-enable — each writing an audit row naming the actor
-- [ ] refuse the two self-inflicted mistakes explicitly: a user may not remove their own `system_admin` role, and may not disable themselves — both `409` with a message that says why
-- [ ] revoke a disabled user's sessions in the same transaction, so disabling takes effect now rather than at the next expiry
-- [ ] add a `Доступ` tab rendered only for a `system_admin`, listing users with their roles, status and last login, with the four actions
-- [ ] write integration tests for the role guard (a `parking_admin` gets `403` on every user-management route) and the two self-inflicted refusals; write UI specs for the tab being absent without the role
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 6
+- [x] add the write endpoints behind `system_admin`: create a user with an initial password and roles, set roles, set a new password, disable and re-enable — each writing an audit row naming the actor
+- [x] refuse the two self-inflicted mistakes explicitly: a user may not remove their own `system_admin` role, and may not disable themselves — both `409` with a message that says why
+- [x] revoke a disabled user's sessions in the same transaction, so disabling takes effect now rather than at the next expiry
+- [x] add a `Доступ` tab rendered only for a `system_admin`, listing users with their roles, status and last login, with the four actions
+- [x] write integration tests for the role guard (a `parking_admin` gets `403` on every user-management route) and the two self-inflicted refusals; write UI specs for the tab being absent without the role
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 6 (142 UI specs, 349 node tests, lint clean, 333/333 integration twice, `npm run admin-ui:build` clean)
+
+➕ the five writes are `POST /admin/users`, `/admin/users/{roles,password,disable,enable}`, and
+they live in the **auth** context while the list `GET /admin/users` stays in `system`. The read
+predates authentication and is pinned by a golden snapshot at that path; moving it would have
+changed nothing an operator sees and reshuffled a snapshot for no reason. None of the five is
+`advertise`d, so the endpoint index at `GET /` — and `health.json` with it — is byte-identical.
+
+➕ **a user must hold at least one role, enforced on both writes with `400`.** Task 3's guard
+reads a closed route with no `roles` list as "any signed-in operator", so an account with an
+empty role set would have reached every `/admin/*` route except these five. "No access" is
+`disabled`, not a user with no roles — otherwise the role editor would quietly be a way to
+grant full parking access.
+
+➕ setting a password on an `invited` user **activates** them, and on a `disabled` user does
+not. Leaving `invited` alone would hand the operator a credential that cannot sign in (login
+requires `active`), while a disabled account is not being stopped by its password. A password
+change deliberately does **not** revoke sessions: an administrator rotating their own password
+would log themselves out mid-action. Disabling is the operation that closes sessions, and the
+UI says so.
+
+➕ the UI's refusals are the API's. `allowedTabs()` hides the `Доступ` tab without the role and
+`enterApp()` drops a pasted `?view=access` back to the day, but the screen never re-checks a
+rule: the two self-inflicted refusals are server-side and the table carries a line saying what
+they are, so a `409` reads as a rule rather than a bug. An account write reloads the account
+list, not the parking day — `submitUser()` beside `submit()`, both on one `postAndReload`.
+
+⚠️ **a design-system trap worth the note:** `ViCheckbox` toggles on the input's `change` event,
+not on a click, and with an array `model-value` it emits the **whole new array**. A spec that
+triggers `click` on the box changes nothing and passes for the wrong reason. The screen hands
+the event to a `toggleRole` that recomputes the set itself, so the checked box and the posted
+list cannot disagree whatever the component emits. Added to the trap list in `AGENTS.md`.
 
 ### Task 6: Name the person in the audit trail
 

@@ -141,12 +141,15 @@ The admin UI has its own runner: vitest with happy-dom, `npm run test:ui`, specs
 `src/App.spec.js` boots the whole app the way the browser does, which is what catches a shell
 that renders blank while every other check is green.
 
-Four things the design system does silently, each of which cost a defect: `ViTableSimple`
+Five things the design system does silently, each of which cost a defect: `ViTableSimple`
 hands a cell to the `#cell` slot **only when it has no `text` key**; `ViModal` ignores
 `isOpened` unless `use-model` is passed, and teleports its content to `document.body`, so a
 spec must assert on the document; a masked `ViInput` emits the **unmasked** value; `ViInput`
 decides whether it has an `#error` or `#note` slot from the slots it was mounted with, so
-`<template v-if="…" #error>` never appears — declare the slot and put the `v-if` **inside** it.
+`<template v-if="…" #error>` never appears — declare the slot and put the `v-if` **inside** it;
+`ViCheckbox` toggles on the input's **`change`** event, not on a click, and with an array
+`model-value` it emits the whole new array rather than the one value — a spec that triggers
+`click` on the box changes nothing and passes for the wrong reason.
 
 Assert the rendered result, never the prop you passed: a spec that checked `isOpened` passed
 while an empty modal sat over the screen.
