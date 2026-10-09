@@ -211,6 +211,39 @@ body {
   flex: 0 0 auto;
 }
 
+.jobs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.job-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--vi-color-gray-200);
+  border-radius: var(--vi-radius-m);
+  background: var(--vi-color-white);
+}
+
+.editor-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--vi-color-gray-300);
+  border-radius: var(--vi-radius-s);
+  background: var(--vi-color-white);
+  padding: 8px 10px;
+}
+
+.plan-thumb {
+  width: 100%;
+  border: 1px solid var(--vi-color-gray-200);
+  border-radius: var(--vi-radius-s);
+}
+
 .queue-cell {
   display: inline-flex;
   align-items: center;

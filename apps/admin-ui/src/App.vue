@@ -2,13 +2,15 @@
 import { onMounted, watch } from 'vue'
 import { ViAlert, ViIcon, ViTabs, ViText } from '@vi-frontend/vision-ui'
 
+import AuditPage from './pages/AuditPage.vue'
+import CatalogPage from './pages/CatalogPage.vue'
 import DayPage from './pages/DayPage.vue'
 import LinesPage from './pages/LinesPage.vue'
-import NotMigratedPage from './pages/NotMigratedPage.vue'
+import PlacesPage from './pages/PlacesPage.vue'
 import RequestsPage from './pages/RequestsPage.vue'
 import { TABS, boot, buildUrl, dismissNotice, state } from './store'
 
-const PAGES = { day: DayPage, requests: RequestsPage, lines: LinesPage }
+const PAGES = { day: DayPage, requests: RequestsPage, lines: LinesPage, catalog: CatalogPage, audit: AuditPage, places: PlacesPage }
 
 onMounted(() => boot(window.location.search))
 
@@ -67,6 +69,6 @@ function selectTab(value) {
       Загрузка…
     </ViText>
 
-    <component :is="PAGES[state.view] || NotMigratedPage" v-else-if="state.ready" />
+    <component :is="PAGES[state.view] || PAGES.day" v-else-if="state.ready" />
   </div>
 </template>

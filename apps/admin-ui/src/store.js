@@ -43,7 +43,16 @@ export const state = reactive({
   lineGroups: [],
   departurePlans: [],
   conflicts: [],
-  contactAccessLogs: []
+  contactAccessLogs: [],
+  permanentAssignments: [],
+  assignmentStatusFilter: 'all',
+  auditLogs: [],
+  auditFilters: { entityType: '', action: '' },
+  jobRuns: { runs: [], latestSuccessfulRuns: [] },
+  maps: [],
+  mapDiagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] },
+  // One history card at a time, opened from a table: { kind: 'place'|'employee', id, data }.
+  history: null
 })
 
 /**
@@ -119,7 +128,11 @@ export async function loadDay() {
     lineGroups,
     departurePlans,
     conflicts,
-    contactAccessLogs
+    contactAccessLogs,
+    permanentAssignments,
+    auditLogs,
+    jobRuns,
+    mapDiagnostics
   ] = await Promise.all([
       api.get(`/admin/dashboard${query(date)}`),
       api.get('/admin/places'),
@@ -131,7 +144,13 @@ export async function loadDay() {
       api.get('/admin/line-groups'),
       api.get(`/admin/departure-plans${query(date)}`),
       api.get(`/admin/conflicts${query(date)}`),
-      api.get(`/admin/contact-access-logs${query(date)}`)
+      api.get(`/admin/contact-access-logs${query(date)}`),
+      api.get(`/admin/permanent-assignments${query({ ...date, status: state.assignmentStatusFilter })}`),
+      api.get(
+        `/admin/audit-logs${query({ ...date, limit: 120, ...state.auditFilters })}`
+      ),
+      api.get('/admin/jobs/runs'),
+      api.get('/admin/map-diagnostics')
     ])
 
   const failed = [
@@ -145,7 +164,11 @@ export async function loadDay() {
     lineGroups,
     departurePlans,
     conflicts,
-    contactAccessLogs
+    contactAccessLogs,
+    permanentAssignments,
+    auditLogs,
+    jobRuns,
+    mapDiagnostics
   ].find((result) => !result.ok)
   if (failed) {
     state.loading = false
@@ -163,6 +186,22 @@ export async function loadDay() {
   state.departurePlans = departurePlans.data.departurePlans || []
   state.conflicts = conflicts.data.conflicts || []
   state.contactAccessLogs = contactAccessLogs.data.contactAccessLogs || []
+  state.permanentAssignments = permanentAssignments.data.permanentAssignments || []
+  state.auditLogs = auditLogs.data.auditLogs || []
+  state.jobRuns = {
+    runs: jobRuns.data.runs || [],
+    latestSuccessfulRuns: jobRuns.data.latestSuccessfulRuns || []
+  }
+  // The floor plans are static configuration merged with what the API knows about the file
+  // that was actually uploaded for each of them.
+  state.maps = FLOORS.map((floor) => ({
+    ...floor,
+    metadata: (mapDiagnostics.data.maps || []).find((map) => map.code === floor.code) || null
+  }))
+  state.mapDiagnostics = mapDiagnostics.data.diagnostics || {
+    placeWithoutLine: [],
+    lineCapacityMismatch: []
+  }
   state.today = state.today || dashboard.data.date
   state.date = state.date || dashboard.data.date
 
@@ -186,6 +225,42 @@ export async function boot(search = '') {
   }
 
   state.ready = true
+}
+
+export async function reloadAudit(filters) {
+  state.auditFilters = { ...state.auditFilters, ...filters }
+  await loadDay()
+}
+
+export async function setAssignmentFilter(value) {
+  state.assignmentStatusFilter = value
+  await loadDay()
+}
+
+/**
+ * History is fetched on demand: a place or an employee has five streams of events behind it,
+ * and loading them for every row of a 76-place catalog would be a lot of work nobody asked for.
+ */
+export async function openHistory({ kind, id }) {
+  state.history = { kind, id, data: null, error: null }
+
+  const path = kind === 'place' ? `/admin/places/${id}/history` : `/admin/employees/${id}/history`
+  const result = await api.get(path)
+
+  if (!state.history || state.history.id !== id) {
+    return
+  }
+
+  if (!result.ok) {
+    state.history = { kind, id, data: null, error: result.error }
+    return
+  }
+
+  state.history = { kind, id, data: result.data, error: null }
+}
+
+export function closeHistory() {
+  state.history = null
 }
 
 /** Every write goes through here: one place decides what a failure looks like, and a

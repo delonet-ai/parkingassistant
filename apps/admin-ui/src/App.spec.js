@@ -56,7 +56,11 @@ const ANSWERS = {
   '/admin/line-groups': { lineGroups: [] },
   '/admin/departure-plans': { departurePlans: [] },
   '/admin/conflicts': { conflicts: [] },
-  '/admin/contact-access-logs': { contactAccessLogs: [] }
+  '/admin/contact-access-logs': { contactAccessLogs: [] },
+  '/admin/permanent-assignments': { permanentAssignments: [] },
+  '/admin/audit-logs': { auditLogs: [] },
+  '/admin/jobs/runs': { runs: [], latestSuccessfulRuns: [] },
+  '/admin/map-diagnostics': { maps: [], diagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] } }
 }
 
 function stubApi(answers = ANSWERS) {
@@ -170,23 +174,46 @@ describe('App', () => {
     expect(text).toContain('Запросы контактов')
   })
 
-  it('shows the three not-yet-migrated tabs as such instead of an empty screen', async () => {
+  it('renders the Справочники screen with all three catalogs', async () => {
     const wrapper = await boot()
 
-    for (const [value, title] of [
-      ['catalog', 'Справочники'],
-      ['audit', 'Журнал'],
-      ['places', 'Места']
-    ]) {
-      state.view = value
-      await flushPromises()
-
-      expect(wrapper.text()).toContain(`Вкладка «${title}» ещё не перенесена`)
-    }
-
-    state.view = 'day'
+    state.view = 'catalog'
     await flushPromises()
-    expect(wrapper.text()).toContain('Отдано мест')
+
+    const text = wrapper.text()
+
+    expect(text).not.toContain('ещё не перенесена')
+    expect(text).toContain('Сотрудники')
+    expect(text).toContain('Места')
+    expect(text).toContain('Постоянные закрепления')
+  })
+
+  it('renders the Журнал screen with actions, contacts and jobs', async () => {
+    const wrapper = await boot()
+
+    state.view = 'audit'
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).not.toContain('ещё не перенесена')
+    expect(text).toContain('Действия')
+    expect(text).toContain('Регламентные задачи')
+    expect(text).toContain('Обработка очереди')
+  })
+
+  it('renders the Места screen — every tab is migrated, no placeholder is left', async () => {
+    const wrapper = await boot()
+
+    state.view = 'places'
+    await flushPromises()
+
+    const text = wrapper.text()
+
+    expect(text).not.toContain('ещё не перенесена')
+    expect(text).toContain('Инвентарь')
+    expect(text).toContain('Подложки этажей')
+    expect(text).toContain('+ Тройное')
   })
 
   it('says why it is empty when the API cannot be reached', async () => {

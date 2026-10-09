@@ -121,14 +121,14 @@ incomplete or impossible reading, and the save button follows it.
 - Create: a `*.spec.js` beside each
 - Modify: `apps/admin-ui/src/store.js`, `apps/admin-ui/src/App.vue`
 
-- [ ] add `loadCatalog()` reading `/admin/employees`, `/admin/places`, `/admin/permanent-assignments` and, on selection, `/admin/places/:id/history` and `/admin/employees/:id/history`
-- [ ] build `EmployeesTable.vue` with create (`/admin/employees`), update (`/admin/employees/update`) and disable (`/admin/employees/disable`)
-- [ ] build `PlacesTable.vue` with the per-place role and guest-priority controls posting `/admin/places/update`, and **no place-create form** — places are created only on the `Места` tab
-- [ ] build `PermanentAssignments.vue` with create (`/admin/permanent-assignments`), end (`/admin/permanent-assignments/end`) and the status filter (`all`/`active`/`future`/`ended`)
-- [ ] build `HistoryCards.vue`: place and employee history timelines opened from the tables
-- [ ] register `catalog` in `PAGES`
-- [ ] write specs: the second place-create form is absent, disabling an employee shows the API message on refusal, the history card renders events
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 4
+- [x] add `loadCatalog()` reading `/admin/employees`, `/admin/places`, `/admin/permanent-assignments` and, on selection, `/admin/places/:id/history` and `/admin/employees/:id/history`
+- [x] build `EmployeesTable.vue` with create (`/admin/employees`), update (`/admin/employees/update`) and disable (`/admin/employees/disable`)
+- [x] build `PlacesTable.vue` with the per-place role and guest-priority controls posting `/admin/places/update`, and **no place-create form** — places are created only on the `Места` tab
+- [x] build `PermanentAssignments.vue` with create (`/admin/permanent-assignments`), end (`/admin/permanent-assignments/end`) and the status filter (`all`/`active`/`future`/`ended`)
+- [x] build `HistoryCards.vue`: place and employee history timelines opened from the tables
+- [x] register `catalog` in `PAGES`
+- [x] write specs: the second place-create form is absent, disabling an employee shows the API message on refusal, the history card renders events
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 4
 
 ### Task 4: Журнал — audit log, contact logs and job runs
 
@@ -138,12 +138,12 @@ incomplete or impossible reading, and the save button follows it.
 - Create: `apps/admin-ui/src/components/AuditTable.spec.js`, `JobsPanel.spec.js`
 - Modify: `apps/admin-ui/src/store.js`, `apps/admin-ui/src/App.vue`
 
-- [ ] add `loadAudit()` reading `/admin/audit-logs` with the `entityType`/`action`/`actor` filters, `/admin/contact-access-logs` and `/admin/jobs/runs`
-- [ ] build `AuditTable.vue`: filters as `ViSelect`/`ViInput`, results as `ViTableSimple`, actor and entity columns
-- [ ] build `JobsPanel.vue`: latest successful run per job, recent runs, and buttons running all five jobs manually (`/admin/jobs/{process-queue,freeze-next-day,lock-departure-plans,unlock-employee-pool,rebuild-conflicts}`)
-- [ ] register `audit` in `PAGES`
-- [ ] write specs: all five jobs are runnable, a filter narrows the request query, a failed job run shows its error
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 5
+- [x] add `loadAudit()` reading `/admin/audit-logs` with the `entityType`/`action`/`actor` filters, `/admin/contact-access-logs` and `/admin/jobs/runs`
+- [x] build `AuditTable.vue`: filters as `ViSelect`/`ViInput`, results as `ViTableSimple`, actor and entity columns
+- [x] build `JobsPanel.vue`: latest successful run per job, recent runs, and buttons running all five jobs manually (`/admin/jobs/{process-queue,freeze-next-day,lock-departure-plans,unlock-employee-pool,rebuild-conflicts}`)
+- [x] register `audit` in `PAGES`
+- [x] write specs: all five jobs are runnable, a filter narrows the request query, a failed job run shows its error
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 5
 
 ### Task 5: Места — the inventory editor
 
@@ -153,15 +153,22 @@ incomplete or impossible reading, and the save button follows it.
 - Create: `apps/admin-ui/src/components/InventoryEditor.spec.js`, `MapUpload.spec.js`
 - Modify: `apps/admin-ui/src/store.js`, `apps/admin-ui/src/App.vue`
 
-- [ ] reuse `PlaceLines.vue` in an `editor` mode: the same element grid, plus the per-slot place-role control and the per-element archive button — the Day tab must stay unable to create or archive a place
-- [ ] build the add dialog on `ViModal`: `+ Одинарное` / `+ Двойное` / `+ Тройное` posting `/admin/place-lines` with `{floorLabel, capacity, slots}`
-- [ ] build the archive confirm on `ViModal`, naming the affected place codes before the count changes, posting `/admin/place-lines/archive`; a `409` must render the blockers the API names
-- [ ] build `MapUpload.vue`: per-floor background replace, `multipart/form-data` to `/admin/map-backgrounds`, showing version and checksum
-- [ ] carry over the diagnostics from `/admin/map-diagnostics` (place without a line, capacity vs slot-count mismatch)
-- [ ] keep the populated-floor default: the editor opens on the first floor that actually has lines
-- [ ] register `places` in `PAGES` and delete `NotMigratedPage.vue`, which now has nothing to say
-- [ ] write specs: archiving asks before it acts, a `409` lists blockers, the Day tab offers no add/archive control
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 6
+- [x] reuse `PlaceLines.vue` in an `editor` mode: the same element grid, plus the per-slot place-role control and the per-element archive button — the Day tab must stay unable to create or archive a place
+- [x] build the add dialog on `ViModal`: `+ Одинарное` / `+ Двойное` / `+ Тройное` posting `/admin/place-lines` with `{floorLabel, capacity, slots}`
+- [x] build the archive confirm on `ViModal`, naming the affected place codes before the count changes, posting `/admin/place-lines/archive`; a `409` must render the blockers the API names
+- [x] build `MapUpload.vue`: per-floor background replace, `multipart/form-data` to `/admin/map-backgrounds`, showing version and checksum
+- [x] carry over the diagnostics from `/admin/map-diagnostics` (place without a line, capacity vs slot-count mismatch)
+- [x] keep the populated-floor default: the editor opens on the first floor that actually has lines
+- [x] register `places` in `PAGES` and delete `NotMigratedPage.vue`, which now has nothing to say
+- [x] write specs: archiving asks before it acts, a `409` lists blockers, the Day tab offers no add/archive control
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — 108 UI specs, 299 node tests, green.
+
+⚠️ Three Vision UI contracts that fail silently rather than loudly, all found by screenshot:
+`ViTableSimple` hands a cell to the `#cell` slot **only if it has no `text` key**, so a
+clickable name must travel under another key or it renders as plain text; `ViModal` ignores
+`isOpened` unless `use-model` is set and otherwise renders open, which put an empty history
+card over the catalog on every load; and `ViModal` teleports to `document.body`, so a spec
+must assert on the document rather than on the wrapper.
 
 ### Task 6: Remove apps/admin-web
 

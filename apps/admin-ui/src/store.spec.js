@@ -36,6 +36,10 @@ function stubApi(overrides = {}) {
     '/admin/departure-plans': { departurePlans: [] },
     '/admin/conflicts': { conflicts: [] },
     '/admin/contact-access-logs': { contactAccessLogs: [] },
+    '/admin/permanent-assignments': { permanentAssignments: [] },
+    '/admin/audit-logs': { auditLogs: [] },
+    '/admin/jobs/runs': { runs: [], latestSuccessfulRuns: [] },
+    '/admin/map-diagnostics': { maps: [], diagnostics: {} },
     ...overrides
   }
 
@@ -76,7 +80,15 @@ function resetState() {
     lineGroups: [],
     departurePlans: [],
     conflicts: [],
-    contactAccessLogs: []
+    contactAccessLogs: [],
+    permanentAssignments: [],
+    assignmentStatusFilter: 'all',
+    history: null,
+    auditLogs: [],
+    auditFilters: { entityType: '', action: '' },
+    jobRuns: { runs: [], latestSuccessfulRuns: [] },
+    maps: [],
+    mapDiagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] }
   })
 }
 

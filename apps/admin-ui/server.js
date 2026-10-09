@@ -6,11 +6,14 @@
 //
 // No framework and no dependency, same as the rest of the repo: node:http and node:fs.
 
+import { createHash } from 'node:crypto'
 import { createReadStream, existsSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { parseMultipartFormData, readRawBody } from './multipart.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -82,6 +85,81 @@ async function proxyApi(req, res, url) {
   res.end(body)
 }
 
+const FLOOR_PLANS = [
+  { code: 'g3', title: 'G3', floorLabel: '3' },
+  { code: 'g4', title: 'G4', floorLabel: '4' },
+  { code: 'g5', title: 'G5', floorLabel: '5' }
+]
+
+const PLAN_TYPES = new Map([
+  ['.png', 'png'],
+  ['.jpg', 'jpg'],
+  ['.jpeg', 'jpg'],
+  ['.webp', 'webp'],
+  ['.pdf', 'pdf']
+])
+
+/**
+ * The floor plan upload is the one request this server does more than proxy.
+ *
+ * The API stores metadata only — code, title, path, type and checksum — so the file itself has
+ * to be written into the shared storage directory first, and the API told where it landed.
+ * Carried over from admin-web unchanged, including the fixed filename per floor: replacing a
+ * plan overwrites the previous file, and the version in the API is what records the change.
+ */
+async function uploadFloorPlan(req, res) {
+  const body = await readRawBody(req)
+  const form = parseMultipartFormData(req.headers['content-type'] || '', body)
+  const mapCode = String(form.fields.get('mapCode') || '').trim().toLowerCase()
+  const plan = FLOOR_PLANS.find((item) => item.code === mapCode)
+  const file = form.files.get('mapFile')
+
+  if (!plan || !file || !file.buffer.length) {
+    sendJson(res, 400, {
+      status: 'error',
+      service: 'admin-ui',
+      error: 'Выберите этаж G3/G4/G5 и файл подложки.'
+    })
+    return
+  }
+
+  const fileType = PLAN_TYPES.get(path.extname(file.filename).toLowerCase())
+
+  if (!fileType) {
+    sendJson(res, 400, {
+      status: 'error',
+      service: 'admin-ui',
+      error: 'Поддерживаются png, jpg, webp и pdf.'
+    })
+    return
+  }
+
+  const filename = `parking-${plan.code}.${fileType === 'jpg' ? 'jpg' : fileType}`
+  await mkdir(mapStoragePath, { recursive: true })
+  await writeFile(path.join(mapStoragePath, filename), file.buffer)
+
+  const upstream = await fetch(new URL('/admin/map-backgrounds', apiBaseUrl), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      mapCode: plan.code,
+      mapTitle: form.fields.get('mapTitle') || plan.title,
+      floorLabel: form.fields.get('floorLabel') || plan.floorLabel,
+      filePath: `/maps/${filename}`,
+      fileType,
+      sourceChecksum: createHash('sha256').update(file.buffer).digest('hex')
+    })
+  })
+
+  const payload = Buffer.from(await upstream.arrayBuffer())
+
+  res.writeHead(upstream.status, {
+    'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+    'content-length': payload.length
+  })
+  res.end(payload)
+}
+
 const server = http.createServer(async (req, res) => {
   // The Host header is client-controlled and an unparseable one throws before any route
   // matches, so the base is fixed and nothing downstream reads it.
@@ -97,6 +175,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/health') {
       sendJson(res, 200, { status: 'ok', service: 'admin-ui' })
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/admin/map-backgrounds') {
+      await uploadFloorPlan(req, res)
       return
     }
 
