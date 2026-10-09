@@ -246,7 +246,8 @@ git push origin main
 как есть, `NO_BUILD=1` перезапускает на уже собранных образах.
 
 `npm run smoke:stand` (`scripts/smoke/stand.js`) запускается из dev-контейнера и проверяет
-`3330/health`, `3330/health/db`, `3340/health` и рендер `3340/?view=day`. Только чтение —
+`3330/health`, `3330/health/db`, `3340/health`, рендер `3340/?view=day`, а также `3360/health`,
+оболочку SPA на `3360/` и прокси `3360/api/health`. Только чтение —
 команда безопасна и против прода. Адрес переопределяется переменными
 `SMOKE_STAND_HOST`, `SMOKE_STAND_API_PORT`, `SMOKE_STAND_ADMIN_PORT`, `SMOKE_STAND_TIMEOUT_MS`
 (по умолчанию — стенд `192.168.0.100`).
@@ -727,7 +728,8 @@ Smoke-check после деплоя:
 npm run smoke:stand
 ```
 
-Команда проверяет `3330/health`, `3330/health/db`, `3340/health` и рендер `3340/?view=day`,
+Команда проверяет семь точек: `3330/health`, `3330/health/db`, `3340/health`, рендер
+`3340/?view=day`, `3360/health`, оболочку SPA на `3360/` и прокси `3360/api/health`,
 печатает построчный отчёт и завершается с ненулевым кодом при первом же провале.
 
 Диагностика на сервере (из dev-контейнера; своего docker-демона у него нет):

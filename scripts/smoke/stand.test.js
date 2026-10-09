@@ -3,7 +3,14 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
-const { buildChecks, evaluate, DEFAULT_HOST, DEFAULT_API_PORT, DEFAULT_ADMIN_PORT } = require('./stand');
+const {
+  buildChecks,
+  evaluate,
+  DEFAULT_HOST,
+  DEFAULT_API_PORT,
+  DEFAULT_ADMIN_PORT,
+  DEFAULT_ADMIN_UI_PORT
+} = require('./stand');
 
 test('buildChecks defaults to the documented stand coordinates', () => {
   const urls = buildChecks().map((check) => check.url);
@@ -12,16 +19,25 @@ test('buildChecks defaults to the documented stand coordinates', () => {
     `http://${DEFAULT_HOST}:${DEFAULT_API_PORT}/health`,
     `http://${DEFAULT_HOST}:${DEFAULT_API_PORT}/health/db`,
     `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/health`,
-    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/?view=day`
+    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_PORT}/?view=day`,
+    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_UI_PORT}/health`,
+    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_UI_PORT}/`,
+    `http://${DEFAULT_HOST}:${DEFAULT_ADMIN_UI_PORT}/api/health`
   ]);
 });
 
 test('buildChecks honours host and port overrides', () => {
-  const checks = buildChecks({ host: 'stand.local', apiPort: 3000, adminPort: 3100 });
+  const checks = buildChecks({
+    host: 'stand.local',
+    apiPort: 3000,
+    adminPort: 3100,
+    adminUiPort: 3200
+  });
 
   assert.ok(checks.every((check) => check.url.startsWith('http://stand.local:')));
   assert.equal(checks[0].url, 'http://stand.local:3000/health');
   assert.equal(checks[3].url, 'http://stand.local:3100/?view=day');
+  assert.equal(checks[6].url, 'http://stand.local:3200/api/health');
 });
 
 test('evaluate passes a healthy api response', () => {

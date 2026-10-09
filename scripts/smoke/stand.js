@@ -9,6 +9,7 @@
 const DEFAULT_HOST = '192.168.0.100';
 const DEFAULT_API_PORT = 3330;
 const DEFAULT_ADMIN_PORT = 3340;
+const DEFAULT_ADMIN_UI_PORT = 3360;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 function isOkJson(payload, service) {
@@ -17,9 +18,15 @@ function isOkJson(payload, service) {
 
 // Pure: given the stand's coordinates, produce the ordered list of checks to run. Kept separate
 // from the network calls so the check list itself is unit-testable.
-function buildChecks({ host = DEFAULT_HOST, apiPort = DEFAULT_API_PORT, adminPort = DEFAULT_ADMIN_PORT } = {}) {
+function buildChecks({
+  host = DEFAULT_HOST,
+  apiPort = DEFAULT_API_PORT,
+  adminPort = DEFAULT_ADMIN_PORT,
+  adminUiPort = DEFAULT_ADMIN_UI_PORT
+} = {}) {
   const apiBase = `http://${host}:${apiPort}`;
   const adminBase = `http://${host}:${adminPort}`;
+  const adminUiBase = `http://${host}:${adminUiPort}`;
 
   return [
     {
@@ -45,6 +52,31 @@ function buildChecks({ host = DEFAULT_HOST, apiPort = DEFAULT_API_PORT, adminPor
       url: `${adminBase}/?view=day`,
       expectedStatus: 200,
       verify: (payload) => typeof payload === 'string' && payload.includes('Parking Assistant')
+    },
+    {
+      name: 'admin-ui health',
+      url: `${adminUiBase}/health`,
+      expectedStatus: 200,
+      verify: (payload) => isOkJson(payload, 'admin-ui')
+    },
+    {
+      // The Vue admin renders client-side, so the only thing a read-only check can assert is
+      // that the shell is served and names the bundle — an empty or missing build would not.
+      name: 'admin-ui shell serves the built bundle',
+      url: `${adminUiBase}/`,
+      expectedStatus: 200,
+      verify: (payload) =>
+        typeof payload === 'string' &&
+        payload.includes('<div id="app">') &&
+        /src="\/assets\/index-[^"]+\.js"/.test(payload)
+    },
+    {
+      // The proxy is what keeps the browser same-origin; if it breaks, every screen is empty
+      // while both /health checks stay green.
+      name: 'admin-ui proxies the API',
+      url: `${adminUiBase}/api/health`,
+      expectedStatus: 200,
+      verify: (payload) => isOkJson(payload, 'api')
     }
   ];
 }
@@ -84,7 +116,8 @@ async function main() {
   const options = {
     host: process.env.SMOKE_STAND_HOST || DEFAULT_HOST,
     apiPort: Number(process.env.SMOKE_STAND_API_PORT || DEFAULT_API_PORT),
-    adminPort: Number(process.env.SMOKE_STAND_ADMIN_PORT || DEFAULT_ADMIN_PORT)
+    adminPort: Number(process.env.SMOKE_STAND_ADMIN_PORT || DEFAULT_ADMIN_PORT),
+    adminUiPort: Number(process.env.SMOKE_STAND_ADMIN_UI_PORT || DEFAULT_ADMIN_UI_PORT)
   };
   const timeoutMs = Number(process.env.SMOKE_STAND_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
 
@@ -107,7 +140,14 @@ async function main() {
   console.log(`\nAll ${results.length} stand checks passed`);
 }
 
-module.exports = { buildChecks, evaluate, DEFAULT_HOST, DEFAULT_API_PORT, DEFAULT_ADMIN_PORT };
+module.exports = {
+  buildChecks,
+  evaluate,
+  DEFAULT_HOST,
+  DEFAULT_API_PORT,
+  DEFAULT_ADMIN_PORT,
+  DEFAULT_ADMIN_UI_PORT
+};
 
 if (require.main === module) {
   main().catch((error) => {
