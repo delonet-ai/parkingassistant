@@ -79,11 +79,12 @@ describe('line occupancy (integration)', { skip: skipWithoutDatabase() }, () => 
       assert.equal(payload.occupancy.parkingPlace.code, places[0].code);
 
       const audit = await db.query(
-        "select actor_service, metadata from audit_logs where action = 'line_position_set' and entity_id = $1",
+        "select actor_service, actor_auth_user_id, metadata from audit_logs where action = 'line_position_set' and entity_id = $1",
         [payload.occupancy.id]
       );
       assert.equal(audit.rowCount, 1);
-      assert.equal(audit.rows[0].actor_service, 'admin-web');
+      assert.equal(audit.rows[0].actor_service, 'admin-ui');
+      assert.equal(audit.rows[0].actor_auth_user_id, api.operator.user.id);
       assert.equal(audit.rows[0].metadata.position, 1);
     });
 

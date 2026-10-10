@@ -2,6 +2,7 @@
 
 const { planQueueAssignments } = require('../../../../../packages/domain');
 const { withTransaction } = require('../../repositories/db');
+const { auditActor, JOBS } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const employeeRequestsRepository = require('../employee-requests/repository');
 const placeReleasesRepository = require('../place-releases/repository');
@@ -15,7 +16,7 @@ function createQueueService({ pool, guestReserveMinimum }) {
   // Everything runs inside one transaction behind `lockQueueForDate`: the waiting entries
   // and the released places have to be read from the same snapshot the reservations are
   // written into, otherwise two concurrent runs could hand out the same place.
-  async function processQueueForDate(queueDate) {
+  async function processQueueForDate(queueDate, actor) {
     try {
       return await withTransaction(pool, async (repo) => {
         await repository.lockQueueForDate(repo, queueDate);
@@ -134,7 +135,7 @@ function createQueueService({ pool, guestReserveMinimum }) {
         await auditRepository.insertAuditLog(repo, {
           entityType: 'queue_entry',
           action: 'queue_processed',
-          actorService: 'admin-web',
+          ...auditActor(actor, JOBS),
           metadata: {
             queueDate,
             waitingCount: queueEntries.length,

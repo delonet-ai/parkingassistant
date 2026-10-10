@@ -5,7 +5,7 @@
 // affected table (freeze → place-releases, lock → departure-plans, and so on); this
 // repository only records that a run happened and how it ended.
 
-async function startJobRun(db, { jobName, targetDate }) {
+async function startJobRun(db, { jobName, targetDate, actorService }) {
   return db.queryOne(
     `
       insert into job_runs (
@@ -14,10 +14,10 @@ async function startJobRun(db, { jobName, targetDate }) {
         status,
         actor_service
       )
-      values ($1, $2::date, 'running', 'admin-web')
+      values ($1, $2::date, 'running', $3)
       returning id, job_name, target_date, status, started_at
     `,
-    [jobName, targetDate]
+    [jobName, targetDate, actorService]
   );
 }
 

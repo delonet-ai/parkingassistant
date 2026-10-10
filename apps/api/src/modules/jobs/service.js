@@ -4,6 +4,7 @@ const { employeePoolSize, findDriftedDeparturePlans, summarizeEmployeePool } = r
 const { withTransaction } = require('../../repositories/db');
 const { mapJobRun } = require('../../serializers/job-runs');
 const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require('../../services/availability');
+const { auditActor, JOBS } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const departurePlansRepository = require('../departure-plans/repository');
 const placeReleasesRepository = require('../place-releases/repository');
@@ -14,8 +15,13 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
   // Bookkeeping order is part of the contract the integration tests assert: the `job_runs`
   // row is written *before* the work, the terminal state and the audit row *after* it, and
   // a failure carries the finished run back to the controller on `error.jobRun`.
-  async function withJobRun(jobName, targetDate, runner) {
-    const started = await repository.startJobRun(dbRepository, { jobName, targetDate });
+  async function withJobRun({ jobName, targetDate, actor }, runner) {
+    // `auditActor` with the `jobs` fallback is what makes the two callers of a job endpoint
+    // tell themselves apart: an operator who pressed the button in the UI is named on the
+    // row, and the scheduler — which signs in as nobody — leaves `jobs` and no person,
+    // because a scheduled run has no operator to name.
+    const { actorAuthUserId, actorService } = auditActor(actor, JOBS);
+    const started = await repository.startJobRun(dbRepository, { jobName, targetDate, actorService });
 
     try {
       const payload = await runner();
@@ -27,7 +33,8 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
       await auditRepository.insertAuditLog(dbRepository, {
         entityType: 'system',
         action: `job_${jobName}_success`,
-        actorService: 'admin-web',
+        actorAuthUserId,
+        actorService,
         metadata: {
           jobRunId: started.id,
           jobName,
@@ -49,7 +56,8 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
       await auditRepository.insertAuditLog(dbRepository, {
         entityType: 'system',
         action: `job_${jobName}_failed`,
-        actorService: 'admin-web',
+        actorAuthUserId,
+        actorService,
         metadata: {
           jobRunId: started.id,
           jobName,
@@ -63,12 +71,14 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
     }
   }
 
-  async function runProcessQueue(queueDate) {
-    return withJobRun('process_queue', queueDate, () => services.queue.processQueueForDate(queueDate));
+  async function runProcessQueue({ actor, queueDate }) {
+    return withJobRun({ jobName: 'process_queue', targetDate: queueDate, actor }, () =>
+      services.queue.processQueueForDate(queueDate, actor)
+    );
   }
 
-  async function runFreezeNextDay(targetDate) {
-    return withJobRun('freeze_next_day', targetDate, async () =>
+  async function runFreezeNextDay({ actor, targetDate }) {
+    return withJobRun({ jobName: 'freeze_next_day', targetDate, actor }, async () =>
       withTransaction(pool, async (repo) => {
         await placeReleasesRepository.lockFreezeForDate(repo, targetDate);
 
@@ -83,7 +93,7 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
           await auditRepository.insertAuditLog(repo, {
             entityType: 'system',
             action: 'availability_frozen',
-            actorService: 'admin-web',
+            ...auditActor(actor, JOBS),
             metadata: {
               targetDate,
               timezone: appTimezone,
@@ -113,8 +123,8 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
     );
   }
 
-  async function runLockDeparturePlans(targetDate) {
-    return withJobRun('lock_departure_plans', targetDate, async () => {
+  async function runLockDeparturePlans({ actor, targetDate }) {
+    return withJobRun({ jobName: 'lock_departure_plans', targetDate, actor }, async () => {
       // `locked_at is null` is the idempotency guard: the second run of the day
       // locks nothing and writes no audit row.
       const lockedResult = await departurePlansRepository.lockPlansForDate(dbRepository, targetDate);
@@ -125,7 +135,7 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
         await auditRepository.insertAuditLog(dbRepository, {
           entityType: 'system',
           action: 'departure_plan_editing_locked',
-          actorService: 'admin-web',
+          ...auditActor(actor, JOBS),
           metadata: {
             targetDate,
             timezone: appTimezone,
@@ -160,8 +170,8 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
    * It writes no reservations, so it is naturally replay-safe; the audit row is
    * written once per date, which is what makes a second run a true no-op.
    */
-  async function runUnlockEmployeePool(targetDate) {
-    return withJobRun('unlock_employee_pool', targetDate, async () =>
+  async function runUnlockEmployeePool({ actor, targetDate }) {
+    return withJobRun({ jobName: 'unlock_employee_pool', targetDate, actor }, async () =>
       withTransaction(pool, async (repo) => {
         await placeReleasesRepository.lockEmployeePoolForDate(repo, targetDate);
 
@@ -185,7 +195,7 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
           await auditRepository.insertAuditLog(repo, {
             entityType: 'system',
             action: 'employee_pool_unlocked',
-            actorService: 'admin-web',
+            ...auditActor(actor, JOBS),
             metadata: {
               targetDate,
               timezone: appTimezone,
@@ -222,8 +232,8 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
    * current data, so running this twice in a row is by construction a no-op — the
    * second run reports `changed: false` and writes no audit row.
    */
-  async function runRebuildConflicts(targetDate) {
-    return withJobRun('rebuild_conflicts', targetDate, async () => {
+  async function runRebuildConflicts({ actor, targetDate }) {
+    return withJobRun({ jobName: 'rebuild_conflicts', targetDate, actor }, async () => {
       const plans = await departurePlansRepository.listPlanEarlyFlagsForDate(dbRepository, targetDate);
 
       const drifted = findDriftedDeparturePlans(plans);
@@ -242,7 +252,7 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
         await auditRepository.insertAuditLog(dbRepository, {
           entityType: 'system',
           action: 'conflicts_rebuilt',
-          actorService: 'admin-web',
+          ...auditActor(actor, JOBS),
           metadata: {
             targetDate,
             timezone: appTimezone,

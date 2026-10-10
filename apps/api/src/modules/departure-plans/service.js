@@ -3,6 +3,7 @@
 const { isEarlyDeparture } = require('../../../../../packages/domain');
 const { withTransaction } = require('../../repositories/db');
 const { abortWith } = require('../../support/transaction');
+const { auditActor, BOT } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const employeesRepository = require('../employees/repository');
 const placesRepository = require('../places/repository');
@@ -50,7 +51,7 @@ function createDeparturePlansService({ pool, dbRepository, appTimezone }) {
 
   // The whole upsert is one transaction: the employee lookup, the multi-line eligibility
   // check and the lock check all have to see the same snapshot the insert writes into.
-  async function upsertPlan({ userId, planDate, departureTime, actorService }) {
+  async function upsertPlan({ actor, userId, planDate, departureTime }) {
     return withTransaction(pool, async (repo) => {
       const user = await employeesRepository.findEmployeeById(repo, userId);
 
@@ -91,7 +92,7 @@ function createDeparturePlansService({ pool, dbRepository, appTimezone }) {
         entityId: plan.id,
         action: 'departure_plan_upserted',
         actorUserId: userId,
-        actorService,
+        ...auditActor(actor, BOT),
         metadata: {
           userId,
           userDisplayName: user.display_name,

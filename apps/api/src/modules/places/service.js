@@ -1,5 +1,6 @@
 'use strict';
 
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const permanentAssignmentsRepository = require('../permanent-assignments/repository');
 const placeReleasesRepository = require('../place-releases/repository');
@@ -26,7 +27,7 @@ function createPlacesService({ dbRepository }) {
       entityType: 'parking_place',
       entityId: input.placeId,
       action: 'parking_place_updated',
-      actorService: 'admin-web',
+      ...auditActor(input.actor),
       metadata: {
         code: input.code,
         title: input.title,

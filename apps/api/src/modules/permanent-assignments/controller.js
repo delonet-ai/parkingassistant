@@ -4,6 +4,7 @@ const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/sh
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { normalizeOptionalString, uuidValidationError } = require('../../support/params');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createPermanentAssignmentsController({ appTimezone, services }) {
   const service = services.permanentAssignments;
@@ -70,7 +71,7 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
     };
   }
 
-  async function handleAdminPermanentAssignmentCreate(req) {
+  async function handleAdminPermanentAssignmentCreate(req, actor) {
     let body;
 
     try {
@@ -111,6 +112,7 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
 
     try {
       const assignment = await service.createPermanentAssignment({
+        actor,
         userId,
         parkingPlaceId,
         dateFrom,
@@ -153,7 +155,7 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
     }
   }
 
-  async function handleAdminPermanentAssignmentEnd(req) {
+  async function handleAdminPermanentAssignmentEnd(req, actor) {
     let body;
 
     try {
@@ -189,7 +191,7 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
       return invalidId;
     }
 
-    const assignment = await service.endPermanentAssignment({ assignmentId, dateTo });
+    const assignment = await service.endPermanentAssignment({ actor, assignmentId, dateTo });
 
     if (!assignment) {
       return {
@@ -224,13 +226,13 @@ function createPermanentAssignmentsController({ appTimezone, services }) {
       {
         method: 'POST',
         path: '/admin/permanent-assignments',
-        handler: ({ req }) => handleAdminPermanentAssignmentCreate(req)
+        handler: (context) => handleAdminPermanentAssignmentCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/permanent-assignments/end',
         advertise: true,
-        handler: ({ req }) => handleAdminPermanentAssignmentEnd(req)
+        handler: (context) => handleAdminPermanentAssignmentEnd(context.req, requestActor(context))
       }
     ]
   };

@@ -6,6 +6,7 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
+const { ADMIN_UI, BOT, requestActor } = require('../../support/actor');
 
 function createDeparturePlansController({ appTimezone, services }) {
   const service = services.departurePlans;
@@ -35,7 +36,7 @@ function createDeparturePlansController({ appTimezone, services }) {
     };
   }
 
-  async function handleDeparturePlanUpsert(req, actorService = 'bot') {
+  async function handleDeparturePlanUpsert(req, actor) {
     let body;
 
     try {
@@ -93,7 +94,7 @@ function createDeparturePlansController({ appTimezone, services }) {
     }
 
     try {
-      const { plan, user } = await service.upsertPlan({ userId, planDate, departureTime, actorService });
+      const { plan, user } = await service.upsertPlan({ actor, userId, planDate, departureTime });
 
       return {
         statusCode: 200,
@@ -130,7 +131,11 @@ function createDeparturePlansController({ appTimezone, services }) {
         method: 'POST',
         paths: ['/bot/departure-plans', '/admin/departure-plans'],
         advertise: true,
-        handler: ({ req, pathname }) => handleDeparturePlanUpsert(req, pathname.startsWith('/bot/') ? 'bot' : 'admin-web')
+        handler: (context) =>
+          handleDeparturePlanUpsert(
+            context.req,
+            requestActor(context, context.pathname.startsWith('/bot/') ? BOT : ADMIN_UI)
+          )
       },
       {
         // Deliberately not advertised: the POST route above already published

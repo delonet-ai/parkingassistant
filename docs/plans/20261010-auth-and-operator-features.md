@@ -264,13 +264,36 @@ list cannot disagree whatever the component emits. Added to the trap list in `AG
 - Modify: `apps/api/src/modules/*/service.js` (32 call sites), `apps/api/src/modules/audit/repository.js`
 - Modify: `apps/api/test/golden/*.json` (deliberate regeneration)
 
-- [ ] thread the resolved session from the router into the services, and write `actor_auth_user_id` on every audit row an operator's request produces — the column has existed since the initial schema and has never been filled
-- [ ] replace the hard-coded `actorService: 'admin-web'` with `'admin-ui'` in all 32 places; it names an application that was deleted
-- [ ] leave the jobs scheduler's own label alone — a job has no operator, and `actorService` is the only honest answer there
-- [ ] show the operator in the `Журнал` tab's «Кто» column, falling back to the service for rows a job wrote
-- [ ] regenerate the golden snapshots with `GOLDEN_UPDATE=1 npm run test:golden` and read the diff line by line: only the actor fields may move, and the count of changed entries must match the endpoints an operator can call
-- [ ] run `npm run test:integration` twice: stable, and no entry changed beyond the actor fields
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 7
+- [x] thread the resolved session from the router into the services, and write `actor_auth_user_id` on every audit row an operator's request produces — the column has existed since the initial schema and has never been filled
+- [x] replace the hard-coded `actorService: 'admin-web'` with `'admin-ui'` in all 32 places; it names an application that was deleted
+- [x] leave the jobs scheduler's own label alone — a job has no operator, and `actorService` is the only honest answer there
+- [x] show the operator in the `Журнал` tab's «Кто» column, falling back to the service for rows a job wrote
+- [x] regenerate the golden snapshots with `GOLDEN_UPDATE=1 npm run test:golden` and read the diff line by line: only the actor fields may move, and the count of changed entries must match the endpoints an operator can call (25 lines, all `actorService`, all in `jobs.json`; no `<id:N>` renumbered)
+- [x] run `npm run test:integration` twice: stable, and no entry changed beyond the actor fields (340/340 twice)
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 7 (147 UI specs, 357 node tests, lint clean, `npm run admin-ui:build` clean)
+
+**the shape:** `apps/api/src/support/actor.js` is the one place that turns the router's
+`authUser` into the two columns `audit_logs` has for the question. A controller builds
+`requestActor(context)` and hands it to the service; the service spreads `auditActor(actor)`
+into its insert. Nothing else about the session reaches a service — it cannot read the roles
+or touch `auth_sessions`, because naming the actor is all it is entitled to do.
+
+➕ **two more sites named the deleted application, and were not `actorService`:**
+`job_runs.actor_service` was the SQL literal `'admin-web'` in `jobs/repository.js` (now a
+parameter, so an operator-started run records the operator's application and a scheduled one
+records `jobs`), and `parking_places.catalog_source` was `'admin-web'` in
+`place-lines/repository.js` (now `'admin-ui'`). `place_releases.created_via = 'admin_web'` was
+deliberately **left alone**: it is an exposed API field (`payload.release.createdVia`) that
+integration tests and golden snapshots assert, so changing it would move a payload beyond the
+actor fields, which this task forbids.
+
+⚠️ **the jobs scheduler cannot reach the API since Task 3, and this task does not fix it.**
+`apps/jobs/src/scheduler.js` posts to `/admin/jobs/*` with no cookie, and those routes are
+closed — every scheduled run now answers `401`. Task 6's job is to name the actor, and it does:
+the `jobs` fallback in `support/actor.js` is what a run with no session records, so the shape is
+ready. But giving the scheduler a way *in* means a service account or a shared secret, which is
+a design decision this plan never took. It needs its own task before the stand's 07:00 and 19:00
+jobs work again.
 
 ### Task 7: Move a reservation between places in one action
 

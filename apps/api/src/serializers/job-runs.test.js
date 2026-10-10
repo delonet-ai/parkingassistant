@@ -13,7 +13,7 @@ test('mapJobRun maps snake_case db columns to camelCase api fields', () => {
     status: 'success',
     started_at: '2026-07-17T19:00:00Z',
     finished_at: '2026-07-17T19:00:05Z',
-    actor_service: 'admin-web',
+    actor_service: 'admin-ui',
     summary: { frozen: 12 },
     error: null
   };
@@ -25,7 +25,7 @@ test('mapJobRun maps snake_case db columns to camelCase api fields', () => {
     status: 'success',
     startedAt: '2026-07-17T19:00:00Z',
     finishedAt: '2026-07-17T19:00:05Z',
-    actorService: 'admin-web',
+    actorService: 'admin-ui',
     summary: { frozen: 12 },
     error: null
   });

@@ -5,11 +5,12 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createReservationsController({ services }) {
   const service = services.reservations;
 
-  async function handleAdminManualReservationCreate(req) {
+  async function handleAdminManualReservationCreate(req, actor) {
     let body;
 
     try {
@@ -49,6 +50,7 @@ function createReservationsController({ services }) {
 
     try {
       const { employee, releasedPlace, reservation, warnings } = await service.createManualReservation({
+        actor,
         userId,
         parkingPlaceId,
         reservationDate,
@@ -98,7 +100,7 @@ function createReservationsController({ services }) {
     }
   }
 
-  async function handleAdminReservationCancel(req) {
+  async function handleAdminReservationCancel(req, actor) {
     let body;
 
     try {
@@ -134,7 +136,7 @@ function createReservationsController({ services }) {
     }
 
     try {
-      const { canceledReservation } = await service.cancelReservation(reservationId);
+      const { canceledReservation } = await service.cancelReservation({ actor, reservationId });
 
       return {
         statusCode: 200,
@@ -165,13 +167,13 @@ function createReservationsController({ services }) {
         method: 'POST',
         path: '/admin/reservations/manual',
         advertise: true,
-        handler: ({ req }) => handleAdminManualReservationCreate(req)
+        handler: (context) => handleAdminManualReservationCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/reservations/cancel',
         advertise: true,
-        handler: ({ req }) => handleAdminReservationCancel(req)
+        handler: (context) => handleAdminReservationCancel(context.req, requestActor(context))
       }
     ]
   };

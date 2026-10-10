@@ -57,7 +57,7 @@ const PLACE_STATUSES = ['occupied', 'guest', 'released', 'blocked', 'rotatable',
  * beats a release, a release beats the slot's static role.
  *
  * This is the single implementation. The API's element list feeds it database rows
- * (`placeSlotStatus` below), while the admin-web place drawer feeds it the dashboard
+ * (`placeSlotStatus` below), while the admin UI place drawer feeds it the dashboard
  * payload — so a slot reading «недоступно» can never open a card reading «свободно».
  */
 function derivePlaceStatus({

@@ -5,6 +5,7 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createPlaceReleasesController({ appTimezone, services }) {
   const service = services.placeReleases;
@@ -58,7 +59,7 @@ function createPlaceReleasesController({ appTimezone, services }) {
     };
   }
 
-  async function handleAdminPlaceReleaseCreate(req) {
+  async function handleAdminPlaceReleaseCreate(req, actor) {
     let body;
 
     try {
@@ -124,7 +125,7 @@ function createPlaceReleasesController({ appTimezone, services }) {
     }
 
     try {
-      const { owner, release } = await service.createRelease({ parkingPlaceId, dateFrom, dateTo, notes });
+      const { owner, release } = await service.createRelease({ actor, parkingPlaceId, dateFrom, dateTo, notes });
 
       return {
         statusCode: 201,
@@ -158,7 +159,7 @@ function createPlaceReleasesController({ appTimezone, services }) {
     }
   }
 
-  async function handleAdminPlaceReleaseCancel(req) {
+  async function handleAdminPlaceReleaseCancel(req, actor) {
     let body;
 
     try {
@@ -194,7 +195,7 @@ function createPlaceReleasesController({ appTimezone, services }) {
     }
 
     try {
-      const canceledRelease = await service.cancelRelease(releaseId);
+      const canceledRelease = await service.cancelRelease({ actor, releaseId });
 
       return {
         statusCode: 200,
@@ -231,13 +232,13 @@ function createPlaceReleasesController({ appTimezone, services }) {
       {
         method: 'POST',
         path: '/admin/place-releases',
-        handler: ({ req }) => handleAdminPlaceReleaseCreate(req)
+        handler: (context) => handleAdminPlaceReleaseCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/place-releases/cancel',
         advertise: true,
-        handler: ({ req }) => handleAdminPlaceReleaseCancel(req)
+        handler: (context) => handleAdminPlaceReleaseCancel(context.req, requestActor(context))
       }
     ]
   };

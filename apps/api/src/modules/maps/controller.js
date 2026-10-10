@@ -3,6 +3,7 @@
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapParkingPlaceMap } = require('../../serializers/maps');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createMapsController({ services }) {
   const service = services.maps;
@@ -46,7 +47,7 @@ function createMapsController({ services }) {
     };
   }
 
-  async function handleAdminMapBackgroundUpdate(req) {
+  async function handleAdminMapBackgroundUpdate(req, actor) {
     let body;
 
     try {
@@ -93,6 +94,7 @@ function createMapsController({ services }) {
 
     try {
       const map = await service.updateMapBackground({
+        actor,
         mapCode,
         mapTitle: mapTitle || mapCode.toUpperCase(),
         floorLabel: floorLabel || mapCode.replace(/^g/i, ''),
@@ -127,7 +129,7 @@ function createMapsController({ services }) {
         method: 'POST',
         path: '/admin/map-backgrounds',
         advertise: true,
-        handler: ({ req }) => handleAdminMapBackgroundUpdate(req)
+        handler: (context) => handleAdminMapBackgroundUpdate(context.req, requestActor(context))
       }
     ]
   };

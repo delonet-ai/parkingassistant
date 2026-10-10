@@ -1,5 +1,6 @@
 'use strict';
 
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const repository = require('./repository');
 
@@ -15,7 +16,7 @@ function createPermanentAssignmentsService({ dbRepository }) {
       entityType: 'permanent_assignment',
       entityId: assignment.id,
       action: 'permanent_assignment_created',
-      actorService: 'admin-web',
+      ...auditActor(input.actor),
       metadata: {
         userId: input.userId,
         parkingPlaceId: input.parkingPlaceId,
@@ -28,7 +29,7 @@ function createPermanentAssignmentsService({ dbRepository }) {
     return assignment;
   }
 
-  async function endPermanentAssignment({ assignmentId, dateTo }) {
+  async function endPermanentAssignment({ actor, assignmentId, dateTo }) {
     const assignment = await repository.endPermanentAssignment(dbRepository, { assignmentId, dateTo });
 
     if (!assignment) {
@@ -39,7 +40,7 @@ function createPermanentAssignmentsService({ dbRepository }) {
       entityType: 'permanent_assignment',
       entityId: assignmentId,
       action: 'permanent_assignment_ended',
-      actorService: 'admin-web',
+      ...auditActor(actor),
       metadata: {
         userId: assignment.user_id,
         parkingPlaceId: assignment.parking_place_id,

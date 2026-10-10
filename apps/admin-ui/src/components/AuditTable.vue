@@ -54,18 +54,25 @@ function describe(metadata) {
   return parts.length ? parts.join(' · ') : '—'
 }
 
+// «Кто» names the person when the row has one and falls back to the application when it does
+// not. Both halves matter: an operator's action now carries `actorAuthUser` (the signed-in
+// administrator), a bot action carries `actorUser` (the employee who asked), and a scheduled
+// job carries neither — for those the service is the only honest answer, so it is what the
+// cell shows. The service stays visible underneath a named person too, because "Иванов through
+// the bot" and "Иванов in the admin UI" are different events.
+function actorOf(entry) {
+  const authUser = entry.actorAuthUser
+  const name = authUser?.displayName || authUser?.login || entry.actorUser?.displayName || null
+
+  return { name, service: entry.actorService || null }
+}
+
 const rows = computed(() =>
   state.auditLogs.map((entry) => [
     { text: formatMoment(entry.occurredAt) },
     { action: entry.action },
     { text: (ENTITY_OPTIONS.find((option) => option.value === entry.entityType) || {}).text || entry.entityType || '—' },
-    {
-      text:
-        entry.actorUser?.displayName ||
-        entry.actorAuthUser?.login ||
-        entry.actorService ||
-        '—'
-    },
+    { actor: actorOf(entry) },
     { text: describe(entry.metadata) }
   ])
 )
@@ -107,6 +114,17 @@ const rows = computed(() =>
           >
             {{ cell.action }}
           </ViNameplate>
+          <div v-else-if="cell.actor" class="actor">
+            <ViText v-if="cell.actor.name" tag="span" variant="body-S-wide">
+              {{ cell.actor.name }}
+            </ViText>
+            <ViText v-if="cell.actor.service" tag="span" variant="body-XS-wide" class="muted">
+              {{ cell.actor.service }}
+            </ViText>
+            <ViText v-if="!cell.actor.name && !cell.actor.service" tag="span" variant="body-S-wide">
+              —
+            </ViText>
+          </div>
         </template>
       </ViTableSimple>
     </div>
@@ -115,3 +133,13 @@ const rows = computed(() =>
     </ViText>
   </div>
 </template>
+
+<style scoped>
+/* The person on one line and the application under it, so a cell reads as "who, and through
+   what" rather than as two unrelated words side by side. */
+.actor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+</style>

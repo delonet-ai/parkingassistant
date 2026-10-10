@@ -2,6 +2,7 @@
 
 const { withTransaction } = require('../../repositories/db');
 const { AbortTransaction, abortWith } = require('../../support/transaction');
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const permanentAssignmentsRepository = require('../permanent-assignments/repository');
 const repository = require('./repository');
@@ -21,7 +22,7 @@ function createPlaceReleasesService({ pool, dbRepository, appTimezone }) {
   // The owner lookup, the overlap check and the insert have to agree on one snapshot:
   // two admins releasing the same place for overlapping ranges would otherwise both
   // pass the overlap check before either insert lands.
-  async function createRelease({ parkingPlaceId, dateFrom, dateTo, notes }) {
+  async function createRelease({ actor, parkingPlaceId, dateFrom, dateTo, notes }) {
     return withTransaction(pool, async (repo) => {
       const owner = await permanentAssignmentsRepository.findOwnerForRange(repo, {
         parkingPlaceId,
@@ -55,7 +56,7 @@ function createPlaceReleasesService({ pool, dbRepository, appTimezone }) {
         entityType: 'place_release',
         entityId: release.id,
         action: 'place_release_created',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           userId: owner.user_id,
           userDisplayName: owner.user_display_name,
@@ -73,7 +74,7 @@ function createPlaceReleasesService({ pool, dbRepository, appTimezone }) {
 
   // Cancelling re-reads the release under a row lock, so the frozen check and the
   // reservation check cannot race the freeze job or a queue assignment.
-  async function cancelRelease(releaseId) {
+  async function cancelRelease({ actor, releaseId }) {
     return withTransaction(pool, async (repo) => {
       const release = await repository.findReleaseForUpdate(repo, releaseId);
 
@@ -125,7 +126,7 @@ function createPlaceReleasesService({ pool, dbRepository, appTimezone }) {
         entityType: 'place_release',
         entityId: releaseId,
         action: 'place_release_canceled',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           userId: release.user_id,
           userDisplayName: release.user_display_name,

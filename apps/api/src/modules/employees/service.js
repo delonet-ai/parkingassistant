@@ -1,5 +1,6 @@
 'use strict';
 
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const contactAccessRepository = require('../contact-access/repository');
 const departurePlansRepository = require('../departure-plans/repository');
@@ -23,7 +24,7 @@ function createEmployeesService({ dbRepository }) {
       entityType: 'user',
       entityId: employee.id,
       action: 'employee_created',
-      actorService: 'admin-web',
+      ...auditActor(input.actor),
       metadata: {
         displayName: input.displayName,
         email: input.email,
@@ -47,7 +48,7 @@ function createEmployeesService({ dbRepository }) {
       entityType: 'user',
       entityId: input.employeeId,
       action: 'employee_updated',
-      actorService: 'admin-web',
+      ...auditActor(input.actor),
       metadata: {
         displayName: input.displayName,
         email: input.email,
@@ -61,7 +62,7 @@ function createEmployeesService({ dbRepository }) {
     return employee;
   }
 
-  async function disableEmployee(employeeId) {
+  async function disableEmployee({ actor, employeeId }) {
     const employee = await repository.disableEmployee(dbRepository, employeeId);
 
     if (!employee) {
@@ -72,7 +73,7 @@ function createEmployeesService({ dbRepository }) {
       entityType: 'user',
       entityId: employeeId,
       action: 'employee_disabled',
-      actorService: 'admin-web',
+      ...auditActor(actor),
       metadata: {
         displayName: employee.display_name
       }

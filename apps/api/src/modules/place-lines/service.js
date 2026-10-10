@@ -3,6 +3,7 @@
 const { describeArchiveBlockers } = require('../../../../../packages/domain');
 const { withTransaction } = require('../../repositories/db');
 const { abortWith } = require('../../support/transaction');
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const repository = require('./repository');
 
@@ -23,7 +24,7 @@ function createPlaceLinesService({ pool, dbRepository }) {
 
   // The element and its slots are created in one transaction, then assign_place_lines()
   // re-derives place_type from the line capacity before the slots are read back.
-  async function createLine({ capacity, code: lineCode, floorLabel, name, notes, placeType, slots }) {
+  async function createLine({ actor, capacity, code: lineCode, floorLabel, name, notes, placeType, slots }) {
     return withTransaction(pool, async (repo) => {
       const line = await repository.insertLineGroup(repo, {
         code: lineCode,
@@ -52,7 +53,7 @@ function createPlaceLinesService({ pool, dbRepository }) {
         entityType: 'parking_place',
         entityId: line.id,
         action: 'place_line_created',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           lineCode,
           capacity,
@@ -71,7 +72,7 @@ function createPlaceLinesService({ pool, dbRepository }) {
 
   // Archiving is refused while anything still points at the line, so the blocker read and
   // the two archive writes share one transaction with the row lock taken first.
-  async function archiveLine({ lineId, today }) {
+  async function archiveLine({ actor, lineId, today }) {
     return withTransaction(pool, async (repo) => {
       const line = await repository.findLineForUpdate(repo, lineId);
 
@@ -94,7 +95,7 @@ function createPlaceLinesService({ pool, dbRepository }) {
         entityType: 'parking_place',
         entityId: lineId,
         action: 'place_line_archived',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           lineCode: line.code,
           capacity: line.capacity,

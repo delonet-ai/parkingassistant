@@ -5,6 +5,7 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createEmployeeRequestsController({ services }) {
   const service = services.employeeRequests;
@@ -61,7 +62,7 @@ function createEmployeeRequestsController({ services }) {
     };
   }
 
-  async function handleAdminEmployeeParkingRequestCreate(req) {
+  async function handleAdminEmployeeParkingRequestCreate(req, actor) {
     let body;
 
     try {
@@ -99,7 +100,7 @@ function createEmployeeRequestsController({ services }) {
     }
 
     try {
-      const { employee, parkingRequest, queueEntry } = await service.createRequest({ userId, requestDate, notes });
+      const { employee, parkingRequest, queueEntry } = await service.createRequest({ actor, userId, requestDate, notes });
 
       return {
         statusCode: 201,
@@ -143,7 +144,7 @@ function createEmployeeRequestsController({ services }) {
     }
   }
 
-  async function handleAdminEmployeeParkingRequestCancel(req) {
+  async function handleAdminEmployeeParkingRequestCancel(req, actor) {
     let body;
 
     try {
@@ -179,7 +180,7 @@ function createEmployeeRequestsController({ services }) {
     }
 
     try {
-      const canceledRequest = await service.cancelRequest(requestId);
+      const canceledRequest = await service.cancelRequest({ actor, requestId });
 
       return {
         statusCode: 200,
@@ -215,12 +216,12 @@ function createEmployeeRequestsController({ services }) {
       {
         method: 'POST',
         path: '/admin/employee-parking-requests',
-        handler: ({ req }) => handleAdminEmployeeParkingRequestCreate(req)
+        handler: (context) => handleAdminEmployeeParkingRequestCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/employee-parking-requests/cancel',
-        handler: ({ req }) => handleAdminEmployeeParkingRequestCancel(req)
+        handler: (context) => handleAdminEmployeeParkingRequestCancel(context.req, requestActor(context))
       }
     ]
   };

@@ -1,5 +1,6 @@
 'use strict';
 
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const placesRepository = require('../places/repository');
 const repository = require('./repository');
@@ -38,7 +39,7 @@ function createLineOccupancyService({ pool, dbRepository }) {
     userId,
     guestParkingRequestId,
     reservationId: requestedReservationId,
-    actorService
+    actor
   }) {
     const occupancyId = await withTransaction(pool, async (repo) => {
       await repository.lockLineForDate(repo, { lineGroupId, occupancyDate });
@@ -89,7 +90,7 @@ function createLineOccupancyService({ pool, dbRepository }) {
         entityType: 'line_occupancy',
         entityId: occupancy.id,
         action: 'line_position_set',
-        actorService,
+        ...auditActor(actor),
         metadata: {
           occupancyDate,
           lineGroupId,

@@ -2,6 +2,7 @@
 
 const { withTransaction } = require('../../repositories/db');
 const { AbortTransaction, abortWith } = require('../../support/transaction');
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const employeesRepository = require('../employees/repository');
 const permanentAssignmentsRepository = require('../permanent-assignments/repository');
@@ -15,7 +16,7 @@ function createEmployeeRequestsService({ pool, dbRepository }) {
 
   // The queue for the date is locked first: the position the new entry gets is read with
   // `nextQueuePosition` and two concurrent requests would otherwise be handed the same one.
-  async function createRequest({ userId, requestDate, notes }) {
+  async function createRequest({ actor, userId, requestDate, notes }) {
     return withTransaction(pool, async (repo) => {
       await queueRepository.lockEmployeeQueueForDate(repo, requestDate);
 
@@ -49,7 +50,7 @@ function createEmployeeRequestsService({ pool, dbRepository }) {
         entityType: 'employee_parking_request',
         entityId: parkingRequest.id,
         action: 'employee_parking_request_created',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           userId,
           userDisplayName: employee.display_name,
@@ -65,7 +66,7 @@ function createEmployeeRequestsService({ pool, dbRepository }) {
 
   // Cancelling the request and cancelling its waiting queue entries is one unit: a
   // request left in the queue after its cancellation would still win a place.
-  async function cancelRequest(requestId) {
+  async function cancelRequest({ actor, requestId }) {
     return withTransaction(pool, async (repo) => {
       const parkingRequest = await repository.findRequestForUpdate(repo, requestId);
 
@@ -102,7 +103,7 @@ function createEmployeeRequestsService({ pool, dbRepository }) {
         entityType: 'employee_parking_request',
         entityId: requestId,
         action: 'employee_parking_request_canceled',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           requestDate: parkingRequest.request_date,
           userDisplayName: parkingRequest.user_display_name

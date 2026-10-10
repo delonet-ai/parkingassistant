@@ -3,6 +3,7 @@
 const { formatDateForSql } = require('../../../../../packages/shared/dates');
 const { withTransaction } = require('../../repositories/db');
 const { AbortTransaction, abortWith } = require('../../support/transaction');
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const placeReleasesRepository = require('../place-releases/repository');
 const repository = require('./repository');
@@ -16,6 +17,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
   // Creating a guest request auto-assigns it: the place is picked, reserved, journaled and
   // audited in one transaction, so a caller never observes an unassigned guest request here.
   async function createAssignedGuestRequest({
+    actor,
     hostUserId,
     requestDate,
     guestName,
@@ -105,7 +107,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
         entityType: 'guest_parking_request',
         entityId: guestRequest.id,
         action: 'guest_parking_request_created_and_assigned',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           guestUserId: guest.id,
           guestName,
@@ -123,7 +125,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
     });
   }
 
-  async function assignGuestRequest(requestId) {
+  async function assignGuestRequest({ actor, requestId }) {
     return withTransaction(pool, async (repo) => {
       const guestRequest = await repository.findGuestRequestForUpdate(repo, requestId);
 
@@ -195,7 +197,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
         entityType: 'guest_parking_request',
         entityId: guestRequest.id,
         action: 'guest_parking_request_assigned',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           guestUserId: guestRequest.guest_user_id,
           guestName: guestRequest.guest_name,
@@ -212,7 +214,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
     });
   }
 
-  async function cancelGuestRequest(requestId) {
+  async function cancelGuestRequest({ actor, requestId }) {
     return withTransaction(pool, async (repo) => {
       const guestRequest = await repository.findGuestRequestForUpdate(repo, requestId);
 
@@ -266,7 +268,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
         entityType: 'guest_parking_request',
         entityId: requestId,
         action: 'guest_parking_request_canceled',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           guestUserId: guestRequest.guest_user_id,
           guestName: guestRequest.guest_name,

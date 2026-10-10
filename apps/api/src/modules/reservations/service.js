@@ -4,6 +4,7 @@ const { earlyDepartureBlockingWarnings } = require('../../../../../packages/doma
 const { withTransaction } = require('../../repositories/db');
 const { countAvailableReleasedPlaces } = require('../../services/availability');
 const { AbortTransaction, abortWith } = require('../../support/transaction');
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const conflictsRepository = require('../conflicts/repository');
 const employeeRequestsRepository = require('../employee-requests/repository');
@@ -34,7 +35,7 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
     return earlyDepartureBlockingWarnings({ placeCode: place.code, risks });
   }
 
-  async function createManualReservation({ userId, parkingPlaceId, reservationDate, reason }) {
+  async function createManualReservation({ actor, userId, parkingPlaceId, reservationDate, reason }) {
     return withTransaction(pool, async (repo) => {
       await placeReleasesRepository.lockManualAssignmentForDate(repo, reservationDate);
 
@@ -120,7 +121,7 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         entityType: 'reservation',
         entityId: reservation.id,
         action: 'manual_reservation_created',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           releaseId: releasedPlace.release_id,
           userId,
@@ -137,7 +138,7 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
     });
   }
 
-  async function cancelReservation(reservationId) {
+  async function cancelReservation({ actor, reservationId }) {
     return withTransaction(pool, async (repo) => {
       const reservation = await repository.findReservationForUpdate(repo, reservationId);
 
@@ -195,7 +196,7 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         entityType: 'reservation',
         entityId: reservationId,
         action: 'reservation_canceled',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           reservationDate: reservation.reservation_date,
           parkingPlaceId: reservation.parking_place_id,

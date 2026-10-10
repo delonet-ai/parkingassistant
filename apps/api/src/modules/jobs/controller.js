@@ -3,6 +3,7 @@
 const { addDaysToIsoDate, currentDateInTimezone, isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapJobRun } = require('../../serializers/job-runs');
+const { requestActor } = require('../../support/actor');
 
 function createJobsController({ appTimezone, services }) {
   const service = services.jobs;
@@ -33,7 +34,7 @@ function createJobsController({ appTimezone, services }) {
     };
   }
 
-  async function handleAdminJobProcessQueue(req) {
+  async function handleAdminJobProcessQueue(req, actor) {
     let body;
 
     try {
@@ -65,13 +66,13 @@ function createJobsController({ appTimezone, services }) {
     }
 
     try {
-      return jobSuccess(await service.runProcessQueue(queueDate));
+      return jobSuccess(await service.runProcessQueue({ actor, queueDate }));
     } catch (error) {
       return jobFailure(error, error.statusCode || 500);
     }
   }
 
-  async function handleAdminJobFreezeNextDay(req) {
+  async function handleAdminJobFreezeNextDay(req, actor) {
     let body;
 
     try {
@@ -101,13 +102,13 @@ function createJobsController({ appTimezone, services }) {
     }
 
     try {
-      return jobSuccess(await service.runFreezeNextDay(targetDate));
+      return jobSuccess(await service.runFreezeNextDay({ actor, targetDate }));
     } catch (error) {
       return jobFailure(error, 500);
     }
   }
 
-  async function handleAdminJobLockDeparturePlans(req) {
+  async function handleAdminJobLockDeparturePlans(req, actor) {
     let body;
 
     try {
@@ -137,13 +138,13 @@ function createJobsController({ appTimezone, services }) {
     }
 
     try {
-      return jobSuccess(await service.runLockDeparturePlans(targetDate));
+      return jobSuccess(await service.runLockDeparturePlans({ actor, targetDate }));
     } catch (error) {
       return jobFailure(error, 500);
     }
   }
 
-  async function handleAdminJobUnlockEmployeePool(req) {
+  async function handleAdminJobUnlockEmployeePool(req, actor) {
     let body;
 
     try {
@@ -173,13 +174,13 @@ function createJobsController({ appTimezone, services }) {
     }
 
     try {
-      return jobSuccess(await service.runUnlockEmployeePool(targetDate));
+      return jobSuccess(await service.runUnlockEmployeePool({ actor, targetDate }));
     } catch (error) {
       return jobFailure(error, 500);
     }
   }
 
-  async function handleAdminJobRebuildConflicts(req) {
+  async function handleAdminJobRebuildConflicts(req, actor) {
     let body;
 
     try {
@@ -209,7 +210,7 @@ function createJobsController({ appTimezone, services }) {
     }
 
     try {
-      return jobSuccess(await service.runRebuildConflicts(targetDate));
+      return jobSuccess(await service.runRebuildConflicts({ actor, targetDate }));
     } catch (error) {
       return jobFailure(error, 500);
     }
@@ -258,31 +259,31 @@ function createJobsController({ appTimezone, services }) {
         method: 'POST',
         path: '/admin/jobs/process-queue',
         advertise: true,
-        handler: ({ req }) => handleAdminJobProcessQueue(req)
+        handler: (context) => handleAdminJobProcessQueue(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/freeze-next-day',
         advertise: true,
-        handler: ({ req }) => handleAdminJobFreezeNextDay(req)
+        handler: (context) => handleAdminJobFreezeNextDay(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/lock-departure-plans',
         advertise: true,
-        handler: ({ req }) => handleAdminJobLockDeparturePlans(req)
+        handler: (context) => handleAdminJobLockDeparturePlans(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/unlock-employee-pool',
         advertise: true,
-        handler: ({ req }) => handleAdminJobUnlockEmployeePool(req)
+        handler: (context) => handleAdminJobUnlockEmployeePool(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/rebuild-conflicts',
         advertise: true,
-        handler: ({ req }) => handleAdminJobRebuildConflicts(req)
+        handler: (context) => handleAdminJobRebuildConflicts(context.req, requestActor(context))
       },
       {
         method: 'GET',

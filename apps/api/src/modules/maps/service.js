@@ -1,6 +1,7 @@
 'use strict';
 
 const { withTransaction } = require('../../repositories/db');
+const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const placeLinesRepository = require('../place-lines/repository');
 const repository = require('./repository');
@@ -18,7 +19,7 @@ function createMapsService({ pool, dbRepository }) {
 
   // The upsert bumps the map version, so the audit entry has to read it back inside the
   // same transaction to record the version the caller is told about.
-  async function updateMapBackground({ mapCode, mapTitle, floorLabel, fileType, filePath, sourceChecksum }) {
+  async function updateMapBackground({ actor, mapCode, mapTitle, floorLabel, fileType, filePath, sourceChecksum }) {
     return withTransaction(pool, async (repo) => {
       const map = await repository.upsertMapBackground(repo, {
         mapCode,
@@ -33,7 +34,7 @@ function createMapsService({ pool, dbRepository }) {
         entityType: 'parking_place_map',
         entityId: map.id,
         action: 'parking_place_map_background_replaced',
-        actorService: 'admin-web',
+        ...auditActor(actor),
         metadata: {
           mapCode,
           filePath,

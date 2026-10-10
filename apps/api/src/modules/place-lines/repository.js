@@ -165,7 +165,7 @@ async function insertSlot(db, { code, title, floorLabel, placeType, placeRole, l
         guest_priority_rank,
         catalog_source
       )
-      values ($1, $2, $3, $4::parking_place_type, $5::parking_place_role, $6, $7, $8, 'admin-web')
+      values ($1, $2, $3, $4::parking_place_type, $5::parking_place_role, $6, $7, $8, 'admin-ui')
     `,
     [code, title, floorLabel, placeType, placeRole, lineGroupId, linePositionHint, guestPriorityRank]
   );

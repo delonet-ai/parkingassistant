@@ -6,6 +6,7 @@ const {
   normalizePlaceRole
 } = require('../../../../../packages/domain');
 const { readJsonBody } = require('../../../../../packages/shared/http');
+const { requestActor } = require('../../support/actor');
 const { mapAuditLog } = require('../../serializers/audit-logs');
 const { normalizeOptionalString, uuidValidationError } = require('../../support/params');
 const { internalError } = require('../../support/http-errors');
@@ -55,7 +56,7 @@ function createPlacesController({ services }) {
     }
   }
 
-  async function handleAdminParkingPlaceUpdate(req) {
+  async function handleAdminParkingPlaceUpdate(req, actor) {
     let body;
 
     try {
@@ -125,6 +126,7 @@ function createPlacesController({ services }) {
 
     try {
       const place = await service.updatePlace({
+        actor,
         placeId,
         code,
         title,
@@ -298,7 +300,7 @@ function createPlacesController({ services }) {
         method: 'POST',
         path: '/admin/places/update',
         advertise: true,
-        handler: ({ req }) => handleAdminParkingPlaceUpdate(req)
+        handler: (context) => handleAdminParkingPlaceUpdate(context.req, requestActor(context))
       },
       {
         method: 'GET',

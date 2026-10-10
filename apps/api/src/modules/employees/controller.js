@@ -6,6 +6,7 @@ const { mapAuditLog } = require('../../serializers/audit-logs');
 const { mapContactAccessLog } = require('../../serializers/contact-access');
 const { normalizeOptionalString, splitDisplayName, uuidValidationError } = require('../../support/params');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createEmployeesController({ appTimezone, services }) {
   const service = services.employees;
@@ -57,7 +58,7 @@ function createEmployeesController({ appTimezone, services }) {
     }
   }
 
-  async function handleAdminEmployeeCreate(req) {
+  async function handleAdminEmployeeCreate(req, actor) {
     let body;
 
     try {
@@ -95,6 +96,7 @@ function createEmployeesController({ appTimezone, services }) {
 
     try {
       const employee = await service.createEmployee({
+        actor,
         firstName,
         lastName,
         displayName,
@@ -137,7 +139,7 @@ function createEmployeesController({ appTimezone, services }) {
     }
   }
 
-  async function handleAdminEmployeeUpdate(req) {
+  async function handleAdminEmployeeUpdate(req, actor) {
     let body;
 
     try {
@@ -182,6 +184,7 @@ function createEmployeesController({ appTimezone, services }) {
 
     try {
       const employee = await service.updateEmployee({
+        actor,
         employeeId,
         firstName,
         lastName,
@@ -238,7 +241,7 @@ function createEmployeesController({ appTimezone, services }) {
     }
   }
 
-  async function handleAdminEmployeeDisable(req) {
+  async function handleAdminEmployeeDisable(req, actor) {
     let body;
 
     try {
@@ -273,7 +276,7 @@ function createEmployeesController({ appTimezone, services }) {
       return invalidId;
     }
 
-    const employee = await service.disableEmployee(employeeId);
+    const employee = await service.disableEmployee({ actor, employeeId });
 
     if (!employee) {
       return {
@@ -449,19 +452,19 @@ function createEmployeesController({ appTimezone, services }) {
       {
         method: 'POST',
         path: '/admin/employees',
-        handler: ({ req }) => handleAdminEmployeeCreate(req)
+        handler: (context) => handleAdminEmployeeCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/employees/update',
         advertise: true,
-        handler: ({ req }) => handleAdminEmployeeUpdate(req)
+        handler: (context) => handleAdminEmployeeUpdate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/employees/disable',
         advertise: true,
-        handler: ({ req }) => handleAdminEmployeeDisable(req)
+        handler: (context) => handleAdminEmployeeDisable(context.req, requestActor(context))
       },
       {
         method: 'GET',

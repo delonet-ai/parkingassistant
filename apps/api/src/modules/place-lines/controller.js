@@ -6,6 +6,7 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { normalizeOptionalString, uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 // ---------------------------------------------------------------------------
 // Place inventory (Task 9).
@@ -89,7 +90,7 @@ function createPlaceLinesController({ appTimezone, services }) {
     };
   }
 
-  async function handleAdminPlaceLineCreate(req) {
+  async function handleAdminPlaceLineCreate(req, actor) {
     let body;
 
     try {
@@ -126,6 +127,7 @@ function createPlaceLinesController({ appTimezone, services }) {
 
     try {
       const stored = await service.createLine({
+        actor,
         capacity,
         code: lineCode,
         floorLabel,
@@ -177,7 +179,7 @@ function createPlaceLinesController({ appTimezone, services }) {
     }
   }
 
-  async function handleAdminPlaceLineArchive(req) {
+  async function handleAdminPlaceLineArchive(req, actor) {
     let body;
 
     try {
@@ -215,7 +217,7 @@ function createPlaceLinesController({ appTimezone, services }) {
     const today = currentDateInTimezone(appTimezone);
 
     try {
-      const { line, archived } = await service.archiveLine({ lineId, today });
+      const { line, archived } = await service.archiveLine({ actor, lineId, today });
 
       return {
         statusCode: 200,
@@ -256,13 +258,13 @@ function createPlaceLinesController({ appTimezone, services }) {
       {
         method: 'POST',
         path: '/admin/place-lines',
-        handler: ({ req }) => handleAdminPlaceLineCreate(req)
+        handler: (context) => handleAdminPlaceLineCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/place-lines/archive',
         advertise: true,
-        handler: ({ req }) => handleAdminPlaceLineArchive(req)
+        handler: (context) => handleAdminPlaceLineArchive(context.req, requestActor(context))
       }
     ]
   };

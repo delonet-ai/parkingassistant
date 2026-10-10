@@ -5,6 +5,7 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { splitDisplayName, uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
+const { requestActor } = require('../../support/actor');
 
 function createGuestRequestsController({ services }) {
   const service = services.guestRequests;
@@ -66,7 +67,7 @@ function createGuestRequestsController({ services }) {
     };
   }
 
-  async function handleAdminGuestParkingRequestCreate(req) {
+  async function handleAdminGuestParkingRequestCreate(req, actor) {
     let body;
 
     try {
@@ -111,6 +112,7 @@ function createGuestRequestsController({ services }) {
 
     try {
       const { guest, guestRequest, host, place, reservation, warnings } = await service.createAssignedGuestRequest({
+        actor,
         hostUserId,
         requestDate,
         guestName,
@@ -180,7 +182,7 @@ function createGuestRequestsController({ services }) {
     }
   }
 
-  async function handleAdminGuestParkingRequestAssign(req) {
+  async function handleAdminGuestParkingRequestAssign(req, actor) {
     let body;
 
     try {
@@ -216,7 +218,7 @@ function createGuestRequestsController({ services }) {
     }
 
     try {
-      const { guestRequest, place, reservation, warnings } = await service.assignGuestRequest(requestId);
+      const { guestRequest, place, reservation, warnings } = await service.assignGuestRequest({ actor, requestId });
 
       return {
         statusCode: 201,
@@ -264,7 +266,7 @@ function createGuestRequestsController({ services }) {
     }
   }
 
-  async function handleAdminGuestParkingRequestCancel(req) {
+  async function handleAdminGuestParkingRequestCancel(req, actor) {
     let body;
 
     try {
@@ -300,7 +302,7 @@ function createGuestRequestsController({ services }) {
     }
 
     try {
-      const { canceledRequest, canceledReservation } = await service.cancelGuestRequest(requestId);
+      const { canceledRequest, canceledReservation } = await service.cancelGuestRequest({ actor, requestId });
 
       return {
         statusCode: 200,
@@ -344,18 +346,18 @@ function createGuestRequestsController({ services }) {
       {
         method: 'POST',
         path: '/admin/guest-parking-requests',
-        handler: ({ req }) => handleAdminGuestParkingRequestCreate(req)
+        handler: (context) => handleAdminGuestParkingRequestCreate(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/guest-parking-requests/assign',
         advertise: true,
-        handler: ({ req }) => handleAdminGuestParkingRequestAssign(req)
+        handler: (context) => handleAdminGuestParkingRequestAssign(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/guest-parking-requests/cancel',
-        handler: ({ req }) => handleAdminGuestParkingRequestCancel(req)
+        handler: (context) => handleAdminGuestParkingRequestCancel(context.req, requestActor(context))
       }
     ]
   };

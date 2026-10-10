@@ -10,6 +10,7 @@ const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapLineOccupancy } = require('../../serializers/line-occupancy');
 const { uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
+const { BOT, requestActor } = require('../../support/actor');
 const { internalError } = require('../../support/http-errors');
 
 // This module owns the whole `/admin/line-groups*` and `/bot/line/*` URL space — the lines as
@@ -122,7 +123,7 @@ function createLineOccupancyController({ appTimezone, services }) {
     };
   }
 
-  async function handleLineOccupancySet(req, actorService = 'admin-web') {
+  async function handleLineOccupancySet(req, actor) {
     let body;
 
     try {
@@ -190,7 +191,7 @@ function createLineOccupancyController({ appTimezone, services }) {
         userId,
         guestParkingRequestId,
         reservationId: body.reservationId || null,
-        actorService
+        actor
       });
 
       return {
@@ -336,7 +337,7 @@ function createLineOccupancyController({ appTimezone, services }) {
       {
         method: 'POST',
         path: '/admin/line-occupancy',
-        handler: ({ req }) => handleLineOccupancySet(req, 'admin-web')
+        handler: (context) => handleLineOccupancySet(context.req, requestActor(context))
       },
       {
         method: 'GET',
@@ -348,7 +349,7 @@ function createLineOccupancyController({ appTimezone, services }) {
         method: 'POST',
         paths: ['/bot/line/position', '/bot/line-occupancy'],
         advertise: '/bot/line/position',
-        handler: ({ req }) => handleLineOccupancySet(req, 'bot')
+        handler: (context) => handleLineOccupancySet(context.req, requestActor(context, BOT))
       },
       {
         method: 'GET',
