@@ -30,8 +30,17 @@ const DEFAULT_SHEET = 'Лист1';
 // How many rows of one sheet the import will read. The real catalog is a few hundred places,
 // and the limit is three orders of magnitude of headroom — but an .xlsx is a zip, so a sheet of
 // repeated junk rows stays well under the upload limit at two hundred thousand rows, and each
-// row read becomes an `INSERT` into the staging table inside the open transaction. Refusing the
-// sheet by its declared size costs nothing and keeps a single-process API answering.
+// row read becomes an `INSERT` into the staging table inside the open transaction.
+//
+// Counted on the rows `sheet_to_json` returned, not on the sheet's declared `!ref` range.
+// Excel writes `<dimension>` over every row it has ever formatted, so a catalog of two hundred
+// places can declare the sheet's full million — refusing the file by that number would refuse
+// the real workbook, and tell the operator it "is not the parking catalog". The declaration is
+// no cheaper a guard anyway: `xlsx.read` has already parsed the worksheet into cells before
+// either number exists, so what this limit bounds is the write (one staging INSERT per row
+// inside the open transaction), not the parse. Bounding the parse would mean reading the zip's
+// central directory first, or parsing outside this process; neither is done here, and the
+// upload limit in the controller is the only thing standing in front of it.
 const MAX_SHEET_ROWS = 5000;
 
 /** A workbook this module cannot read: not a spreadsheet, or no such sheet in it. */
@@ -40,22 +49,6 @@ class CatalogWorkbookError extends Error {
     super(message);
     this.name = 'CatalogWorkbookError';
   }
-}
-
-/**
- * How many rows the sheet says it has, read from its range rather than from its rows: the
- * answer has to come before `sheet_to_json` materializes an object per row, which is the cost
- * the limit exists to refuse.
- */
-function declaredRowCount(sheet) {
-  if (!sheet || !sheet['!ref']) {
-    return 0;
-  }
-
-  const range = xlsx.utils.decode_range(sheet['!ref']);
-  const rows = range.e.r - range.s.r + 1;
-
-  return Number.isFinite(rows) && rows > 0 ? rows : 0;
 }
 
 /**
@@ -79,16 +72,16 @@ function readSheet(workbook, { sheetName, sourceFile = null } = {}) {
   }
 
   const sheet = workbook.Sheets[resolved];
-  const declaredRows = declaredRowCount(sheet);
+  const rows = xlsx.utils.sheet_to_json(sheet, { range: 1, defval: '' });
 
-  if (declaredRows > MAX_SHEET_ROWS) {
+  // Blank rows are not in `rows` — `sheet_to_json` drops them unless asked for — so this is
+  // the count of rows that carry something, which is also the count that would be staged.
+  if (rows.length > MAX_SHEET_ROWS) {
     throw new CatalogWorkbookError(
-      `Sheet ${resolved} has ${declaredRows} rows, more than the ${MAX_SHEET_ROWS} this import reads:` +
+      `Sheet ${resolved} has ${rows.length} rows, more than the ${MAX_SHEET_ROWS} this import reads:` +
         ' this is not the parking catalog'
     );
   }
-
-  const rows = xlsx.utils.sheet_to_json(sheet, { range: 1, defval: '' });
 
   // Before the rows: a sheet whose header is missing maps every row to empty cells, which the
   // mapping reads as blank separator lines and skips silently — so the refusal below would be

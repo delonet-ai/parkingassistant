@@ -49,9 +49,18 @@ const PROBLEM_ROWS = [
   ['G4', '110', 'Закреплено', 'Финансы', 'Кузнецов']
 ];
 
-function workbookBuffer(rows, sheetName = 'Лист1') {
+function workbookBuffer(rows, sheetName = 'Лист1', { declaredRef } = {}) {
   const workbook = xlsx.utils.book_new();
-  xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(rows), sheetName);
+  const sheet = xlsx.utils.aoa_to_sheet(rows);
+
+  // `declaredRef` writes the sheet's `<dimension>` over the range its cells occupy, which is
+  // what Excel itself does for every row that was ever formatted. It survives a write/read
+  // round trip, so a test can build the workbook a real file looks like.
+  if (declaredRef) {
+    sheet['!ref'] = declaredRef;
+  }
+
+  xlsx.utils.book_append_sheet(workbook, sheet, sheetName);
 
   return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
@@ -322,7 +331,7 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
 
   // An .xlsx is a zip, so a sheet of repeated junk rows stays far under the upload limit at
   // two hundred thousand rows — and every row read becomes a staging INSERT inside the open
-  // transaction. The sheet is refused by its declared size, before a row object exists.
+  // transaction. The count is of the rows the sheet actually carries (see the case below).
   it('refuses a sheet with more rows than the import reads', async () => {
     const junk = [];
 
@@ -338,6 +347,29 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
 
     assert.equal(status, 400);
     assert.match(payload.error, new RegExp(`more than the ${MAX_SHEET_ROWS}`));
+    assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
+  // The row limit used to be measured against the sheet's declared `!ref` range, and Excel
+  // declares `<dimension>` over every row it has ever formatted — a one-place catalog saved
+  // from a formatted template declares the sheet's full million. The real workbook was
+  // therefore refused as "not the parking catalog", by the CLI as well as by this endpoint,
+  // on nothing but its trailing blank rows.
+  it('reads a catalog whose sheet declares far more rows than it carries', async () => {
+    const inflated = workbookBuffer([...HEADER, PLACE_ROWS[0]], 'Лист1', {
+      declaredRef: 'A1:E1048576'
+    });
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(inflated, { dryRun: true })
+    );
+
+    assert.equal(status, 200);
+    assert.equal(payload.import.dryRun, true);
+    assert.equal(payload.import.rowsRead, 1);
+    assert.equal(payload.import.placesStaged, 1);
     assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
   });
 

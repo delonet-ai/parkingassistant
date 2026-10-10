@@ -484,6 +484,28 @@ one.
 cases sign in over HTTP and pass the cookie explicitly instead. `AGENTS.md` documents the
 pattern that is actually used, and the option as what it is.
 
+➕ **review: every `date` the API returned was a day early on the stand.** `pg`'s default
+parser turns a `date` column into a `Date` at *local* midnight, and every container sets
+`TZ=Europe/Moscow` — so `2026-10-10` left the API as `2026-10-09T21:00:00.000Z`, and
+`formatDateForSql`'s `toISOString().slice(0, 10)` read it back as `2026-10-09`. The suites run
+in UTC, where local midnight *is* the ISO date, which is why 376 integration tests and 106
+snapshots agreed with the defect. `packages/db/date-type.js` now registers the `date` parser
+once at bootstrap (`apps/api/src/server.js`, and the integration harness so an in-process
+service meets the same shape), and the column arrives as the text Postgres wrote. The 73
+affected snapshot values were regenerated: the whole diff is `<today>T00:00:00.000Z` →
+`<today>`, with no id renumbered. The `::text` / `to_char` casts the repositories already had
+are now redundant rather than load-bearing, and are left alone.
+
+➕ **review: the catalog row limit refused the real workbook.** `MAX_SHEET_ROWS` was measured
+against the sheet's declared `!ref` range, and Excel writes `<dimension>` over every row it has
+ever formatted — a catalog of two hundred places saved from a formatted template declares the
+sheet's full 1 048 576 rows and was refused as "not the parking catalog", by
+`npm run db:import:parking-catalog` as much as by the endpoint, since Task 8 gave them one
+reader. The limit now counts the rows `sheet_to_json` actually returned, which is also the
+count that would be staged. The comment claiming the declared count guarded the parse cost was
+wrong and says so now: `xlsx.read` has already parsed the worksheet before either number
+exists, so the only thing in front of the parse is the controller's upload limit.
+
 ## Technical Details
 
 **Password storage.** `scrypt` from `node:crypto`, cost parameters stored alongside the hash so

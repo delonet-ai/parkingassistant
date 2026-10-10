@@ -8,6 +8,7 @@
 
 const { Pool } = require('pg');
 
+const { registerDateTypeParser } = require('../date-type');
 const {
   MIGRATION_LOCK_KEY,
   plannedMigrations,
@@ -18,6 +19,11 @@ const {
 
 const SKIP_REASON =
   'DATABASE_URL_TEST is not set — see SETUP.md → "Integration test database"';
+
+// The same `date` shape the API process installs at bootstrap. A suite that drives a service
+// in-process (`audit-actor.itest.js`) would otherwise meet `Date` objects where production
+// meets `YYYY-MM-DD` strings, and would pass on behaviour the stand does not have.
+registerDateTypeParser();
 
 let scratchCounter = 0;
 

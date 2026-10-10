@@ -326,8 +326,8 @@
       "release": {
         "createdAt": "<timestamp>",
         "createdVia": "admin_web",
-        "dateFrom": "<today>T00:00:00.000Z",
-        "dateTo": "<today>T00:00:00.000Z",
+        "dateFrom": "<today>",
+        "dateTo": "<today>",
         "id": "<id:129>",
         "parkingPlace": {
           "code": "G9-2",
@@ -443,7 +443,7 @@
           "code": "G9-2",
           "id": "<id:122>"
         },
-        "reservationDate": "<today>T00:00:00.000Z",
+        "reservationDate": "<today>",
         "source": "manual",
         "status": "active",
         "user": {
@@ -492,7 +492,7 @@
       "reservation": {
         "canceledAt": "<timestamp>",
         "id": "<id:130>",
-        "reservationDate": "<today>T00:00:00.000Z",
+        "reservationDate": "<today>",
         "status": "canceled"
       },
       "service": "api",

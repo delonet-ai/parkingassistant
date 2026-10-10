@@ -2,6 +2,7 @@
 
 const http = require('node:http');
 const { Pool } = require('pg');
+const { registerDateTypeParser } = require('../../../packages/db/date-type');
 const { normalizeApiErrorPayload } = require('../../../packages/shared/errors');
 const { sendJson: writeJson } = require('../../../packages/shared/http');
 const { createModules } = require('./modules');
@@ -11,6 +12,10 @@ const { createApiRouter } = require('./router');
 // Bootstrap only: read the environment, open the pool, build the modules, listen, shut down.
 // Every handler lives in apps/api/src/modules/<context>/controller.js and every query in the
 // matching repository.js — see docs/adr/003-modular-architecture.md.
+
+// Before the first query: a `date` column has to reach a handler as `YYYY-MM-DD`, not as a
+// `Date` at local midnight that serializes to the previous day under `TZ=Europe/Moscow`.
+registerDateTypeParser();
 
 const port = Number(process.env.PORT || 3000);
 const startedAt = new Date().toISOString();

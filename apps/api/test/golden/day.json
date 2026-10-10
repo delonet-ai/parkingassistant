@@ -28,7 +28,7 @@
           },
           "id": "<id:53>",
           "notes": "Демо: гость размещён",
-          "requestDate": "<today>T00:00:00.000Z",
+          "requestDate": "<today>",
           "status": "assigned",
           "vehiclePlateNumber": "Х555ХХ777"
         },
@@ -45,7 +45,7 @@
           },
           "id": "<id:54>",
           "notes": "Демо: гость ожидает места",
-          "requestDate": "<today>T00:00:00.000Z",
+          "requestDate": "<today>",
           "status": "active",
           "vehiclePlateNumber": "У777УУ199"
         }
@@ -59,7 +59,7 @@
             "placeType": "triple",
             "title": "Место 110"
           },
-          "reservationDate": "<today>T00:00:00.000Z",
+          "reservationDate": "<today>",
           "user": {
             "department": null,
             "displayName": "Николаев Сергей",
@@ -197,7 +197,7 @@
             "title": "Место 110"
           },
           "reason": "Guest assignment hosted by Морозов Егор Николаевич",
-          "reservationDate": "<today>T00:00:00.000Z",
+          "reservationDate": "<today>",
           "source": "guest",
           "user": {
             "department": null,
@@ -215,7 +215,7 @@
             "title": "Место 120"
           },
           "reason": "Queue assignment #1",
-          "reservationDate": "<today>T00:00:00.000Z",
+          "reservationDate": "<today>",
           "source": "queue",
           "user": {
             "department": "Маркетинг",
@@ -298,8 +298,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today>",
           "id": "<id:56>",
           "notes": "Работа из дома",
           "parkingPlace": {
@@ -318,8 +318,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today+2>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today+2>",
           "id": "<id:57>",
           "notes": "Командировка",
           "parkingPlace": {
@@ -338,8 +338,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today+6>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today+6>",
           "id": "<id:58>",
           "notes": "Больничный",
           "parkingPlace": {
@@ -358,8 +358,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today>",
           "id": "<id:59>",
           "notes": "Работа из дома",
           "parkingPlace": {
@@ -378,8 +378,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today+4>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today+4>",
           "id": "<id:60>",
           "notes": "Отпуск",
           "parkingPlace": {
@@ -398,8 +398,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today+1>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today+1>",
           "id": "<id:61>",
           "notes": "Работа из дома",
           "parkingPlace": {
@@ -418,8 +418,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today>T00:00:00.000Z",
-          "dateTo": "<today+2>T00:00:00.000Z",
+          "dateFrom": "<today>",
+          "dateTo": "<today+2>",
           "id": "<id:62>",
           "notes": "Командировка",
           "parkingPlace": {
@@ -438,8 +438,8 @@
         {
           "createdAt": "<timestamp>",
           "createdVia": "admin",
-          "dateFrom": "<today+1>T00:00:00.000Z",
-          "dateTo": "<today+3>T00:00:00.000Z",
+          "dateFrom": "<today+1>",
+          "dateTo": "<today+3>",
           "id": "<id:64>",
           "notes": "Отпуск со следующего дня",
           "parkingPlace": {

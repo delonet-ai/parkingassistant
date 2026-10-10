@@ -102,6 +102,12 @@ states what it needs, not how the tables are wired. `postForm` deliberately sets
 `content-type`: `fetch` derives it and the boundary from the `FormData`, and a header written by
 hand would name a boundary the body does not use.
 
+Both the harness and `apps/api/src/server.js` call `registerDateTypeParser()` from
+`packages/db/date-type.js` before the first query, so a Postgres `date` arrives as the text
+Postgres wrote (`YYYY-MM-DD`) and not as a `Date` at local midnight — which under the
+containers' `TZ=Europe/Moscow` serialized to the previous day. Assert dates as strings, and do
+not add a `::text` cast expecting the bare column to behave differently.
+
 The harness serializes schema application on a `pg_advisory_lock`: `node --test` runs one process per
 file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same
 database-wide extension.

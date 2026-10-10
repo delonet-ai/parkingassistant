@@ -151,7 +151,7 @@
           "releaseCount": 6,
           "timezone": "Europe/Moscow"
         },
-        "targetDate": "<today+1>T00:00:00.000Z"
+        "targetDate": "<today+1>"
       },
       "releaseCount": 6,
       "service": "api",
@@ -311,7 +311,7 @@
           "releaseCount": 6,
           "timezone": "Europe/Moscow"
         },
-        "targetDate": "<today+1>T00:00:00.000Z"
+        "targetDate": "<today+1>"
       },
       "releaseCount": 6,
       "service": "api",
@@ -349,7 +349,7 @@
           "unservableCount": 0,
           "waitingCount": 0
         },
-        "targetDate": "<today+1>T00:00:00.000Z"
+        "targetDate": "<today+1>"
       },
       "servableCount": 0,
       "service": "api",
@@ -389,7 +389,7 @@
           "unservableCount": 0,
           "waitingCount": 0
         },
-        "targetDate": "<today+1>T00:00:00.000Z"
+        "targetDate": "<today+1>"
       },
       "servableCount": 0,
       "service": "api",
@@ -424,7 +424,7 @@
           "plansCount": 3,
           "timezone": "Europe/Moscow"
         },
-        "targetDate": "<today>T00:00:00.000Z"
+        "targetDate": "<today>"
       },
       "lockedCount": 3,
       "plansCount": 3,
@@ -458,7 +458,7 @@
           "plansCount": 3,
           "timezone": "Europe/Moscow"
         },
-        "targetDate": "<today>T00:00:00.000Z"
+        "targetDate": "<today>"
       },
       "lockedCount": 0,
       "plansCount": 3,
@@ -554,7 +554,7 @@
           "recalculatedCount": 0,
           "timezone": "Europe/Moscow"
         },
-        "targetDate": "<today>T00:00:00.000Z"
+        "targetDate": "<today>"
       },
       "plansCount": 3,
       "recalculatedCount": 0,
@@ -650,7 +650,7 @@
           "recalculatedCount": 0,
           "timezone": "Europe/Moscow"
         },
-        "targetDate": "<today>T00:00:00.000Z"
+        "targetDate": "<today>"
       },
       "plansCount": 3,
       "recalculatedCount": 0,
@@ -687,7 +687,7 @@
           "skipped": [],
           "skippedCount": 0
         },
-        "targetDate": "<today>T00:00:00.000Z"
+        "targetDate": "<today>"
       },
       "service": "api",
       "skipped": [],
@@ -723,7 +723,7 @@
           "skipped": [],
           "skippedCount": 0
         },
-        "targetDate": "<today>T00:00:00.000Z"
+        "targetDate": "<today>"
       },
       "service": "api",
       "skipped": [],
@@ -817,7 +817,7 @@
             "releaseCount": 6,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today+1>T00:00:00.000Z"
+          "targetDate": "<today+1>"
         },
         {
           "actorService": "admin-ui",
@@ -835,7 +835,7 @@
             "plansCount": 3,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -854,7 +854,7 @@
             "skipped": [],
             "skippedCount": 0
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -903,7 +903,7 @@
             "recalculatedCount": 0,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -924,7 +924,7 @@
             "unservableCount": 0,
             "waitingCount": 0
           },
-          "targetDate": "<today+1>T00:00:00.000Z"
+          "targetDate": "<today+1>"
         }
       ],
       "runs": [
@@ -1007,7 +1007,7 @@
             "releaseCount": 6,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today+1>T00:00:00.000Z"
+          "targetDate": "<today+1>"
         },
         {
           "actorService": "admin-ui",
@@ -1088,7 +1088,7 @@
             "releaseCount": 6,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today+1>T00:00:00.000Z"
+          "targetDate": "<today+1>"
         },
         {
           "actorService": "admin-ui",
@@ -1106,7 +1106,7 @@
             "plansCount": 3,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -1124,7 +1124,7 @@
             "plansCount": 3,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -1143,7 +1143,7 @@
             "skipped": [],
             "skippedCount": 0
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -1162,7 +1162,7 @@
             "skipped": [],
             "skippedCount": 0
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -1211,7 +1211,7 @@
             "recalculatedCount": 0,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -1260,7 +1260,7 @@
             "recalculatedCount": 0,
             "timezone": "Europe/Moscow"
           },
-          "targetDate": "<today>T00:00:00.000Z"
+          "targetDate": "<today>"
         },
         {
           "actorService": "admin-ui",
@@ -1281,7 +1281,7 @@
             "unservableCount": 0,
             "waitingCount": 0
           },
-          "targetDate": "<today+1>T00:00:00.000Z"
+          "targetDate": "<today+1>"
         },
         {
           "actorService": "admin-ui",
@@ -1302,7 +1302,7 @@
             "unservableCount": 0,
             "waitingCount": 0
           },
-          "targetDate": "<today+1>T00:00:00.000Z"
+          "targetDate": "<today+1>"
         }
       ],
       "service": "api",
