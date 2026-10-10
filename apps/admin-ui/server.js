@@ -8,7 +8,7 @@
 
 import { createHash } from 'node:crypto'
 import { createReadStream, existsSync } from 'node:fs'
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -227,23 +227,42 @@ async function uploadFloorPlan(req, res) {
   }
 
   const filename = `parking-${plan.code}.${fileType === 'jpg' ? 'jpg' : fileType}`
+  const target = path.join(mapStoragePath, filename)
+  // This server checks no session of its own — the API does, on the call below. Writing the
+  // plan straight into place would let an anonymous request replace a floor plan and only then
+  // be refused, so it waits beside the target and takes its place only once the API agrees.
+  const pending = path.join(mapStoragePath, `.${filename}.${process.pid}.${Date.now()}.upload`)
   await mkdir(mapStoragePath, { recursive: true })
-  await writeFile(path.join(mapStoragePath, filename), file.buffer)
+  await writeFile(pending, file.buffer)
 
-  // The operator's session has to travel with this one too: the API refuses an anonymous
-  // write, and the file is already on disk by the time it is asked.
-  const upstream = await fetch(new URL('/admin/map-backgrounds', apiBaseUrl), {
-    method: 'POST',
-    headers: upstreamHeaders(req, { 'content-type': 'application/json' }),
-    body: JSON.stringify({
-      mapCode: plan.code,
-      mapTitle: form.fields.get('mapTitle') || plan.title,
-      floorLabel: form.fields.get('floorLabel') || plan.floorLabel,
-      filePath: `/maps/${filename}`,
-      fileType,
-      sourceChecksum: createHash('sha256').update(file.buffer).digest('hex')
+  let upstream = null
+
+  try {
+    // The operator's session has to travel with this one too: the API refuses an anonymous
+    // write, and that refusal is what keeps the pending file out of place.
+    upstream = await fetch(new URL('/admin/map-backgrounds', apiBaseUrl), {
+      method: 'POST',
+      headers: upstreamHeaders(req, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        mapCode: plan.code,
+        mapTitle: form.fields.get('mapTitle') || plan.title,
+        floorLabel: form.fields.get('floorLabel') || plan.floorLabel,
+        filePath: `/maps/${filename}`,
+        fileType,
+        sourceChecksum: createHash('sha256').update(file.buffer).digest('hex')
+      })
     })
-  })
+  } catch (error) {
+    await rm(pending, { force: true })
+    sendJson(res, 502, { status: 'error', service: 'admin-ui', error: `api unreachable: ${error.message}` })
+    return
+  }
+
+  if (upstream.ok) {
+    await rename(pending, target)
+  } else {
+    await rm(pending, { force: true })
+  }
 
   const payload = Buffer.from(await upstream.arrayBuffer())
 

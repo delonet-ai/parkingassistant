@@ -4,7 +4,7 @@
 // and happy-dom's fetch applies the browser's same-origin policy to it.
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -62,6 +62,13 @@ function startStubApi() {
         contentType: req.headers['content-type'] || null,
         body: Buffer.concat(chunks).toString('utf8')
       })
+
+      // The one refusal the upload has to survive: the real API answers an anonymous write 401.
+      if (req.url === '/admin/map-backgrounds' && !req.headers.cookie) {
+        res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ status: 'error', service: 'api', error: 'Authentication required' }))
+        return
+      }
 
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
@@ -181,6 +188,27 @@ describe('admin-ui floor-plan upload', () => {
       fileType: 'png',
       sourceChecksum: createHash('sha256').update(PNG).digest('hex')
     })
+  })
+
+  it('leaves the stored plan alone when the API refuses the write', async () => {
+    received = []
+    const stored = path.join(mapStorage, 'parking-g5.png')
+    writeFileSync(stored, PNG)
+
+    const response = await fetch(`${baseUrl}/api/admin/map-backgrounds`, {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+      body: multipartBody([
+        { name: 'mapCode', value: 'g5' },
+        { name: 'mapFile', filename: 'plan.png', value: Buffer.from('not the plan') }
+      ])
+    })
+
+    expect(response.status).toBe(401)
+    expect(received).toHaveLength(1)
+    // An anonymous request must not be able to replace a floor plan by being refused after.
+    expect([...readFileSync(stored)]).toEqual([...PNG])
+    expect(readdirSync(mapStorage).filter((name) => name.endsWith('.upload'))).toEqual([])
   })
 
   it('refuses an upload that names no floor, without calling the API', async () => {

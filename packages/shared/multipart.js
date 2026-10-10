@@ -80,7 +80,10 @@ function parseMultipartFormData(contentType, body) {
     );
     const disposition = headers.get('content-disposition') || '';
     const name = /name="([^"]+)"/.exec(disposition)?.[1];
-    const filename = /filename="([^"]*)"/.exec(disposition)?.[1];
+    // The body was read as latin1 to keep file bytes intact; browsers send the filename
+    // itself as UTF-8, so it is re-read as such — otherwise a Cyrillic name lands garbled.
+    const rawFilename = /filename="([^"]*)"/.exec(disposition)?.[1];
+    const filename = rawFilename && Buffer.from(rawFilename, 'binary').toString('utf8');
 
     if (!name) {
       continue;

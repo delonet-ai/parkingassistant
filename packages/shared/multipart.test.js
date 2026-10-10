@@ -67,6 +67,15 @@ test('a binary file survives the round trip byte for byte', () => {
   assert.deepEqual([...form.files.get('mapFile').buffer], [...payload]);
 });
 
+test('a utf-8 filename is decoded as utf-8', () => {
+  // The name is stored with every imported place and in the audit row, so it must arrive intact.
+  const body = buildBody([{ name: 'catalogFile', filename: 'Каталог мест.xlsx', value: Buffer.from('x') }]);
+
+  const form = parseMultipartFormData(`multipart/form-data; boundary=${BOUNDARY}`, body);
+
+  assert.equal(form.files.get('catalogFile').filename, 'Каталог мест.xlsx');
+});
+
 test('a utf-8 field is decoded as utf-8', () => {
   const body = buildBody([{ name: 'mapTitle', value: 'Этаж G4 — подложка' }]);
 
