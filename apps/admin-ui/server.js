@@ -6,7 +6,7 @@
 //
 // No framework and no dependency, same as the rest of the repo: node:http and node:fs.
 
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, existsSync } from 'node:fs'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import http from 'node:http'
@@ -231,7 +231,13 @@ async function uploadFloorPlan(req, res) {
   // This server checks no session of its own — the API does, on the call below. Writing the
   // plan straight into place would let an anonymous request replace a floor plan and only then
   // be refused, so it waits beside the target and takes its place only once the API agrees.
-  const pending = path.join(mapStoragePath, `.${filename}.${process.pid}.${Date.now()}.upload`)
+  //
+  // The staging name is a fresh uuid, not pid plus clock: `filename` is one of three fixed
+  // values, so two uploads of the same floor within one millisecond would otherwise compute
+  // the *same* pending path — and one of the two may be the anonymous request this mechanism
+  // exists to refuse. It would then be the refused request's bytes that get renamed into
+  // place, or its `rm` that deletes the file the authorized request is about to promote.
+  const pending = path.join(mapStoragePath, `.${filename}.${randomUUID()}.upload`)
   await mkdir(mapStoragePath, { recursive: true })
   await writeFile(pending, file.buffer)
 
@@ -259,7 +265,14 @@ async function uploadFloorPlan(req, res) {
   }
 
   if (upstream.ok) {
-    await rename(pending, target)
+    // A failed promotion must not leave the staging file behind: it is invisible to the SPA
+    // but it is a full-size plan sitting in the shared volume forever.
+    try {
+      await rename(pending, target)
+    } catch (error) {
+      await rm(pending, { force: true })
+      throw error
+    }
   } else {
     await rm(pending, { force: true })
   }

@@ -206,7 +206,14 @@ async function upsertPlaces(db) {
           catalog_external_id = excluded.catalog_external_id,
           metadata = excluded.metadata,
           updated_at = now(),
-          deleted_at = null
+          deleted_at = null,
+          -- Both halves of "archived", or neither. place-lines archives a slot by setting
+          -- is_active = false AND deleted_at, and parking_places_code_uniq is on code alone,
+          -- so a code still in the sheet matches the conflict clause and would otherwise come
+          -- back half-revived: visible to /admin/places, releases and reservations, invisible
+          -- to the Места grid (which filters is_active = true) and counted by
+          -- assign_place_lines() into a capacity that same grid then calls broken.
+          is_active = true
   `);
 }
 

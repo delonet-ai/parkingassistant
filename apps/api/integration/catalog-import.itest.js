@@ -20,8 +20,9 @@ const { after, before, describe, it } = require('node:test');
 const xlsx = require('xlsx');
 
 const { startApi } = require('../testing/boot-api');
-const { getJson, postForm } = require('../testing/fixtures');
+const { getJson, postForm, postJson } = require('../testing/fixtures');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
+const { PROBLEM_REPORT_LIMIT } = require('../../../packages/domain/catalog-rows');
 
 // The sheet the real file uses, including the title row the importer skips and the
 // header spelling with its trailing spaces. 101/102/103 are one triple line, 110 is a
@@ -353,6 +354,96 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
 
     // 130 would have been created had this been an apply. It was not.
     assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
+  // A blank line is how the sheet groups places, not a row the operator forgot to fill in.
+  // Reporting them made the warning block one entry per separator and buried the two
+  // refusals that matter.
+  it('says nothing about the blank separator lines in the sheet', async () => {
+    const spaced = workbookBuffer([
+      ...HEADER,
+      ['G4', '101 передний', 'Закреплено', 'ИТ', 'Иванов'],
+      ['', '', '', '', ''],
+      ['G4', '110', 'Закреплено', 'Финансы', 'Кузнецов']
+    ]);
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(spaced, { dryRun: true })
+    );
+
+    assert.equal(status, 200, JSON.stringify(payload));
+    assert.deepEqual(payload.problems, []);
+    assert.equal(payload.problemsTotal, 0);
+    assert.equal(payload.import.placesStaged, 2);
+  });
+
+  // An .xlsx is a zip, so a sheet of junk rows well under the 10 MB upload limit can refuse
+  // more rows than any answer should carry. The list is cut, the count is not.
+  it('caps the refused rows it answers with and still reports how many there were', async () => {
+    const junk = [];
+
+    for (let index = 0; index < PROBLEM_REPORT_LIMIT + 1; index += 1) {
+      junk.push(['G4', 'итого', 'Закреплено', 'ИТ', '']);
+    }
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(workbookBuffer([...HEADER, ...junk]), { dryRun: true })
+    );
+
+    assert.equal(status, 400);
+    assert.equal(payload.problems.length, PROBLEM_REPORT_LIMIT);
+    assert.equal(payload.problemsTotal, PROBLEM_REPORT_LIMIT + 1);
+  });
+
+  // Archiving a slot clears `is_active` *and* sets `deleted_at`, and the unique index the
+  // import conflicts on is on `code` alone — so a re-import matched the archived row. It used
+  // to clear only `deleted_at`, leaving a place that `/admin/places`, releases and
+  // reservations could see while the Места grid (which filters `is_active`) could not, with
+  // `assign_place_lines()` counting it into a capacity the same grid then called broken.
+  it('revives an archived place whole, not half', async () => {
+    const lines = await getJson(api.baseUrl, '/admin/place-lines?floor=4');
+    const single = lines.payload.lines.find((line) => line.slots.some((slot) => slot.code === '110'));
+
+    assert.ok(single, JSON.stringify(lines.payload));
+
+    const archived = await postJson(api.baseUrl, '/admin/place-lines/archive', { lineId: single.lineId });
+
+    assert.equal(archived.status, 200, JSON.stringify(archived.payload));
+    assert.deepEqual(
+      archived.payload.archivedPlaces.map((place) => place.code),
+      ['110']
+    );
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(catalog, { dryRun: false })
+    );
+
+    assert.equal(status, 200, JSON.stringify(payload));
+
+    const revived = await db.query('select is_active, deleted_at from parking_places where code = $1', ['110']);
+
+    assert.equal(revived.rows[0].is_active, true);
+    assert.equal(revived.rows[0].deleted_at, null);
+
+    // Both halves of the system agree the place is back: the grid lists it again...
+    const after = await getJson(api.baseUrl, '/admin/place-lines?floor=4');
+
+    assert.ok(after.payload.lines.some((line) => line.slots.some((slot) => slot.code === '110')));
+
+    // ...and the line it stands in is not reported as a capacity mismatch.
+    const diagnostics = await getJson(api.baseUrl, '/admin/map-diagnostics');
+
+    assert.equal(diagnostics.status, 200);
+    assert.deepEqual(
+      diagnostics.payload.diagnostics.lineCapacityMismatch.filter((row) => row.code === single.code),
+      []
+    );
   });
 
   it('refuses the import to a caller with no session', async () => {

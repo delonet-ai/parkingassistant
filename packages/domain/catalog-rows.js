@@ -61,11 +61,19 @@ const REFUSAL_DUPLICATE_CODE = 'duplicate_code';
 // operator sees in Excel and therefore the number a problem has to quote.
 const FIRST_DATA_ROW = 3;
 
+// How many refused rows are reported back. The point of the list is to tell the operator which
+// lines to go and fix, and a list longer than this is no longer that: the API would answer with
+// megabytes of JSON and the UI would render one element per row. The count of what was dropped
+// is reported in full as `problemsTotal`, so nothing is hidden — only shortened.
+const PROBLEM_REPORT_LIMIT = 200;
+
 // Which line of the spreadsheet a row came from.
 //
-// Not the array index: `sheet_to_json` drops a fully blank row, so one empty separator line in
-// the sheet makes every index after it name the wrong line, and the operator is sent to edit a
-// row that is fine. The reader puts the real position on each object as a non-enumerable
+// Not the array index: `sheet_to_json` drops a row with no cells at all, so one empty separator
+// line in the sheet makes every index after it name the wrong line, and the operator is sent to
+// edit a row that is fine. (A separator line whose cells exist but are empty — a styled or
+// once-filled row — is *kept* by the reader, which is why `isBlankRow` has to recognize it
+// too.) The reader puts the real position on each object as a non-enumerable
 // `__rowNum__` (0-based, so row 3 of the sheet is 2); the index is the fallback for a caller
 // that hands over plain objects, which is what the tests do.
 function sheetRowOf(row, index) {
@@ -84,6 +92,14 @@ function readCells(row) {
   };
 }
 
+// A separator line, not a refusal. The catalog groups places with empty lines, and the reader
+// keeps the ones whose cells exist but hold nothing (`defval: ''`), so reporting them as
+// "уровень, место или статус не заполнены" would bury the two refusals that actually matter —
+// a duplicate code and a section heading — under one warning per blank line in the file.
+function isBlankRow(cells) {
+  return !cells.floor && !cells.place && !cells.status && !cells.department && !cells.assignee;
+}
+
 /**
  * One row, classified: either a place or the reason it is not one. Everything that reads the
  * catalog goes through here, so the rules that refuse a row exist once — a second copy is what
@@ -96,14 +112,18 @@ function readCells(row) {
 function classifyRow(row, source = {}) {
   const cells = readCells(row);
 
+  if (isBlankRow(cells)) {
+    return { cells, place: null, refusal: null, blank: true };
+  }
+
   // A row the catalog does not describe a place with: a missing level, place or status, or a
   // place cell with no digit in it (the sheet uses those for section headings).
   if (!cells.floor || !cells.place || !cells.status) {
-    return { cells, place: null, refusal: REFUSAL_MISSING_CELLS };
+    return { cells, place: null, refusal: REFUSAL_MISSING_CELLS, blank: false };
   }
 
   if (!/\d/.test(cells.place)) {
-    return { cells, place: null, refusal: REFUSAL_PLACE_WITHOUT_DIGITS };
+    return { cells, place: null, refusal: REFUSAL_PLACE_WITHOUT_DIGITS, blank: false };
   }
 
   const guest = isGuest(cells.status);
@@ -113,6 +133,7 @@ function classifyRow(row, source = {}) {
   return {
     cells,
     refusal: null,
+    blank: false,
     place: {
       code: normalizeCode(cells.place),
       title: cells.place,
@@ -141,6 +162,11 @@ function classifyRow(row, source = {}) {
  * the CLI has always done — and reported, because a sheet that names a place twice is an
  * editing mistake the operator should see rather than a silent choice between two rows.
  *
+ * Blank separator lines are skipped without a word — they are how the sheet is laid out, not a
+ * mistake in it. `problems` is capped at `PROBLEM_REPORT_LIMIT` entries while `problemsTotal`
+ * counts them all, so a wrong file with tens of thousands of unreadable rows is still reported
+ * as "that many" without an answer nobody can read.
+ *
  * Pure: no database, no file system, no environment. The CLI and `POST /admin/catalog-import`
  * both map a sheet through this, so neither can decide a row the other would not.
  */
@@ -148,12 +174,19 @@ function mapCatalogRows(rows, source = {}) {
   const places = [];
   const problems = [];
   const seenCodes = new Set();
+  let problemsTotal = 0;
 
   (rows || []).forEach((row, index) => {
     const sheetRow = sheetRowOf(row, index);
-    const { cells, place, refusal } = classifyRow(row, source);
+    const { cells, place, refusal, blank } = classifyRow(row, source);
 
     function reject(reason, code = null) {
+      problemsTotal += 1;
+
+      if (problems.length >= PROBLEM_REPORT_LIMIT) {
+        return;
+      }
+
       problems.push({
         row: sheetRow,
         reason,
@@ -162,6 +195,10 @@ function mapCatalogRows(rows, source = {}) {
         place: cells.place,
         status: cells.status
       });
+    }
+
+    if (blank) {
+      return;
     }
 
     if (!place) {
@@ -178,10 +215,11 @@ function mapCatalogRows(rows, source = {}) {
     places.push(place);
   });
 
-  return { places, problems };
+  return { places, problems, problemsTotal };
 }
 
 module.exports = {
+  PROBLEM_REPORT_LIMIT,
   REFUSAL_DUPLICATE_CODE,
   clean,
   inferPositionHint,

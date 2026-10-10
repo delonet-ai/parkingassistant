@@ -50,9 +50,19 @@ function readSheet(workbook, { sheetName, sourceFile = null } = {}) {
   }
 
   const rows = xlsx.utils.sheet_to_json(sheet, { range: 1, defval: '' });
-  const { places, problems } = mapCatalogRows(rows, { sourceFile, sourceSheet: resolved });
+  const { places, problems, problemsTotal } = mapCatalogRows(rows, {
+    sourceFile,
+    sourceSheet: resolved
+  });
 
-  return { sheetName: resolved, sourceFile, rowsRead: rows.length, places, problems };
+  return {
+    sheetName: resolved,
+    sourceFile,
+    rowsRead: rows.length,
+    places,
+    problems,
+    problemsTotal
+  };
 }
 
 /**

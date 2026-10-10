@@ -86,7 +86,11 @@ function createCatalogImportController({ services }) {
       return badRequest('No parking places were understood in this workbook', {
         sheet: sheet.sheetName,
         rowsRead: sheet.rowsRead,
-        problems: sheet.problems
+        problems: sheet.problems,
+        // `problems` is the first few hundred, `problemsTotal` is how many there were: a
+        // wrong file can refuse more rows than anyone can read, and the count is the part of
+        // that answer the operator actually needs.
+        problemsTotal: sheet.problemsTotal
       });
     }
 
@@ -108,7 +112,8 @@ function createCatalogImportController({ services }) {
             sourceFile: file.filename,
             rowsRead: sheet.rowsRead
           },
-          problems: sheet.problems
+          problems: sheet.problems,
+          problemsTotal: sheet.problemsTotal
         }
       };
     } catch (error) {

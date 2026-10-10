@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  PROBLEM_REPORT_LIMIT,
   clean,
   inferPositionHint,
   isGuest,
@@ -189,8 +190,57 @@ test('a repeated code keeps the first row and reports the second', () => {
 });
 
 test('an empty sheet maps to nothing at all, not to an error', () => {
-  assert.deepEqual(mapCatalogRows([], SOURCE), { places: [], problems: [] });
-  assert.deepEqual(mapCatalogRows(undefined, SOURCE), { places: [], problems: [] });
+  assert.deepEqual(mapCatalogRows([], SOURCE), { places: [], problems: [], problemsTotal: 0 });
+  assert.deepEqual(mapCatalogRows(undefined, SOURCE), { places: [], problems: [], problemsTotal: 0 });
+});
+
+// The sheet groups places with empty lines. `sheet_to_json` drops a row with no cells at all,
+// but keeps one whose cells exist and hold nothing — a styled or once-filled separator — and
+// reporting those as refusals buried the two that matter under one warning per blank line.
+test('a blank separator line is skipped without being reported as a refused row', () => {
+  const { places, problems, problemsTotal } = mapCatalogRows(
+    [
+      row({ place: '101' }),
+      row({ level: '', place: '', status: '', department: '', assignee: '' }),
+      // Whitespace is blank too: `clean` collapses it, so this is the same row to the mapping.
+      row({ level: ' ', place: '  ', status: '', department: ' ', assignee: '' }),
+      row({ place: '102' })
+    ],
+    SOURCE
+  );
+
+  assert.deepEqual(places.map((place) => place.code), ['101', '102']);
+  assert.deepEqual(problems, []);
+  assert.equal(problemsTotal, 0);
+});
+
+// A row missing only *some* cells is still a refusal: it was meant to be a place.
+test('a half-filled row is still reported, unlike a blank one', () => {
+  const { problems } = mapCatalogRows([row({ level: '', place: '110', assignee: '' })], SOURCE);
+
+  assert.deepEqual(
+    problems.map((problem) => problem.reason),
+    ['missing_required_cells']
+  );
+});
+
+// An .xlsx is a zip: 200 000 junk rows compress to about 8 MB, under the endpoint's 10 MB
+// limit. Reporting one entry per row would answer with tens of megabytes of JSON and ask the
+// UI to render an element for each. The count survives in full; the list is the first few.
+test('the reported problems are capped while the count is not', () => {
+  const rows = [];
+
+  for (let index = 0; index < PROBLEM_REPORT_LIMIT + 50; index += 1) {
+    rows.push(row({ place: 'итого' }));
+  }
+
+  const { places, problems, problemsTotal } = mapCatalogRows(rows, SOURCE);
+
+  assert.deepEqual(places, []);
+  assert.equal(problems.length, PROBLEM_REPORT_LIMIT);
+  assert.equal(problemsTotal, PROBLEM_REPORT_LIMIT + 50);
+  // The ones kept are the first ones, so the row numbers point at the top of the sheet.
+  assert.equal(problems[0].row, 3);
 });
 
 test('every mapped place carries the source labels the sheet was read under', () => {

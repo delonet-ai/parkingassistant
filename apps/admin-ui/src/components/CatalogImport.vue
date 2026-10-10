@@ -25,6 +25,7 @@ const fileInput = ref(null)
 const chosen = ref(null)
 const preview = ref(null)
 const problems = ref([])
+const problemsTotal = ref(0)
 const busy = ref('')
 
 function problemLabel(problem) {
@@ -35,6 +36,7 @@ function reset() {
   chosen.value = null
   preview.value = null
   problems.value = []
+  problemsTotal.value = 0
 
   if (fileInput.value) {
     fileInput.value.value = ''
@@ -47,6 +49,7 @@ function chooseFile(event) {
   // counts the operator never saw.
   preview.value = null
   problems.value = []
+  problemsTotal.value = 0
 }
 
 async function send(dryRun) {
@@ -69,6 +72,9 @@ async function send(dryRun) {
     // A refusal may still carry the rows it could not read — that is the answer to "why
     // nothing was understood", so it is rendered rather than swallowed with the toast.
     problems.value = (payload && payload.problems) || []
+    // The API reports the first few hundred refused rows and counts the rest: a wrong file can
+    // refuse more rows than this block could ever render, and the operator needs the number.
+    problemsTotal.value = (payload && payload.problemsTotal) || problems.value.length
 
     // `import` missing from an ok answer is not an import of nothing: it is an answer this
     // screen cannot read, and saying so beats rendering counts from `undefined`.
@@ -149,6 +155,10 @@ async function send(dryRun) {
       <div class="stack-tight">
         <ViText v-for="problem in problems" :key="`${problem.row}-${problem.reason}`" tag="span" variant="body-XS-wide">
           строка {{ problem.row }}: {{ problem.place || '—' }} — {{ problemLabel(problem) }}
+        </ViText>
+        <ViText v-if="problemsTotal > problems.length" tag="span" variant="body-XS-wide" class="muted">
+          …и ещё {{ problemsTotal - problems.length }} таких строк — показаны первые
+          {{ problems.length }}.
         </ViText>
       </div>
     </ViAlert>

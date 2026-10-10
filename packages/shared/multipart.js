@@ -79,7 +79,10 @@ function parseMultipartFormData(contentType, body) {
       })
     );
     const disposition = headers.get('content-disposition') || '';
-    const name = /name="([^"]+)"/.exec(disposition)?.[1];
+    // Anchored on a parameter boundary: `filename="…"` contains the literal `name="`, so an
+    // unanchored match keys a file part by its filename whenever the client sends `filename`
+    // first — which RFC 7578 allows and the field lookup would then miss.
+    const name = /(?:^|;|\s)name="([^"]+)"/.exec(disposition)?.[1];
     // The body was read as latin1 to keep file bytes intact; browsers send the filename
     // itself as UTF-8, so it is re-read as such — otherwise a Cyrillic name lands garbled.
     const rawFilename = /filename="([^"]*)"/.exec(disposition)?.[1];

@@ -163,6 +163,30 @@ describe('CatalogImport', () => {
     expect(buttonBy(wrapper, 'Применить')).toBeUndefined()
   })
 
+  it('says how many refused rows were left out of the list', async () => {
+    // The API caps the list it answers with; without the count the operator reads 200 refusals
+    // and concludes the rest of the file was fine.
+    stub([
+      {
+        status: 400,
+        body: {
+          status: 'error',
+          error: 'No parking places were understood in this workbook',
+          problems: [{ row: 3, reason: 'place_without_digits', code: null, floor: 'G4', place: 'итого', status: 'Закреплено' }],
+          problemsTotal: 1201
+        }
+      }
+    ])
+    const wrapper = mount(CatalogImport)
+
+    await choose(wrapper, 'wrong.xlsx')
+    await buttonBy(wrapper, 'Проверить файл').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('и ещё 1200')
+    expect(wrapper.text()).toContain('показаны первые 1')
+  })
+
   it('reports a network failure instead of leaving the button spinning', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new TypeError('Failed to fetch')

@@ -106,6 +106,26 @@ test('a missing boundary is refused rather than parsed as empty', () => {
   }
 });
 
+// RFC 7578 does not fix the order of the parameters, and `filename="x"` contains the literal
+// `name="` — so an unanchored match keyed this part by its filename and the field lookup for
+// `catalogFile` found nothing, answering 400 for a well-formed upload.
+test('a file part is keyed by its name even when filename comes first', () => {
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${BOUNDARY}\r\nContent-Disposition: form-data; filename="catalog.xlsx"; name="catalogFile"\r\n\r\n`,
+      'utf8'
+    ),
+    Buffer.from('PK\u0003\u0004', 'binary'),
+    Buffer.from(`\r\n--${BOUNDARY}--\r\n`, 'utf8')
+  ]);
+
+  const { fields, files } = parseMultipartFormData(`multipart/form-data; boundary=${BOUNDARY}`, body);
+
+  assert.deepEqual([...fields.keys()], []);
+  assert.deepEqual([...files.keys()], ['catalogFile']);
+  assert.equal(files.get('catalogFile').filename, 'catalog.xlsx');
+});
+
 test('a part without a name, and one without headers, are skipped', () => {
   const body = Buffer.concat([
     Buffer.from(`--${BOUNDARY}\r\nContent-Disposition: form-data\r\n\r\nnameless\r\n`, 'utf8'),
