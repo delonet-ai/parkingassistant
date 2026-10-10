@@ -1,7 +1,7 @@
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
-const xlsx = require('xlsx');
 const { Pool } = require('pg');
 
 // Arguments, a connection and a console — nothing else.
@@ -14,7 +14,7 @@ const { Pool } = require('pg');
 const {
   CatalogWorkbookError,
   createCatalogImportService,
-  readCatalogSheet
+  readCatalogBuffer
 } = require('../../apps/api/src/modules/catalog-import/service');
 const { REFUSAL_DUPLICATE_CODE } = require('../../packages/domain/catalog-rows');
 
@@ -32,8 +32,11 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-function readPlaces() {
-  const { places, problems } = readCatalogSheet(xlsx.readFile(sourcePath), {
+function readSheet() {
+  // The bytes, not the path: `readCatalogBuffer` is the one reader, so this script is refused
+  // for the same reasons the upload is — including the `PK` signature check, which the
+  // file-reading variant this replaced went around.
+  const sheet = readCatalogBuffer(fs.readFileSync(sourcePath), {
     sheetName,
     sourceFile: path.basename(sourcePath)
   });
@@ -41,31 +44,27 @@ function readPlaces() {
   // The script has always warned about duplicate codes and silently dropped rows it could not
   // read; both are now reported the same way, so the warning is a rendering of the problems
   // the upload endpoint answers with.
-  for (const problem of problems) {
+  for (const problem of sheet.problems) {
     if (problem.reason === REFUSAL_DUPLICATE_CODE) {
       console.warn(`Skipping duplicate place code ${problem.code}`);
     }
   }
 
-  return places;
+  return sheet;
 }
 
 async function main() {
-  const places = readPlaces();
+  const sheet = readSheet();
   const pool = new Pool({ connectionString: databaseUrl });
   const service = createCatalogImportService({ pool });
 
   try {
-    await service.importCatalog({
-      actor: ACTOR,
-      places,
-      source: { sourceFile: path.basename(sourcePath), sourceSheet: sheetName }
-    });
+    await service.importCatalog({ actor: ACTOR, sheet });
   } finally {
     await pool.end();
   }
 
-  console.log(`Imported parking places: ${places.length}`);
+  console.log(`Imported parking places: ${sheet.places.length}`);
 }
 
 main().catch((error) => {

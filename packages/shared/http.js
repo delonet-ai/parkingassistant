@@ -1,7 +1,17 @@
 'use strict';
 
+// `413` closes the connection, and that is not politeness: it is the one status answered
+// *before* the request body has been read, so the bytes still in flight would be parsed as the
+// next request on a keep-alive connection — the client then hangs waiting for an answer to a
+// request the server never saw.
 function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+  const headers = { 'content-type': 'application/json; charset=utf-8' };
+
+  if (statusCode === 413) {
+    headers.connection = 'close';
+  }
+
+  res.writeHead(statusCode, headers);
   res.end(JSON.stringify(payload));
 }
 

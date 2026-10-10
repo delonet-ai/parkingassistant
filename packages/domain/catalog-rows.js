@@ -61,6 +61,19 @@ const REFUSAL_DUPLICATE_CODE = 'duplicate_code';
 // operator sees in Excel and therefore the number a problem has to quote.
 const FIRST_DATA_ROW = 3;
 
+// Which line of the spreadsheet a row came from.
+//
+// Not the array index: `sheet_to_json` drops a fully blank row, so one empty separator line in
+// the sheet makes every index after it name the wrong line, and the operator is sent to edit a
+// row that is fine. The reader puts the real position on each object as a non-enumerable
+// `__rowNum__` (0-based, so row 3 of the sheet is 2); the index is the fallback for a caller
+// that hands over plain objects, which is what the tests do.
+function sheetRowOf(row, index) {
+  const recorded = row && row.__rowNum__;
+
+  return Number.isInteger(recorded) ? recorded + 1 : index + FIRST_DATA_ROW;
+}
+
 function readCells(row) {
   return {
     floor: clean(row['Уровень']),
@@ -72,9 +85,9 @@ function readCells(row) {
 }
 
 /**
- * One row, classified: either a place or the reason it is not one. `rowToPlace` and
- * `mapCatalogRows` both go through here so the rules that refuse a row exist once — a second
- * copy is what would let the CLI and the upload endpoint drift apart on the same file.
+ * One row, classified: either a place or the reason it is not one. Everything that reads the
+ * catalog goes through here, so the rules that refuse a row exist once — a second copy is what
+ * would let the CLI and the upload endpoint drift apart on the same file.
  *
  * `source` names where the row came from — `{ sourceFile, sourceSheet }` — and is recorded in
  * the place's metadata beside the raw cells, which is the only trace of the spreadsheet left
@@ -122,13 +135,6 @@ function classifyRow(row, source = {}) {
 }
 
 /**
- * The place a row describes, or `null` for a row that describes none.
- */
-function rowToPlace(row, source = {}) {
-  return classifyRow(row, source).place;
-}
-
-/**
  * A whole sheet: the places to write, and the rows that will not be written.
  *
  * Duplicate codes are dropped rather than merged — the first occurrence wins, which is what
@@ -141,10 +147,10 @@ function rowToPlace(row, source = {}) {
 function mapCatalogRows(rows, source = {}) {
   const places = [];
   const problems = [];
-  const firstRowOfCode = new Map();
+  const seenCodes = new Set();
 
   (rows || []).forEach((row, index) => {
-    const sheetRow = index + FIRST_DATA_ROW;
+    const sheetRow = sheetRowOf(row, index);
     const { cells, place, refusal } = classifyRow(row, source);
 
     function reject(reason, code = null) {
@@ -163,12 +169,12 @@ function mapCatalogRows(rows, source = {}) {
       return;
     }
 
-    if (firstRowOfCode.has(place.code)) {
+    if (seenCodes.has(place.code)) {
       reject(REFUSAL_DUPLICATE_CODE, place.code);
       return;
     }
 
-    firstRowOfCode.set(place.code, sheetRow);
+    seenCodes.add(place.code);
     places.push(place);
   });
 
@@ -182,6 +188,5 @@ module.exports = {
   isGuest,
   mapCatalogRows,
   normalizeCode,
-  normalizeFloor,
-  rowToPlace
+  normalizeFloor
 };

@@ -4,7 +4,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { Readable } = require('node:stream');
 
-const { parseMultipartFormData, readRawBody } = require('./multipart');
+const {
+  MultipartFormatError,
+  PayloadTooLargeError,
+  parseMultipartFormData,
+  readRawBody
+} = require('./multipart');
 
 const BOUNDARY = '----pa-test-boundary';
 
@@ -81,12 +86,15 @@ test('a quoted boundary and a trailing parameter are both accepted', () => {
 });
 
 test('a missing boundary is refused rather than parsed as empty', () => {
-  assert.throws(
-    () => parseMultipartFormData('multipart/form-data', Buffer.alloc(0)),
-    /boundary is missing/
-  );
-  assert.throws(() => parseMultipartFormData('', Buffer.alloc(0)), /boundary is missing/);
-  assert.throws(() => parseMultipartFormData(undefined, Buffer.alloc(0)), /boundary is missing/);
+  // The type, not the sentence: the catalog upload maps these two errors to different status
+  // codes, so a reworded message must not be able to move a 413 to a 400.
+  for (const contentType of ['multipart/form-data', '', undefined]) {
+    assert.throws(() => parseMultipartFormData(contentType, Buffer.alloc(0)), (error) => {
+      assert.ok(error instanceof MultipartFormatError);
+      assert.match(error.message, /boundary is missing/);
+      return true;
+    });
+  }
 });
 
 test('a part without a name, and one without headers, are skipped', () => {
@@ -110,10 +118,12 @@ test('readRawBody concatenates the stream', async () => {
 });
 
 test('readRawBody refuses a body over the limit instead of buffering it', async () => {
-  await assert.rejects(
-    readRawBody(Readable.from([Buffer.alloc(8), Buffer.alloc(8)]), 10),
-    /too large/
-  );
+  await assert.rejects(readRawBody(Readable.from([Buffer.alloc(8), Buffer.alloc(8)]), 10), (error) => {
+    assert.ok(error instanceof PayloadTooLargeError);
+    assert.ok(!(error instanceof MultipartFormatError), 'the two faults must stay distinguishable');
+    assert.equal(error.limitBytes, 10);
+    return true;
+  });
 });
 
 test('the ESM admin UI server sees both named exports', async () => {
@@ -124,4 +134,6 @@ test('the ESM admin UI server sees both named exports', async () => {
 
   assert.equal(typeof imported.parseMultipartFormData, 'function');
   assert.equal(typeof imported.readRawBody, 'function');
+  assert.equal(typeof imported.PayloadTooLargeError, 'function');
+  assert.equal(typeof imported.MultipartFormatError, 'function');
 });

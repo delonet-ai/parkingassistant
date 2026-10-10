@@ -183,9 +183,19 @@ describe('audit actor (integration)', { skip: skipWithoutDatabase() }, () => {
 
     assert.equal(status, 200, JSON.stringify(payload));
 
-    const row = await auditRow('job_rebuild_conflicts_success', null);
-    assert.equal(row.actor_service, 'admin-ui');
-    assert.equal(row.actor_auth_user_id, api.operator.user.id);
+    // By the run's id, like the case below: both write this action, and "the latest row" would
+    // make each case's answer depend on the order the file happens to declare them in.
+    const audit = await db.query(
+      `
+        select actor_service, actor_auth_user_id
+        from audit_logs
+        where action = 'job_rebuild_conflicts_success' and metadata->>'jobRunId' = $1
+      `,
+      [payload.jobRun.id]
+    );
+    assert.equal(audit.rows.length, 1);
+    assert.equal(audit.rows[0].actor_service, 'admin-ui');
+    assert.equal(audit.rows[0].actor_auth_user_id, api.operator.user.id);
 
     const run = await db.query(
       'select actor_service from job_runs where id = $1',

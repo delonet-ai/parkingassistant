@@ -9,8 +9,7 @@ const {
   isGuest,
   mapCatalogRows,
   normalizeCode,
-  normalizeFloor,
-  rowToPlace
+  normalizeFloor
 } = require('./catalog-rows');
 
 // The sheet's own header spelling, trailing spaces included — the importer reads these keys
@@ -28,8 +27,19 @@ function row({ level = 'G4', place = '101', status = 'Закреплено', dep
 
 const SOURCE = { sourceFile: 'parking-catalog.xlsx', sourceSheet: 'Лист1' };
 
+/**
+ * The place one row maps to, or `null` for a row that maps to none.
+ *
+ * Through `mapCatalogRows`, because that is the only entry point production has: a helper that
+ * classified a row on its own would be a second path these assertions could pass against while
+ * the importers took the first.
+ */
+function placeOf(cells, source = SOURCE) {
+  return mapCatalogRows([row(cells)], source).places[0] ?? null;
+}
+
 test('a closed-assignment row becomes a regular place', () => {
-  const place = rowToPlace(row({ place: '110', department: 'Финансы', assignee: 'Кузнецов' }), SOURCE);
+  const place = placeOf({ place: '110', department: 'Финансы', assignee: 'Кузнецов' });
 
   assert.deepEqual(place, {
     code: '110',
@@ -51,7 +61,7 @@ test('a closed-assignment row becomes a regular place', () => {
 });
 
 test('a guest row becomes the rotatable pool with the first priority rank', () => {
-  const place = rowToPlace(row({ place: '120', status: 'Гостевое', assignee: '' }), SOURCE);
+  const place = placeOf({ place: '120', status: 'Гостевое', assignee: '' });
 
   assert.equal(place.placeRole, 'rotatable');
   assert.equal(place.guestPriorityRank, 1);
@@ -59,9 +69,9 @@ test('a guest row becomes the rotatable pool with the first priority rank', () =
 });
 
 test('a position word becomes a hint and is then discarded', () => {
-  const front = rowToPlace(row({ place: '101 передний' }), SOURCE);
-  const middle = rowToPlace(row({ place: '102 средний' }), SOURCE);
-  const rear = rowToPlace(row({ place: '103 задний' }), SOURCE);
+  const front = placeOf({ place: '101 передний' });
+  const middle = placeOf({ place: '102 средний' });
+  const rear = placeOf({ place: '103 задний' });
 
   assert.deepEqual(
     [front.linePositionHint, middle.linePositionHint, rear.linePositionHint],
@@ -76,7 +86,7 @@ test('a position word becomes a hint and is then discarded', () => {
 });
 
 test('a row with no position word has no hint and still becomes a place', () => {
-  const place = rowToPlace(row({ place: '110' }), SOURCE);
+  const place = placeOf({ place: '110' });
 
   assert.equal(place.linePositionHint, null);
   assert.equal(place.code, '110');
@@ -84,22 +94,22 @@ test('a row with no position word has no hint and still becomes a place', () => 
 
 test('rows the catalog does not describe a place with are refused', () => {
   // A section heading: a place cell with no digit in it.
-  assert.equal(rowToPlace(row({ place: 'Резерв' }), SOURCE), null);
-  assert.equal(rowToPlace(row({ place: '' }), SOURCE), null);
-  assert.equal(rowToPlace(row({ level: '' }), SOURCE), null);
-  assert.equal(rowToPlace(row({ status: '' }), SOURCE), null);
-  assert.equal(rowToPlace({}, SOURCE), null);
+  assert.equal(placeOf({ place: 'Резерв' }), null);
+  assert.equal(placeOf({ place: '' }), null);
+  assert.equal(placeOf({ level: '' }), null);
+  assert.equal(placeOf({ status: '' }), null);
+  assert.equal(mapCatalogRows([{}], SOURCE).places[0] ?? null, null);
 });
 
 test('the source labels are recorded, and are null when the caller names no file', () => {
-  const place = rowToPlace(row(), {});
+  const place = placeOf({}, {});
 
   assert.equal(place.metadata.sourceFile, null);
   assert.equal(place.metadata.sourceSheet, null);
 });
 
 test('whitespace in a cell is collapsed, not preserved', () => {
-  const place = rowToPlace(row({ place: ' 101   передний ', level: ' G4 ' }), SOURCE);
+  const place = placeOf({ place: ' 101   передний ', level: ' G4 ' });
 
   assert.equal(place.title, '101 передний');
   assert.equal(place.floorLabel, '4');
@@ -188,4 +198,29 @@ test('every mapped place carries the source labels the sheet was read under', ()
 
   assert.equal(places[0].metadata.sourceFile, 'parking-catalog.xlsx');
   assert.equal(places[0].metadata.sourceSheet, 'Лист1');
+});
+
+// The one thing the row number cannot be derived from is the array index: `sheet_to_json`
+// omits a fully blank row, so the reader records the sheet's own position on each object and
+// the mapping quotes that. A problem that named the wrong line would send the operator to edit
+// a row that is fine.
+test('a problem quotes the row of the sheet, not the position in the array', () => {
+  function atSheetRow(sheetRow, cells) {
+    // `__rowNum__` is 0-based and non-enumerable, exactly as the reader leaves it.
+    return Object.defineProperty(row(cells), '__rowNum__', { value: sheetRow - 1 });
+  }
+
+  const { places, problems } = mapCatalogRows(
+    [atSheetRow(3, { place: '101' }), atSheetRow(7, { place: 'Резерв' }), atSheetRow(9, { place: '101' })],
+    SOURCE
+  );
+
+  assert.deepEqual(places.map((place) => place.code), ['101']);
+  assert.deepEqual(
+    problems.map((problem) => [problem.row, problem.reason]),
+    [
+      [7, 'place_without_digits'],
+      [9, 'duplicate_code']
+    ]
+  );
 });

@@ -278,6 +278,45 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
     assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
   });
 
+  // A real zip that is not a workbook gets past the `PK` signature check, so it is `xlsx.read`
+  // itself that has to refuse it. Without the try/catch around that call this is a 500 quoting
+  // the library, and the suite's "not a workbook" case above would not notice: it stops at the
+  // signature check, and both refusals start with the same sentence.
+  it('refuses a zip that is not a workbook, without leaking the parser’s error as a 500', async () => {
+    const zipButNotAWorkbook = Buffer.concat([Buffer.from('PK\u0003\u0004', 'binary'), Buffer.alloc(512, 7)]);
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(zipButNotAWorkbook, { dryRun: true, filename: 'archive.xlsx' })
+    );
+
+    assert.equal(status, 400);
+    assert.match(payload.error, /Workbook could not be read/);
+    assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
+  // 413 and 400 are different answers to different mistakes, and the controller tells them
+  // apart by the type the shared parser throws. An operator told "malformed" about a file that
+  // is merely too big goes looking for the wrong problem.
+  it('answers 413 for a body past the upload limit, not 400', async () => {
+    // Deliberately not a FormData: `readRawBody` refuses this before the parser ever sees it,
+    // which is the branch under test. The session travels the same way.
+    const oversized = new Uint8Array(11 * 1024 * 1024);
+
+    const { status, payload } = await postForm(api.baseUrl, '/admin/catalog-import', oversized);
+
+    assert.equal(status, 413);
+    assert.match(payload.error, /too large/i);
+  });
+
+  it('answers 400 for a body that is not a multipart form at all', async () => {
+    const { status, payload } = await postForm(api.baseUrl, '/admin/catalog-import', new Uint8Array([1, 2, 3]));
+
+    assert.equal(status, 400);
+    assert.match(payload.error, /boundary is missing/);
+  });
+
   it('refuses a workbook that has no sheet by that name', async () => {
     const { status, payload } = await postForm(
       api.baseUrl,

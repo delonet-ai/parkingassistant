@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { ViAlert, ViButton, ViText } from '@vi-frontend/vision-ui'
 
+import { api } from '../api'
 import { loadDay, notify } from '../store'
 
 // The Excel catalog, imported from the browser instead of from a shell on the server.
@@ -60,28 +61,20 @@ async function send(dryRun) {
     form.append('catalogFile', chosen.value)
     form.append('dryRun', dryRun ? 'true' : 'false')
 
-    let response = null
-
-    try {
-      response = await fetch('/api/admin/catalog-import', {
-        method: 'POST',
-        body: form,
-        credentials: 'same-origin'
-      })
-    } catch (error) {
-      notify('error', `сеть недоступна: ${error.message}`)
-      return
-    }
-
-    const payload = await response.json().catch(() => null)
+    // Through api.js, not `fetch`: a session that expired between choosing the file and
+    // applying it has to drop to the login screen, the same as every other refused call.
+    const result = await api.postForm('/admin/catalog-import', form)
+    const payload = result.data
 
     // A refusal may still carry the rows it could not read — that is the answer to "why
     // nothing was understood", so it is rendered rather than swallowed with the toast.
     problems.value = (payload && payload.problems) || []
 
-    if (!response.ok) {
+    // `import` missing from an ok answer is not an import of nothing: it is an answer this
+    // screen cannot read, and saying so beats rendering counts from `undefined`.
+    if (!result.ok || !payload.import) {
       preview.value = null
-      notify('error', (payload && payload.error) || `Не удалось загрузить каталог (${response.status})`)
+      notify('error', result.error || 'Сервер не сообщил, что именно изменится.')
       return
     }
 

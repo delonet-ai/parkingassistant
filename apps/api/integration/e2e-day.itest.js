@@ -536,6 +536,19 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
       assert.ok(actions.includes(action), `the day's audit trail must contain ${action}`);
     }
 
+    // The import of step 1 ran as the CLI, and the journal has to say so: the same service
+    // now answers `POST /admin/catalog-import` for operators, and `auditActor` falls back to
+    // `admin-ui` for a caller that names nobody — so dropping the script's own label would
+    // make a scheduled import indistinguishable from someone's upload, silently.
+    const imported = await db.query(
+      `select actor_service, actor_auth_user_id
+       from audit_logs
+       where action = 'parking_catalog_imported'`
+    );
+    assert.equal(imported.rows.length, 1);
+    assert.equal(imported.rows[0].actor_service, 'catalog_import');
+    assert.equal(imported.rows[0].actor_auth_user_id, null);
+
     // The refused archive rolled back and left nothing behind it.
     assert.equal(
       actions.filter((action) => action === 'place_line_archived').length,

@@ -103,7 +103,10 @@ function createQueueService({ pool, guestReserveMinimum }) {
             movementDate: queueDate,
             toParkingPlaceId: place.parking_place_id,
             movementType: 'queue_assignment',
-            reason: `Assigned from queue position #${entry.queue_position}`
+            reason: `Assigned from queue position #${entry.queue_position}`,
+            // Null for the scheduler's own run, which is the honest answer: nobody pressed
+            // anything. An operator who started the job from the Журнал tab is named.
+            actorAuthUserId: auditActor(actor).actorAuthUserId
           });
 
           assignments.push({

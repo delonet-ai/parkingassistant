@@ -100,7 +100,8 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
         movementDate: requestDate,
         toParkingPlaceId: place.parking_place_id,
         movementType: 'guest_assignment',
-        reason: `Guest assignment hosted by ${host.display_name}`
+        reason: `Guest assignment hosted by ${host.display_name}`,
+        actorAuthUserId: auditActor(actor).actorAuthUserId
       });
 
       await auditRepository.insertAuditLog(repo, {
@@ -190,7 +191,8 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
         movementDate: requestDate,
         toParkingPlaceId: place.parking_place_id,
         movementType: 'guest_assignment',
-        reason: `Guest assignment hosted by ${guestRequest.host_display_name}`
+        reason: `Guest assignment hosted by ${guestRequest.host_display_name}`,
+        actorAuthUserId: auditActor(actor).actorAuthUserId
       });
 
       await auditRepository.insertAuditLog(repo, {

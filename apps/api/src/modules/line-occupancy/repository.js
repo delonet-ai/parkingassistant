@@ -182,22 +182,35 @@ async function listOccupancyForUser(db, userId) {
   );
 }
 
-// A moved reservation no longer stands where its holder reported standing, so the report
-// tied to the old place goes; the holder reports the new position afresh.
-async function deleteOccupancyForReservationPlace(db, { reservationId, parkingPlaceId }) {
+// A moved reservation no longer stands where its holder reported standing, so the report goes
+// and the holder reports the new position afresh.
+//
+// The subject, not the old place: a subject has at most one position per date (`setLineOccupancy`
+// clears its own before inserting), while the row's `parking_place_id` and `reservation_id` name
+// the place that was *reported* — which need not be the subject's own. The reservation link is
+// matched as well so a row written for the reservation but not resolvable to its subject still
+// goes.
+async function deleteOccupancyForMovedReservation(
+  db,
+  { reservationId, occupancyDate, subjectType, userId, guestParkingRequestId }
+) {
   return db.queryMany(
     `
       delete from line_occupancy
-      where reservation_id = $1
-        and parking_place_id = $2
+      where occupancy_date = $2::date
+        and (
+          reservation_id = $1
+          or ($3 = 'employee' and subject_type = 'employee' and user_id = $4)
+          or ($3 = 'guest' and subject_type = 'guest' and guest_parking_request_id = $5)
+        )
       returning id
     `,
-    [reservationId, parkingPlaceId]
+    [reservationId, occupancyDate, subjectType, userId, guestParkingRequestId]
   );
 }
 
 module.exports = {
-  deleteOccupancyForReservationPlace,
+  deleteOccupancyForMovedReservation,
   deleteOccupancyForSubject,
   listOccupancyForUser,
   findEmployeeOccupancy,

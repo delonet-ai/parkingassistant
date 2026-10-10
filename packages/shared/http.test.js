@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const http = require('node:http');
+
 const { readFormBody, readJsonBody, sendJson } = require('./http');
 
 function createMockRes() {
@@ -67,4 +69,24 @@ test('readFormBody decodes percent-encoded values', async () => {
 test('readFormBody returns empty params for an empty body', async () => {
   const params = await readFormBody(requestFrom(''));
   assert.equal([...params].length, 0);
+});
+
+test('a 413 closes the connection, because the request body was never read', async () => {
+  const server = http.createServer((req, res) => {
+    sendJson(res, 413, { status: 'error', error: 'Request body is too large' });
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/`, {
+      method: 'POST',
+      body: 'x'
+    });
+
+    assert.equal(response.status, 413);
+    assert.equal(response.headers.get('connection'), 'close');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

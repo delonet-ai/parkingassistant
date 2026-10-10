@@ -495,8 +495,56 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       });
 
       assert.equal(status, 200);
-      const left = await db.query('select count(*)::int as count from line_occupancy where reservation_id = $1', [reservationId]);
+      const left = await db.query(
+        'select count(*)::int as count from line_occupancy where occupancy_date = $1::date and user_id = $2',
+        [date, employee.id]
+      );
       assert.equal(left.rows[0].count, 0);
+    });
+
+    // The row the move has to find is not always the one that names it. `setLineOccupancy`
+    // links an occupancy row to the reservation standing on the *reported* place, so an
+    // employee who holds 101 and reports standing in a rear slot leaves a row with another
+    // place and no reservation id at all. A clearing keyed on the reservation link would miss
+    // it, and `(occupancy_date, parking_place_id)` would keep that slot locked all day.
+    it('clears a position reported at a place other than the reservation’s own', async () => {
+      const date = '2026-10-09';
+      const { employee, toPlace, reservationId } = await reservationToMove(date);
+      const lineGroup = await fixtures.insertLineGroup({ capacity: 2 });
+      const rearPlace = await fixtures.insertPlace({ lineGroupId: lineGroup.id, linePositionHint: 2 });
+
+      await fixtures.insertLineOccupancy({
+        date,
+        lineGroupId: lineGroup.id,
+        parkingPlaceId: rearPlace.id,
+        position: 2,
+        userId: employee.id
+      });
+
+      const planted = await db.query(
+        'select reservation_id from line_occupancy where occupancy_date = $1::date and user_id = $2',
+        [date, employee.id]
+      );
+      assert.equal(planted.rows.length, 1);
+      assert.equal(planted.rows[0].reservation_id, null, 'the precondition is a row with no reservation link');
+
+      const { status } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id
+      });
+
+      assert.equal(status, 200);
+      const left = await db.query(
+        'select count(*)::int as count from line_occupancy where occupancy_date = $1::date and user_id = $2',
+        [date, employee.id]
+      );
+      assert.equal(left.rows[0].count, 0, 'the vacated slot must not stay occupied by someone who left');
+
+      const audit = await db.query(
+        "select metadata from audit_logs where action = 'reservation_moved' and entity_id = $1",
+        [reservationId]
+      );
+      assert.equal(audit.rows[0].metadata.clearedOccupancyCount, 1);
     });
 
     // Every refusal must leave the reservation where it was and add no movement.
@@ -581,6 +629,86 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       assert.equal(status, 409);
       assert.equal(payload.blocker.type, 'not_released');
       await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    it('refuses a reservation that is no longer active', async () => {
+      const date = '2026-10-10';
+      const { fromPlace, toPlace, reservationId } = await reservationToMove(date);
+
+      const canceled = await postJson(api.baseUrl, '/admin/reservations/cancel', { reservationId });
+      assert.equal(canceled.status, 200);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id
+      });
+
+      // 409, not the 500 the repository's `and status = 'active'` would produce if the guard
+      // went away: the update would match no row and the controller would read `id` off it.
+      assert.equal(status, 409);
+      assert.match(payload.error, /Only active reservations can be moved/);
+
+      const row = await placeOf(reservationId);
+      assert.equal(row.parking_place_id, fromPlace.id);
+      assert.equal(row.status, 'canceled');
+      assert.equal((await movementsOf(reservationId)).length, 1);
+    });
+
+    it('refuses a move to the place the reservation already stands on', async () => {
+      const date = '2026-10-11';
+      const { fromPlace, reservationId } = await reservationToMove(date);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: fromPlace.id
+      });
+
+      // Without this guard the row would violate parking_movements' own
+      // `from_parking_place_id <> to_parking_place_id` check and answer 500.
+      assert.equal(status, 409);
+      assert.match(payload.error, new RegExp(`already on place ${fromPlace.code}`));
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    it('refuses a target place that does not exist', async () => {
+      const date = '2026-10-12';
+      const { fromPlace, reservationId } = await reservationToMove(date);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: '00000000-0000-4000-8000-00000000beef'
+      });
+
+      assert.equal(status, 404);
+      assert.match(payload.error, /Target parking place not found/);
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    // The parking rule inside the move: the owner of a released place must not be put back
+    // onto the place they gave away for the day. Nothing else in the suite covers it.
+    it('refuses moving the release owner onto their own released place', async () => {
+      const date = '2026-10-13';
+      const { place: ownPlace, owner } = await fixtures.insertReleasedPlace({ date });
+      const { place: otherPlace } = await fixtures.insertReleasedPlace({ date });
+      await fixtures.insertReleasedPlace({ date });
+
+      // The owner of `ownPlace` is holding someone else's released place for the day.
+      const created = await postJson(api.baseUrl, '/admin/reservations/manual', {
+        userId: owner.id,
+        parkingPlaceId: otherPlace.id,
+        reservationDate: date
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.payload));
+      const reservationId = created.payload.reservation.id;
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: ownPlace.id
+      });
+
+      assert.equal(status, 409);
+      assert.match(payload.error, /owner cannot be moved onto the same released place/);
+      await assertNothingMoved(reservationId, otherPlace);
     });
 
     it('refuses an unknown reservation and a malformed body', async () => {

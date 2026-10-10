@@ -1,6 +1,10 @@
 'use strict';
 
-const { parseMultipartFormData, readRawBody } = require('../../../../../packages/shared/multipart');
+const {
+  PayloadTooLargeError,
+  parseMultipartFormData,
+  readRawBody
+} = require('../../../../../packages/shared/multipart');
 const { requestActor } = require('../../support/actor');
 const { internalError } = require('../../support/http-errors');
 const { CatalogWorkbookError, readCatalogBuffer } = require('./service');
@@ -43,9 +47,10 @@ function createCatalogImportController({ services }) {
       form = parseMultipartFormData(context.req.headers['content-type'] || '', body);
     } catch (error) {
       // Both failures are the request's fault and both quote nothing but their own message:
-      // a body over the limit, or a content type that is not multipart.
+      // a body over the limit, or a content type that is not multipart. Told apart by type —
+      // on the message, rewording the shared parser would turn a 413 into "malformed".
       return {
-        statusCode: error.message === 'Request body is too large' ? 413 : 400,
+        statusCode: error instanceof PayloadTooLargeError ? 413 : 400,
         payload: {
           status: 'error',
           service: 'api',
@@ -89,8 +94,7 @@ function createCatalogImportController({ services }) {
       const summary = await service.importCatalog({
         actor: requestActor(context),
         dryRun,
-        places: sheet.places,
-        source: { sourceFile: file.filename, sourceSheet: sheet.sheetName }
+        sheet
       });
 
       return {

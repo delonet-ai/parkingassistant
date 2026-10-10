@@ -1,5 +1,6 @@
-// The only place this app talks to the backend. Everything goes through the same-origin
-// /api prefix: in production this app's own server proxies it, in dev vite does.
+// The only place this app talks to the backend, JSON and multipart alike. Everything goes
+// through the same-origin /api prefix: in production this app's own server proxies it, in dev
+// vite does.
 //
 // No parking rule is ever evaluated here. The API decides, the UI renders what it answered —
 // including the slot statuses and the warnings that come back from a write.
@@ -61,9 +62,55 @@ async function request(method, path, body) {
   return { ok: true, status: response.status, data, error: null }
 }
 
+/**
+ * A multipart write: the floor-plan and catalog uploads, whose bodies the browser assembles.
+ *
+ * Here rather than in the components, so the 401 that ends a session drops to the login screen
+ * from an upload too. The content type is deliberately not set: `fetch` derives it from the
+ * FormData together with the boundary the body actually uses.
+ */
+async function requestForm(path, form) {
+  let response = null
+
+  try {
+    response = await fetch(`${BASE}${path}`, { method: 'POST', body: form, credentials: 'same-origin' })
+  } catch (error) {
+    return { ok: false, status: 0, data: null, error: `сеть недоступна: ${error.message}` }
+  }
+
+  let data = null
+  try {
+    data = await response.json()
+  } catch {
+    data = null
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 && unauthorizedHandler) {
+      unauthorizedHandler()
+    }
+
+    return {
+      ok: false,
+      status: response.status,
+      data,
+      error: (data && data.error) || `HTTP ${response.status}`
+    }
+  }
+
+  // An ok answer with no JSON body is not an answer this app can read: a proxy or a gateway
+  // replying 200 with HTML would otherwise be reported as a success with no counts.
+  if (!data) {
+    return { ok: false, status: response.status, data: null, error: 'Сервер ответил не JSON.' }
+  }
+
+  return { ok: true, status: response.status, data, error: null }
+}
+
 export const api = {
   get: (path) => request('GET', path),
-  post: (path, body) => request('POST', path, body)
+  post: (path, body) => request('POST', path, body),
+  postForm: (path, form) => requestForm(path, form)
 }
 
 export function query(params) {

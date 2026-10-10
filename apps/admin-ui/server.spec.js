@@ -196,6 +196,55 @@ describe('admin-ui floor-plan upload', () => {
     expect(received).toHaveLength(0)
   })
 
+  // Both are mistakes in the request, and the generic handler would report either as
+  // "Internal server error" — which tells the operator to call someone instead of sending a
+  // smaller file.
+  it('refuses a body past the limit with 413 rather than a server error', async () => {
+    received = []
+
+    const response = await fetch(`${baseUrl}/api/admin/map-backgrounds`, {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+      body: multipartBody([
+        { name: 'mapCode', value: 'g4' },
+        { name: 'mapFile', filename: 'plan.png', value: Buffer.alloc(13 * 1024 * 1024) }
+      ])
+    })
+
+    expect(response.status).toBe(413)
+    expect((await response.json()).error).toMatch(/МБ/)
+    expect(received).toHaveLength(0)
+  })
+
+  it('refuses a body that is not a multipart form with 400 rather than a server error', async () => {
+    received = []
+
+    const response = await fetch(`${baseUrl}/api/admin/map-backgrounds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mapCode: 'g4' })
+    })
+
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toMatch(/форма/)
+    expect(received).toHaveLength(0)
+  })
+
+  it('refuses a proxied body past the limit with 413, before the API is contacted', async () => {
+    received = []
+
+    const response = await fetch(`${baseUrl}/api/admin/catalog-import`, {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}` },
+      body: Buffer.alloc(13 * 1024 * 1024)
+    })
+
+    expect(response.status).toBe(413)
+    // The point of the limit: this process answers without having held the body for the API,
+    // which has not even been asked whether the caller has a session.
+    expect(received).toHaveLength(0)
+  })
+
   it('refuses a file type no floor plan may have', async () => {
     received = []
 

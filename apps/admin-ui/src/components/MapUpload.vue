@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { ViButton, ViText } from '@vi-frontend/vision-ui'
 
+import { api } from '../api'
 import { loadDay, notify, state } from '../store'
 
 const busy = ref(null)
@@ -29,11 +30,12 @@ async function upload(map, event) {
     form.append('floorLabel', map.floorLabel)
     form.append('mapFile', file)
 
-    const response = await fetch('/api/admin/map-backgrounds', { method: 'POST', body: form })
-    const payload = await response.json().catch(() => null)
+    // Through api.js for the same reason the catalog import is: an expired session must end
+    // on the login screen rather than in a toast.
+    const result = await api.postForm('/admin/map-backgrounds', form)
 
-    if (!response.ok) {
-      notify('error', (payload && payload.error) || `Не удалось загрузить подложку (${response.status})`)
+    if (!result.ok) {
+      notify('error', result.error || 'Не удалось загрузить подложку.')
       return
     }
 

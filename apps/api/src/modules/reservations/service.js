@@ -115,7 +115,8 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         movementDate: reservationDate,
         toParkingPlaceId: parkingPlaceId,
         movementType: 'manual_reassign',
-        reason: reason || 'Manual admin assignment'
+        reason: reason || 'Manual admin assignment',
+        actorAuthUserId: auditActor(actor).actorAuthUserId
       });
 
       await auditRepository.insertAuditLog(repo, {
@@ -256,7 +257,7 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         });
       }
 
-      const holder = await repository.findActiveHolderOnPlaceDate(repo, {
+      const holder = await repository.findActiveReservationOnPlaceDate(repo, {
         parkingPlaceId: toParkingPlaceId,
         reservationDate
       });
@@ -293,9 +294,18 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
 
       const moved = await repository.moveReservation(repo, { reservationId, toParkingPlaceId });
 
-      const clearedOccupancy = await lineOccupancyRepository.deleteOccupancyForReservationPlace(repo, {
+      // The holder's reported position for the day goes with them: they no longer stand where
+      // they said they did. Keyed on the subject and the date rather than on the old place,
+      // because `line_occupancy.reservation_id` names the reservation that stood on the
+      // *reported* place — null, or another one, whenever the holder reported standing
+      // somewhere other than their own place — and a row missed here would keep the vacated
+      // slot locked by the (occupancy_date, parking_place_id) unique index.
+      const clearedOccupancy = await lineOccupancyRepository.deleteOccupancyForMovedReservation(repo, {
         reservationId,
-        parkingPlaceId: reservation.parking_place_id
+        occupancyDate: reservationDate,
+        subjectType: reservation.guest_parking_request_id ? 'guest' : 'employee',
+        userId: reservation.user_id,
+        guestParkingRequestId: reservation.guest_parking_request_id
       });
 
       await repository.insertMovement(repo, {

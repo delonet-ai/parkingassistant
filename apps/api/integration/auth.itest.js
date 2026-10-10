@@ -19,6 +19,11 @@ const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/d
 // Every route the composed table scopes to a role, read from the table rather than listed
 // here. The role guard is only worth as much as its coverage, and a seventh account route
 // added next month would otherwise be refused by nothing this suite looks at.
+//
+// Pattern routes included, and that is not hypothetical tidiness: reading only `exactRoutes`
+// is the exact hole `route-access.test.js` was rewritten to close, where a pattern route added
+// later went unprobed for months. A role-scoped pattern route would land here as its source,
+// which no literal path can match — so this suite fails and has to say what it probes.
 function roleScopedRoutes() {
   const { modules } = createModules({
     appTimezone: 'Europe/Moscow',
@@ -28,10 +33,12 @@ function roleScopedRoutes() {
     startedAt: '2026-01-01T00:00:00.000Z'
   });
   const table = buildRouteTable(modules);
+  const scoped = (route) => Array.isArray(route.roles) && route.roles.length > 0;
 
-  return [...table.exactRoutes.entries()]
-    .filter(([, route]) => Array.isArray(route.roles) && route.roles.length > 0)
-    .map(([key]) => key);
+  return [
+    ...[...table.exactRoutes.entries()].filter(([, route]) => scoped(route)).map(([key]) => key),
+    ...table.patternRoutes.filter(scoped).map((route) => `${route.method} ${route.pattern.source}`)
+  ];
 }
 
 const GOOD_PASSWORD = 'first-run-password';

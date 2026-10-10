@@ -162,4 +162,37 @@ describe('CatalogImport', () => {
     // A refusal never arms the apply button.
     expect(buttonBy(wrapper, 'Применить')).toBeUndefined()
   })
+
+  it('reports a network failure instead of leaving the button spinning', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    }))
+    const wrapper = mount(CatalogImport)
+
+    await choose(wrapper)
+    await buttonBy(wrapper, 'Проверить файл').trigger('click')
+    await flushPromises()
+
+    expect(state.notice.type).toBe('error')
+    expect(state.notice.text).toContain('сеть недоступна')
+    expect(buttonBy(wrapper, 'Применить')).toBeUndefined()
+    // The spinner is cleared, so the operator can retry.
+    expect(buttonBy(wrapper, 'Проверить файл').attributes('disabled')).toBeUndefined()
+  })
+
+  it('refuses an ok answer that carries no import at all', async () => {
+    // A proxy or gateway answering 200 with HTML. Dereferencing `payload.import` here used to
+    // throw inside the handler, which cleared the spinner and showed nothing.
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response('<html>gateway</html>', { status: 200, headers: { 'content-type': 'text/html' } })
+    ))
+    const wrapper = mount(CatalogImport)
+
+    await choose(wrapper)
+    await buttonBy(wrapper, 'Проверить файл').trigger('click')
+    await flushPromises()
+
+    expect(state.notice.type).toBe('error')
+    expect(buttonBy(wrapper, 'Применить')).toBeUndefined()
+  })
 })

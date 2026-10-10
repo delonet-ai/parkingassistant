@@ -12,6 +12,29 @@
 //
 // Dependency-free on purpose: so is every process that calls it.
 
+/**
+ * A request body past the caller's limit.
+ *
+ * A type, not a message: the catalog upload answers 413 for this and 400 for a malformed form,
+ * and telling them apart by comparing prose would turn "too large" into "malformed" the first
+ * time someone reworded the sentence.
+ */
+class PayloadTooLargeError extends Error {
+  constructor(limitBytes) {
+    super('Request body is too large');
+    this.name = 'PayloadTooLargeError';
+    this.limitBytes = limitBytes;
+  }
+}
+
+/** A body that is not `multipart/form-data`, or whose boundary is missing. */
+class MultipartFormatError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'MultipartFormatError';
+  }
+}
+
 async function readRawBody(req, limitBytes = 15 * 1024 * 1024) {
   const chunks = [];
   let total = 0;
@@ -19,7 +42,7 @@ async function readRawBody(req, limitBytes = 15 * 1024 * 1024) {
   for await (const chunk of req) {
     total += chunk.length;
     if (total > limitBytes) {
-      throw new Error('Request body is too large');
+      throw new PayloadTooLargeError(limitBytes);
     }
     chunks.push(chunk);
   }
@@ -32,7 +55,7 @@ function parseMultipartFormData(contentType, body) {
   const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
 
   if (!boundary) {
-    throw new Error('Multipart boundary is missing');
+    throw new MultipartFormatError('Multipart boundary is missing');
   }
 
   const delimiter = `--${boundary}`;
@@ -78,4 +101,4 @@ function parseMultipartFormData(contentType, body) {
   return { fields, files };
 }
 
-module.exports = { parseMultipartFormData, readRawBody };
+module.exports = { MultipartFormatError, PayloadTooLargeError, parseMultipartFormData, readRawBody };

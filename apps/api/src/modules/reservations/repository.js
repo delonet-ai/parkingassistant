@@ -4,14 +4,25 @@
 // A reservation is never deleted; cancelling sets `status = 'canceled'` so the day's
 // history stays readable.
 
+// Who holds the place on the date, by id and by name — the name so a refused move can say
+// whom it ran into. One query, not two: a second copy of this predicate is a second answer to
+// "is this place taken", and the two would drift the first time "taken" changed meaning.
 async function findActiveReservationOnPlaceDate(db, { parkingPlaceId, reservationDate }) {
   return db.queryOne(
     `
-      select id, user_id, guest_parking_request_id, source
-      from reservations
-      where parking_place_id = $1
-        and reservation_date = $2::date
-        and status = 'active'
+      select
+        r.id,
+        r.user_id,
+        r.guest_parking_request_id,
+        r.source,
+        u.display_name as user_display_name,
+        gpr.guest_name
+      from reservations r
+      left join users u on u.id = r.user_id
+      left join guest_parking_requests gpr on gpr.id = r.guest_parking_request_id
+      where r.parking_place_id = $1
+        and r.reservation_date = $2::date
+        and r.status = 'active'
       limit 1
     `,
     [parkingPlaceId, reservationDate]
@@ -104,26 +115,6 @@ async function insertMovement(
       values ($1, $2::date, $3, $4, $5, $6, $7)
     `,
     [reservationId, movementDate, fromParkingPlaceId, toParkingPlaceId, movementType, reason, actorAuthUserId]
-  );
-}
-
-// Who holds the place on the date, by name, so a refused move can say whom it ran into.
-async function findActiveHolderOnPlaceDate(db, { parkingPlaceId, reservationDate }) {
-  return db.queryOne(
-    `
-      select
-        r.id,
-        u.display_name as user_display_name,
-        gpr.guest_name
-      from reservations r
-      left join users u on u.id = r.user_id
-      left join guest_parking_requests gpr on gpr.id = r.guest_parking_request_id
-      where r.parking_place_id = $1
-        and r.reservation_date = $2::date
-        and r.status = 'active'
-      limit 1
-    `,
-    [parkingPlaceId, reservationDate]
   );
 }
 
@@ -298,7 +289,6 @@ module.exports = {
   cancelActiveReservation,
   cancelReservation,
   findActiveReservationInRange,
-  findActiveHolderOnPlaceDate,
   findActiveReservationOnPlaceDate,
   findReservationForUpdate,
   insertMovement,

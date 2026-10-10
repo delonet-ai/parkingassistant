@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import PlaceDrawer from './PlaceDrawer.vue'
@@ -32,9 +32,9 @@ function setDay(overrides = {}) {
   })
 }
 
-function stubPost(answer = { status: 'ok' }) {
+function stubPost(answer = { status: 'ok' }, httpStatus = 200) {
   const fetchMock = vi.fn(async () =>
-    new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } })
+    new Response(JSON.stringify(answer), { status: httpStatus, headers: { 'content-type': 'application/json' } })
   )
   vi.stubGlobal('fetch', fetchMock)
 
@@ -201,6 +201,43 @@ describe('PlaceDrawer', () => {
       const button = mount(PlaceDrawer).findAll('button').find((item) => item.text() === 'Перевести')
 
       expect(button.attributes('disabled')).toBeDefined()
+    })
+
+    // The endpoint refuses by design — taken, blocked, not released — so a refusal is the
+    // common case, and wiping the operator's choice on it would make them re-pick the place
+    // and retype the reason before they could read why.
+    it('keeps the picked place and the reason when the API refuses the move', async () => {
+      setReservedDay()
+      stubPost({ status: 'error', error: 'Place 120 is already taken on 2026-10-09 by Орлов' }, 409)
+      const wrapper = mount(PlaceDrawer)
+
+      moveSelect(wrapper).vm.$emit('update:value', 'p2')
+      await wrapper.vm.$nextTick()
+      const reasonInput = wrapper
+        .findAllComponents({ name: 'ViInput' })
+        .find((input) => input.props('label') === 'Причина перевода')
+      await reasonInput.find('input').setValue('владелец вернулся')
+      await wrapper.findAll('button').find((button) => button.text() === 'Перевести').trigger('click')
+      await flushPromises()
+
+      expect(state.notice.type).toBe('error')
+      expect(state.notice.text).toContain('already taken')
+      expect(moveSelect(wrapper).props('value')).toBe('p2')
+      expect(reasonInput.find('input').element.value).toBe('владелец вернулся')
+    })
+
+    it('says there is nowhere to move to rather than offering an empty picker', () => {
+      setDay({
+        dashboard: {
+          releasedPlaces: [
+            { parkingPlace: { id: 'p1', code: '118' }, owner: { displayName: 'Иванов' }, releaseId: 'rel1', isReserved: true }
+          ],
+          reservations: [{ id: 'res1', parkingPlace: { id: 'p1' }, source: 'manual', user: { displayName: 'Петров' } }],
+          guestRequests: []
+        }
+      })
+
+      expect(mount(PlaceDrawer).text()).toContain('нет свободных отданных мест')
     })
   })
 })

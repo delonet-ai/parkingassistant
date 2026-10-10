@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 
 // The parser is shared with the API (packages/shared is CommonJS; Node's named-export
 // interop is what makes this import work).
-import { parseMultipartFormData, readRawBody } from '../../packages/shared/multipart.js'
+import { PayloadTooLargeError, parseMultipartFormData, readRawBody } from '../../packages/shared/multipart.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -23,6 +23,30 @@ const port = Number(process.env.PORT || 3100)
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000'
 const distDir = process.env.ADMIN_UI_DIST || path.join(HERE, 'dist')
 const mapStoragePath = process.env.MAP_STORAGE_PATH || '/app/storage/maps'
+
+// How much of a request body this server will hold in memory. It buffers both the bodies it
+// proxies and the plan it writes, and it does so *before* the API has authorized anything —
+// so the API's own limits protect the API, not this process. Above the API's 10 MB catalog
+// limit, so the refusal the operator sees is the API's reason and not this one's.
+const BODY_LIMIT_BYTES = 12 * 1024 * 1024
+
+function sendTooLarge(res) {
+  // `connection: close` is not politeness: refusing at the limit abandons the request body
+  // part-read, and the bytes still in flight would be parsed as the next request on a
+  // keep-alive connection. Answering and closing is the only safe end to this exchange.
+  const payload = JSON.stringify({
+    status: 'error',
+    service: 'admin-ui',
+    error: `Файл больше ${Math.floor(BODY_LIMIT_BYTES / (1024 * 1024))} МБ.`
+  })
+
+  res.writeHead(413, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(payload),
+    connection: 'close'
+  })
+  res.end(payload)
+}
 
 const CONTENT_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -95,13 +119,26 @@ function relayHeaders(upstream, contentLength) {
   return headers
 }
 
-/** Streams the request to the API and the answer back, headers and status included. */
+/**
+ * Relays the request to the API and the answer back, headers and status included.
+ *
+ * The body is buffered rather than streamed, which is why it needs a limit of its own: this
+ * runs before the API sees the request, so an oversized body would be held here whether or
+ * not the caller has a session.
+ */
 async function proxyApi(req, res, url) {
   const target = new URL(`${url.pathname.replace(/^\/api/, '')}${url.search}`, apiBaseUrl)
-  const chunks = []
+  let requestBody = null
 
-  for await (const chunk of req) {
-    chunks.push(chunk)
+  try {
+    requestBody = await readRawBody(req, BODY_LIMIT_BYTES)
+  } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      sendTooLarge(res)
+      return
+    }
+
+    throw error
   }
 
   let upstream = null
@@ -110,7 +147,7 @@ async function proxyApi(req, res, url) {
     upstream = await fetch(target, {
       method: req.method,
       headers: upstreamHeaders(req),
-      body: chunks.length ? Buffer.concat(chunks) : undefined
+      body: requestBody.length ? requestBody : undefined
     })
   } catch (error) {
     sendJson(res, 502, { status: 'error', service: 'admin-ui', error: `api unreachable: ${error.message}` })
@@ -146,8 +183,25 @@ const PLAN_TYPES = new Map([
  * plan overwrites the previous file, and the version in the API is what records the change.
  */
 async function uploadFloorPlan(req, res) {
-  const body = await readRawBody(req)
-  const form = parseMultipartFormData(req.headers['content-type'] || '', body)
+  let form = null
+
+  // Two faults of the request, which the generic handler would report as a server error:
+  // a body past the limit and a body that is not a multipart form.
+  try {
+    form = parseMultipartFormData(
+      req.headers['content-type'] || '',
+      await readRawBody(req, BODY_LIMIT_BYTES)
+    )
+  } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      sendTooLarge(res)
+      return
+    }
+
+    sendJson(res, 400, { status: 'error', service: 'admin-ui', error: 'Ожидается форма с файлом подложки.' })
+    return
+  }
+
   const mapCode = String(form.fields.get('mapCode') || '').trim().toLowerCase()
   const plan = FLOOR_PLANS.find((item) => item.code === mapCode)
   const file = form.files.get('mapFile')

@@ -4,6 +4,7 @@ const xlsx = require('xlsx');
 
 const { mapCatalogRows } = require('../../../../../packages/domain/catalog-rows');
 const { withTransaction } = require('../../repositories/db');
+const { AbortTransaction } = require('../../support/transaction');
 const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const repository = require('./repository');
@@ -31,23 +32,6 @@ class CatalogWorkbookError extends Error {
 }
 
 /**
- * Forces the rollback of a dry run.
- *
- * A dry run runs the *whole* import — staging, lines, places, `assign_place_lines()`, the audit
- * row — and then throws this, which `withTransaction` turns into a rollback. The counts it
- * reports are therefore measured against the real tables with the real constraints in force; a
- * second, write-free code path would be a different program reporting on behalf of this one, and
- * would pass its tests while the apply it predicts fails.
- */
-class DryRunComplete extends Error {
-  constructor(summary) {
-    super('catalog import dry run complete');
-    this.name = 'DryRunComplete';
-    this.summary = summary;
-  }
-}
-
-/**
  * The rows of one catalog sheet, mapped to places and problems.
  *
  * `range: 1` skips the workbook's title row — row 2 is the header and row 3 the first place,
@@ -55,7 +39,7 @@ class DryRunComplete extends Error {
  * cell as an empty string so a row with gaps is still refused by the mapping rather than by a
  * property lookup on `undefined`.
  */
-function readCatalogSheet(workbook, { sheetName, sourceFile = null } = {}) {
+function readSheet(workbook, { sheetName, sourceFile = null } = {}) {
   const resolved = sheetName || DEFAULT_SHEET;
   const sheet = workbook.Sheets[resolved];
 
@@ -68,11 +52,13 @@ function readCatalogSheet(workbook, { sheetName, sourceFile = null } = {}) {
   const rows = xlsx.utils.sheet_to_json(sheet, { range: 1, defval: '' });
   const { places, problems } = mapCatalogRows(rows, { sourceFile, sourceSheet: resolved });
 
-  return { sheetName: resolved, rowsRead: rows.length, places, problems };
+  return { sheetName: resolved, sourceFile, rowsRead: rows.length, places, problems };
 }
 
 /**
- * The same, from the bytes of an upload.
+ * A catalog sheet, read from the bytes of a workbook. The only reader: the CLI reads the file
+ * from the imports mount and the endpoint takes an upload, and both hand over a buffer, so
+ * neither can be refused for a reason the other would not be.
  *
  * The signature check is not belt-and-braces: `xlsx.read` is deliberately forgiving and parses
  * arbitrary text as a one-sheet workbook called `Sheet1`, so a renamed .txt would otherwise be
@@ -92,17 +78,22 @@ function readCatalogBuffer(buffer, options = {}) {
     throw new CatalogWorkbookError(`Workbook could not be read: ${error.message}`);
   }
 
-  return readCatalogSheet(workbook, options);
+  return readSheet(workbook, options);
 }
 
 function createCatalogImportService({ pool }) {
   /**
-   * Writes the staged places, or reports what writing them would do.
+   * Writes the places a sheet mapped to, or reports what writing them would do.
+   *
+   * Takes the reader's whole result rather than its places plus the source labels again: the
+   * labels stamped into every place's metadata and the ones on the audit row then cannot
+   * disagree, which they could while each caller threaded them separately.
    *
    * Returns the same summary either way, so neither caller has to know which mode it asked
    * for to read the answer.
    */
-  async function importCatalog({ actor, dryRun = false, places, source = {} }) {
+  async function importCatalog({ actor, dryRun = false, sheet }) {
+    const places = sheet.places;
     try {
       return await withTransaction(pool, async (repo) => {
         await repository.createStagingTable(repo);
@@ -127,8 +118,8 @@ function createCatalogImportService({ pool }) {
           action: 'parking_catalog_imported',
           ...auditActor(actor),
           metadata: {
-            sourceFile: source.sourceFile ?? null,
-            sourceSheet: source.sourceSheet ?? null,
+            sourceFile: sheet.sourceFile ?? null,
+            sourceSheet: sheet.sheetName ?? null,
             importedPlaces: places.length
           }
         });
@@ -142,15 +133,22 @@ function createCatalogImportService({ pool }) {
           linesUpdated: lines.updated
         };
 
+        // A dry run runs the *whole* import — staging, lines, places, `assign_place_lines()`,
+        // the audit row — and then aborts, which `withTransaction` turns into a rollback. The
+        // counts it reports are therefore measured against the real tables with the real
+        // constraints in force; a second, write-free code path would be a different program
+        // reporting on behalf of this one, and would pass its tests while the apply it
+        // predicts fails. `AbortTransaction` is the repo's carrier for exactly this — roll
+        // back and still answer with a payload — and nothing else in the block throws it.
         if (dryRun) {
-          throw new DryRunComplete(summary);
+          throw new AbortTransaction(summary);
         }
 
         return summary;
       });
     } catch (error) {
-      if (error instanceof DryRunComplete) {
-        return error.summary;
+      if (error instanceof AbortTransaction) {
+        return error.result;
       }
 
       throw error;
@@ -163,6 +161,5 @@ function createCatalogImportService({ pool }) {
 module.exports = {
   CatalogWorkbookError,
   createCatalogImportService,
-  readCatalogBuffer,
-  readCatalogSheet
+  readCatalogBuffer
 };
