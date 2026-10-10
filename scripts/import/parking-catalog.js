@@ -4,6 +4,9 @@ const path = require('node:path');
 const xlsx = require('xlsx');
 const { Pool } = require('pg');
 
+// The row mapping is shared with the catalog upload endpoint; this script keeps no copy of it.
+const { rowToPlace } = require('../../packages/domain/catalog-rows');
+
 const sourcePath =
   process.env.CATALOG_XLSX_PATH || '/app/storage/imports/parking-catalog.xlsx';
 const sheetName = process.env.CATALOG_XLSX_SHEET || 'Лист1';
@@ -12,86 +15,6 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   console.error('DATABASE_URL is required');
   process.exit(1);
-}
-
-function clean(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function normalizeFloor(value) {
-  const text = clean(value).toLowerCase();
-  const match = text.match(/\d+/);
-  return match ? match[0] : clean(value);
-}
-
-function normalizeCode(value) {
-  const text = clean(value);
-  const match = text.match(/\d+/);
-  return match ? match[0] : text;
-}
-
-function inferPositionHint(rawPlace) {
-  const text = clean(rawPlace).toLowerCase();
-
-  if (text.includes('перед')) {
-    return 1;
-  }
-
-  if (text.includes('средн')) {
-    return 2;
-  }
-
-  if (text.includes('задн')) {
-    return 3;
-  }
-
-  return null;
-}
-
-function isGuest(status) {
-  return clean(status).toLowerCase().includes('гост');
-}
-
-function rowToPlace(row) {
-  const floorRaw = clean(row['Уровень']);
-  const placeRaw = clean(row['Место ']);
-  const statusRaw = clean(row['Статус']);
-  const departmentRaw = clean(row['Дирекция ']);
-  const assigneeRaw = clean(row['Кем']);
-
-  if (!floorRaw || !placeRaw || !statusRaw) {
-    return null;
-  }
-
-  if (!/\d/.test(placeRaw)) {
-    return null;
-  }
-
-  const code = normalizeCode(placeRaw);
-  const floorLabel = normalizeFloor(floorRaw);
-  const linePositionHint = inferPositionHint(placeRaw);
-  const guest = isGuest(statusRaw);
-
-  // place_type is deliberately absent: line_groups.capacity is its source of truth and
-  // the import derives it from the group it lands the place in (see importPlaces).
-  return {
-    code,
-    title: placeRaw,
-    floorLabel,
-    linePositionHint,
-    // A guest place is the guest pool, which is what place_role = 'rotatable' means.
-    placeRole: guest ? 'rotatable' : 'regular',
-    guestPriorityRank: guest ? 1 : null,
-    metadata: {
-      sourceFile: path.basename(sourcePath),
-      sourceSheet: sheetName,
-      sourceFloor: floorRaw,
-      sourcePlace: placeRaw,
-      sourceStatus: statusRaw,
-      sourceDepartment: departmentRaw,
-      sourceAssignee: assigneeRaw
-    }
-  };
 }
 
 function readPlaces() {
@@ -107,7 +30,8 @@ function readPlaces() {
     defval: ''
   });
 
-  const places = rows.map(rowToPlace).filter(Boolean);
+  const source = { sourceFile: path.basename(sourcePath), sourceSheet: sheetName };
+  const places = rows.map((row) => rowToPlace(row, source)).filter(Boolean);
   const seen = new Set();
 
   return places.filter((place) => {

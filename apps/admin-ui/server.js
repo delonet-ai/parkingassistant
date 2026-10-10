@@ -13,7 +13,9 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { parseMultipartFormData, readRawBody } from './multipart.js'
+// The parser is shared with the API (packages/shared is CommonJS; Node's named-export
+// interop is what makes this import work).
+import { parseMultipartFormData, readRawBody } from '../../packages/shared/multipart.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 

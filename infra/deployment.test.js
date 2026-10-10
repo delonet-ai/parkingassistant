@@ -45,19 +45,60 @@ test('the stack defines exactly the MVP services', () => {
   assert.deepEqual([...services.keys()].sort(), ['admin-ui', 'api', 'jobs', 'migrate', 'postgres']);
 });
 
-test('every module the admin-ui server imports is copied into its image', () => {
-  // server.js is ESM and loads its siblings at startup, so a file left out of the COPY makes
-  // the container exit with ERR_MODULE_NOT_FOUND after a build that looked fine.
-  const dockerfile = fs.readFileSync(path.join(__dirname, 'docker', 'admin-ui.Dockerfile'), 'utf8');
-  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'apps', 'admin-ui', 'server.js'), 'utf8');
-  const localImports = [...serverSource.matchAll(/from '\.\/([^']+)'/g)].map((match) => match[1]);
+// The destination of the `COPY` that carries `source`, or null if nothing carries it.
+function copyDestination(dockerfile, source) {
+  const line = dockerfile
+    .split('\n')
+    .find((candidate) => candidate.startsWith('COPY ') && candidate.split(/\s+/).includes(source));
 
-  assert.ok(localImports.length > 0, 'expected server.js to import at least one local module');
+  return line ? line.trim().split(/\s+/).at(-1) : null;
+}
 
-  for (const moduleName of localImports) {
+test('every module the admin-ui server imports is copied into its image, at the same depth', () => {
+  // server.js is ESM and loads its imports at startup, so a file left out of the COPY makes
+  // the container exit with ERR_MODULE_NOT_FOUND after a build that looked fine. Since the
+  // multipart parser moved to packages/shared the imports also climb out of apps/admin-ui,
+  // which is why the image mirrors the repository tree instead of flattening into /app: a
+  // module copied to a different depth resolves above the image root and fails the same way.
+  const wholeDockerfile = fs.readFileSync(path.join(__dirname, 'docker', 'admin-ui.Dockerfile'), 'utf8');
+  // Only the runtime stage matters: the build stage copies the same sources elsewhere, to a
+  // tree that is thrown away once the bundle is built.
+  const runtimeStart = wholeDockerfile.indexOf('AS runtime');
+  assert.notEqual(runtimeStart, -1, 'admin-ui.Dockerfile has no runtime stage');
+  const dockerfile = wholeDockerfile.slice(runtimeStart);
+  const serverDirectory = path.join(repoRoot, 'apps', 'admin-ui');
+  const serverSource = fs.readFileSync(path.join(serverDirectory, 'server.js'), 'utf8');
+  const relativeImports = [...serverSource.matchAll(/from '(\.[^']+)'/g)].map((match) => match[1]);
+
+  assert.ok(relativeImports.length > 0, 'expected server.js to import at least one local module');
+
+  for (const source of ['apps/admin-ui/server.js', 'apps/admin-ui/package.json']) {
+    assert.equal(
+      copyDestination(dockerfile, source),
+      '/app/apps/admin-ui/',
+      `admin-ui.Dockerfile must copy ${source} into /app/apps/admin-ui/`
+    );
+  }
+
+  // WORKDIR is where `CMD ["node", "server.js"]` resolves from.
+  assert.match(dockerfile, /\nWORKDIR \/app\/apps\/admin-ui\n/);
+
+  for (const specifier of relativeImports) {
+    const source = path.relative(repoRoot, path.resolve(serverDirectory, specifier));
+
     assert.ok(
-      dockerfile.includes(`apps/admin-ui/${moduleName}`),
-      `admin-ui.Dockerfile does not copy ${moduleName}, which server.js imports`
+      fs.existsSync(path.join(repoRoot, source)),
+      `server.js imports ${specifier}, which does not exist`
+    );
+
+    const destination = copyDestination(dockerfile, source);
+    const mirrored = `/app/${path.dirname(source)}`;
+
+    assert.ok(destination, `admin-ui.Dockerfile does not copy ${source}, which server.js imports`);
+    assert.ok(
+      destination === mirrored || destination === `${mirrored}/` || destination === `/app/${source}`,
+      `admin-ui.Dockerfile copies ${source} to ${destination}, not to ${mirrored}/ — ` +
+        'the image must mirror the repository tree so a relative import still resolves'
     );
   }
 });

@@ -307,7 +307,8 @@ docker compose -f docker-compose.test.yml down
 Образы собираются из `infra/docker/{app,admin-ui,jobs}.Dockerfile` и самодостаточны: исходники
 копируются на этапе build, монтируется только storage (`postgres`, `maps`, `imports`, `logs`,
 `backups`). У `admin-ui` сборка двухстадийная: Vite собирает бандл, в runtime-слой попадают
-только `server.js`, `multipart.js` и `dist`.
+только `server.js`, `packages/shared/multipart.js` и `dist` — причём в том же дереве каталогов,
+что и в репозитории: `server.js` импортирует парсер относительным путём.
 
 После деплоя стенд проверяется одной командой:
 

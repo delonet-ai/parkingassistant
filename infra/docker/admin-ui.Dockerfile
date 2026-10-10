@@ -7,6 +7,12 @@
 #
 # The runtime stage carries no node_modules on purpose: apps/admin-ui/server.js is node
 # builtins only — static files, the floor-plan images and the same-origin /api proxy.
+#
+# It mirrors the repository layout instead of flattening the server into /app, because the
+# server imports packages/shared/multipart.js by relative path: a flat image resolves that
+# above the image root and the container dies on startup. The shared file stays CommonJS
+# there — apps/admin-ui/package.json declares `type: module` for its own directory only,
+# and nothing above packages/ declares a type.
 
 FROM node:22-bookworm-slim AS build
 
@@ -29,7 +35,7 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime
 
-WORKDIR /app
+WORKDIR /app/apps/admin-ui
 
 ENV TZ=Europe/Moscow
 
@@ -37,9 +43,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates dumb-init \
   && rm -rf /var/lib/apt/lists/*
 
-COPY apps/admin-ui/package.json /app/package.json
-COPY apps/admin-ui/server.js apps/admin-ui/multipart.js /app/
-COPY --from=build /build/apps/admin-ui/dist /app/dist
+COPY apps/admin-ui/package.json apps/admin-ui/server.js /app/apps/admin-ui/
+COPY packages/shared/multipart.js /app/packages/shared/
+COPY --from=build /build/apps/admin-ui/dist /app/apps/admin-ui/dist
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "server.js"]

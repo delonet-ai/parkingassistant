@@ -338,13 +338,27 @@ that visible in review.
 - Modify: `scripts/import/parking-catalog.js` — imports what was lifted, keeps no copy
 - Modify: `infra/docker/admin-ui.Dockerfile`
 
-- [ ] move the multipart parser into `packages/shared`: it is ESM today because `apps/admin-ui` is `"type": "module"`, while `packages/shared` is CJS — convert it to `module.exports = { parseMultipartFormData, readRawBody }`, which Node's named-export interop keeps working for `server.js`'s `import { ... }`, and prove the UI server still starts and still parses an upload with a test rather than by eye
-- [ ] update `infra/docker/admin-ui.Dockerfile`, which names `apps/admin-ui/multipart.js` in the `COPY` at line 41: miss this and the image builds fine and then cannot start
-- [ ] lift the pure row mapping out of `scripts/import/parking-catalog.js` — `clean`, `normalizeFloor`, `normalizeCode`, `inferPositionHint`, `isGuest`, `rowToPlace` (lines 17–96) — into `packages/domain/catalog-rows.js`, and make the script import them; the script must keep **no** copy
-- [ ] write unit tests for the lifted mapping on rows shaped like the real sheet (see `CATALOG_ROWS` in `apps/api/integration/e2e-day.itest.js:63`): a guest row, a closed-assignment row, a position word that becomes a hint and is then discarded, a row with no hint, and a row that must be refused
-- [ ] leave `importPlaces` (the staged upsert, lines 124–335) where it is — moving the SQL is Task 9's problem, and mixing it in here is what makes a refactor unreviewable
-- [ ] the proof that nothing changed is the e2e suite: it already writes a catalog workbook and imports it, so `apps/api/integration/e2e-day.itest.js` must stay green with no edit to its assertions
-- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 9, and no golden snapshot may move, because no endpoint answers anything new yet
+- [x] move the multipart parser into `packages/shared`: it is ESM today because `apps/admin-ui` is `"type": "module"`, while `packages/shared` is CJS — convert it to `module.exports = { parseMultipartFormData, readRawBody }`, which Node's named-export interop keeps working for `server.js`'s `import { ... }`, and prove the UI server still starts and still parses an upload with a test rather than by eye
+- [x] update `infra/docker/admin-ui.Dockerfile`, which names `apps/admin-ui/multipart.js` in the `COPY` at line 41: miss this and the image builds fine and then cannot start
+- [x] lift the pure row mapping out of `scripts/import/parking-catalog.js` — `clean`, `normalizeFloor`, `normalizeCode`, `inferPositionHint`, `isGuest`, `rowToPlace` (lines 17–96) — into `packages/domain/catalog-rows.js`, and make the script import them; the script must keep **no** copy
+- [x] write unit tests for the lifted mapping on rows shaped like the real sheet (see `CATALOG_ROWS` in `apps/api/integration/e2e-day.itest.js:63`): a guest row, a closed-assignment row, a position word that becomes a hint and is then discarded, a row with no hint, and a row that must be refused
+- [x] leave `importPlaces` (the staged upsert, lines 124–335) where it is — moving the SQL is Task 9's problem, and mixing it in here is what makes a refactor unreviewable
+- [x] the proof that nothing changed is the e2e suite: it already writes a catalog workbook and imports it, so `apps/api/integration/e2e-day.itest.js` must stay green with no edit to its assertions
+- [x] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 9, and no golden snapshot may move, because no endpoint answers anything new yet (348/348 integration, 154 UI specs, 379 node tests, lint clean, `npm run admin-ui:build` clean, no golden snapshot touched)
+
+➕ `infra/deployment.test.js` guarded the old flat image layout: it only read `from './x'`
+imports and only checked that the Dockerfile named them. It now resolves every relative import
+of `server.js` against the repo root and asserts the runtime stage copies each one **to the same
+depth** — the image mirrors the repository tree, because a module copied elsewhere resolves
+above the image root and the container exits at startup after a build that looked fine.
+
+➕ `rowToPlace(row, source)` takes `{ sourceFile, sourceSheet }` as an argument: in the script
+those were module-level constants read from the environment, which a pure function may not do.
+The CLI passes exactly what it passed before, so the metadata it writes is unchanged.
+
+⚠️ `packages/domain/catalog-rows.js` is deliberately **not** added to `packages/domain/index.js`:
+`clean` and `normalizeCode` are too generic for the barrel every service imports from. It is
+required by path, the way `apps/api/src/services/availability.js` requires `guest-reserve`.
 
 ### Task 9: Import the Excel catalog from the UI
 
