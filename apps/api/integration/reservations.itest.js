@@ -153,6 +153,30 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       assert.match(payload.error, /owner cannot be manually assigned/i);
     });
 
+    // The uuid shape accepts either case and Postgres compares uuids by value, so an uppercase
+    // id finds the same rows — but the guard above is a JS string comparison against the
+    // lowercase id Postgres returned. An uppercase `userId` used to skip it and hand the
+    // employee back the very place they had just released.
+    it('refuses the owner written in uppercase for the same reason', async () => {
+      const { owner, place } = await fixtures.insertReleasedPlace({ date: DATE });
+      await fixtures.insertReleasedPlace({ date: DATE });
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/manual', {
+        userId: owner.id.toUpperCase(),
+        parkingPlaceId: place.id,
+        reservationDate: DATE
+      });
+
+      assert.equal(status, 409);
+      assert.match(payload.error, /owner cannot be manually assigned/i);
+
+      const created = await db.query(
+        "select count(*)::int as count from reservations where parking_place_id = $1 and reservation_date = $2::date and status = 'active'",
+        [place.id, DATE]
+      );
+      assert.equal(created.rows[0].count, 0);
+    });
+
     it('rejects a body missing required fields with 400', async () => {
       const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/manual', {
         userId: null,

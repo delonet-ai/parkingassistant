@@ -403,7 +403,7 @@ git diff apps/api/test/golden          # прочитать КАЖДУЮ стр�
   это сознательно: фаза Yandex Messenger отложена, и сервис даже не входит в стек.
 - ~~Нет полноценного тестового harness с PostgreSQL fixture data~~ — закрыто: `packages/db/testing/harness.js`
   (схема на отдельной scratch-схеме + сиды + очистка), `apps/api/testing/{boot-api,fixtures,session}.js`,
-  376 интеграционных тестов и 106 golden-снапшотов. `smoke:m1` остался как проверка старта, а не инвариантов.
+  377 интеграционных тестов и 106 golden-снапшотов. `smoke:m1` остался как проверка старта, а не инвариантов.
 
 ### Runtime And Deployment
 

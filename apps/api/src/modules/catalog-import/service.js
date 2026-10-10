@@ -32,16 +32,26 @@ const DEFAULT_SHEET = 'Лист1';
 // repeated junk rows stays well under the upload limit at two hundred thousand rows, and each
 // row read becomes an `INSERT` into the staging table inside the open transaction.
 //
-// Counted on the rows `sheet_to_json` returned, not on the sheet's declared `!ref` range.
-// Excel writes `<dimension>` over every row it has ever formatted, so a catalog of two hundred
-// places can declare the sheet's full million — refusing the file by that number would refuse
-// the real workbook, and tell the operator it "is not the parking catalog". The declaration is
-// no cheaper a guard anyway: `xlsx.read` has already parsed the worksheet into cells before
-// either number exists, so what this limit bounds is the write (one staging INSERT per row
-// inside the open transaction), not the parse. Bounding the parse would mean reading the zip's
-// central directory first, or parsing outside this process; neither is done here, and the
-// upload limit in the controller is the only thing standing in front of it.
+// Enforced twice, because the two places bound different work. `sheetRows` in
+// `readCatalogBuffer` stops the parser materializing cells past this many sheet rows, and the
+// clamped range in `readRows` stops `sheet_to_json` *walking* past them. What the operator is
+// refused by is still the rows that came back — a declared `<dimension>` is not evidence a
+// sheet carries anything, and refusing the real catalog by its declaration is the defect the
+// bound replaced.
 const MAX_SHEET_ROWS = 5000;
+
+// How many columns of one sheet the import will walk. The catalog has six, and a header row
+// Excel padded with formatting has a few more; sixty-four is headroom for that and nothing like
+// a sheet's full 16384.
+//
+// This is not cosmetic. `sheet_to_json` iterates the sheet's *declared* range — the
+// `<dimension ref>` tag, which whoever saved the file controls and which `xlsx` only recomputes
+// from real cells when the tag is absent. A 16 KB workbook holding two cells can declare
+// `A1:ZZ100000` and cost 36 seconds of synchronous cell lookups, during which this single-process
+// API answers nothing; declaring the sheet maximum is two orders of magnitude worse again. The
+// row and column bounds together cap that walk at a few hundred thousand lookups, so the file
+// size the controller limits is once more proportional to the work the parse does.
+const MAX_SHEET_COLUMNS = 64;
 
 /** A workbook this module cannot read: not a spreadsheet, or no such sheet in it. */
 class CatalogWorkbookError extends Error {
@@ -52,12 +62,41 @@ class CatalogWorkbookError extends Error {
 }
 
 /**
- * The rows of one catalog sheet, mapped to places and problems.
+ * The cells of one sheet, as row objects keyed by its header row.
  *
- * `range: 1` skips the workbook's title row — row 2 is the header and row 3 the first place,
- * which is the numbering `mapCatalogRows` quotes back in a problem. `defval: ''` keeps an empty
- * cell as an empty string so a row with gaps is still refused by the mapping rather than by a
- * property lookup on `undefined`.
+ * `range` is handed over as an object rather than as the row number 1 so the sheet's declared
+ * extent can be clamped on the way in: the start row still skips the workbook's title row —
+ * row 2 is the header and row 3 the first place, which is the numbering `mapCatalogRows` quotes
+ * back in a problem — and the end is cut to `MAX_SHEET_ROWS` by `MAX_SHEET_COLUMNS`, which is
+ * the bound a declared range of a million rows would otherwise have no reason to respect.
+ * `defval: ''` keeps an empty cell as an empty string so a row with gaps is still refused by the
+ * mapping rather than by a property lookup on `undefined`.
+ *
+ * The row end keeps one data row of slack over `MAX_SHEET_ROWS` on purpose: a sheet that really
+ * does carry more rows than the import reads has to come back over the limit to be refused for
+ * it, rather than arrive silently truncated to exactly the limit and imported as if it were the
+ * whole catalog. Hence the `+ 1` — `range.s.r` is the header, and the data rows are what the
+ * limit counts.
+ */
+function readRows(sheet) {
+  const declared = sheet['!ref'];
+
+  // A sheet with no cells has no declared range, and `decode_range(undefined)` would throw.
+  if (!declared) {
+    return [];
+  }
+
+  const range = xlsx.utils.decode_range(declared);
+
+  range.s.r = Math.max(range.s.r, 1);
+  range.e.r = Math.min(range.e.r, range.s.r + MAX_SHEET_ROWS + 1);
+  range.e.c = Math.min(range.e.c, range.s.c + MAX_SHEET_COLUMNS - 1);
+
+  return xlsx.utils.sheet_to_json(sheet, { range, defval: '' });
+}
+
+/**
+ * The rows of one catalog sheet, mapped to places and problems.
  */
 function readSheet(workbook, { sheetName, sourceFile = null } = {}) {
   const resolved = sheetName || DEFAULT_SHEET;
@@ -72,13 +111,17 @@ function readSheet(workbook, { sheetName, sourceFile = null } = {}) {
   }
 
   const sheet = workbook.Sheets[resolved];
-  const rows = xlsx.utils.sheet_to_json(sheet, { range: 1, defval: '' });
+  const rows = readRows(sheet);
 
   // Blank rows are not in `rows` — `sheet_to_json` drops them unless asked for — so this is
   // the count of rows that carry something, which is also the count that would be staged.
+  //
+  // Said as "more than", without a total: `readRows` stops one row past the limit, so a sheet
+  // of fifty thousand rows and one of five thousand and one are the same length here, and
+  // quoting that length as the sheet's row count would be quoting the bound back.
   if (rows.length > MAX_SHEET_ROWS) {
     throw new CatalogWorkbookError(
-      `Sheet ${resolved} has ${rows.length} rows, more than the ${MAX_SHEET_ROWS} this import reads:` +
+      `Sheet ${resolved} carries more than the ${MAX_SHEET_ROWS} rows this import reads:` +
         ' this is not the parking catalog'
     );
   }
@@ -133,7 +176,16 @@ function readCatalogBuffer(buffer, options = {}) {
     // "Sheet not found" can still say what the workbook does have. A catalog file carries one
     // sheet, but a workbook with a megabyte of unrelated sheets would otherwise be parsed in
     // full to read one of them.
-    workbook = xlsx.read(buffer, { type: 'buffer', sheets: [sheetName] });
+    // `sheetRows` bounds the parse the way the clamped range in `readRows` bounds the walk:
+    // without it a ten-megabyte sheet of junk rows is materialized into cells in full before
+    // anything gets to count them. Three over the limit, not one: rows 1 and 2 are the title
+    // and the header, and the third is the slack `readRows` needs to refuse a sheet for being
+    // over the limit instead of truncating it to exactly the limit.
+    workbook = xlsx.read(buffer, {
+      type: 'buffer',
+      sheets: [sheetName],
+      sheetRows: MAX_SHEET_ROWS + 3
+    });
   } catch (error) {
     throw new CatalogWorkbookError(`Workbook could not be read: ${error.message}`);
   }
@@ -220,7 +272,13 @@ function createCatalogImportService({ pool }) {
 
 module.exports = {
   CatalogWorkbookError,
+  MAX_SHEET_COLUMNS,
   MAX_SHEET_ROWS,
   createCatalogImportService,
-  readCatalogBuffer
+  readCatalogBuffer,
+  // Exported for `service.test.js` only: a workbook whose `<dimension>` declares a million rows
+  // costs minutes to *write* with `xlsx` and nothing to read once bounded, so the test that
+  // pins the bound hands the parsed workbook shape straight over instead of round-tripping a
+  // file. Nothing in the application calls this — `readCatalogBuffer` is the one reader.
+  readSheet
 };

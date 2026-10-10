@@ -26,8 +26,13 @@ function createReservationsController({ services }) {
       };
     }
 
-    const userId = body.userId;
-    const parkingPlaceId = body.parkingPlaceId;
+    // Normalized before anything compares them: the service checks
+    // `releasedPlace.owner_user_id === userId` as strings, and `uuidPattern` is
+    // case-insensitive, so an uppercase id passes the shape check, matches in every Postgres
+    // query — uuids compare by value — and silently fails that one JS comparison. The refusal
+    // it skips is "the owner cannot be assigned their own released place".
+    const userId = normalizeUuid(body.userId);
+    const parkingPlaceId = normalizeUuid(body.parkingPlaceId);
     const reservationDate = body.reservationDate;
     const reason = typeof body.reason === 'string' ? body.reason.trim() || null : null;
 

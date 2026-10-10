@@ -8,7 +8,7 @@ const {
 const { currentDateInTimezone, isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
 const { mapLineOccupancy } = require('../../serializers/line-occupancy');
-const { uuidValidationError } = require('../../support/params');
+const { normalizeUuid, uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { BOT, requestActor } = require('../../support/actor');
 const { internalError } = require('../../support/http-errors');
@@ -140,12 +140,17 @@ function createLineOccupancyController({ appTimezone, services }) {
     }
 
     const occupancyDate = body.occupancyDate || body.date;
-    const lineGroupId = body.lineGroupId;
-    const parkingPlaceId = body.parkingPlaceId;
+    const lineGroupId = normalizeUuid(body.lineGroupId);
+    const parkingPlaceId = normalizeUuid(body.parkingPlaceId);
     const position = Number(body.position);
     const subjectType = body.subjectType || 'employee';
-    const userId = body.userId || null;
-    const guestParkingRequestId = body.guestParkingRequestId || null;
+    // Normalized because the service compares them as strings against ids Postgres returned
+    // (`reservation.user_id !== userId`, and the same for the guest request). `uuidPattern` is
+    // case-insensitive and Postgres compares uuids by value, so an uppercase id would pass the
+    // shape check, select the right rows, and then fail that comparison — refusing the holder
+    // of the reservation with "belongs to another user".
+    const userId = normalizeUuid(body.userId) || null;
+    const guestParkingRequestId = normalizeUuid(body.guestParkingRequestId) || null;
 
     if (!isIsoDate(occupancyDate) || !lineGroupId || !parkingPlaceId || !isValidLinePosition(position)) {
       return {
@@ -169,12 +174,13 @@ function createLineOccupancyController({ appTimezone, services }) {
       };
     }
 
+    const reservationId = normalizeUuid(body.reservationId) || null;
     const invalidId = uuidValidationError({
       lineGroupId,
       parkingPlaceId,
       userId,
       guestParkingRequestId,
-      reservationId: body.reservationId || null
+      reservationId
     });
 
     if (invalidId) {
@@ -190,7 +196,7 @@ function createLineOccupancyController({ appTimezone, services }) {
         subjectType,
         userId,
         guestParkingRequestId,
-        reservationId: body.reservationId || null,
+        reservationId,
         actor
       });
 

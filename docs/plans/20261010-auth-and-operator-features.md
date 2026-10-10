@@ -466,7 +466,8 @@ the M10 section still said the rename was pending. The golden snapshot count was
 from the milestone that wrote them. Counts in prose decay silently, so the ones restated here
 were re-derived rather than copied: 57 closed routes (not the 53 Task 10 recorded, which
 predates `/admin/reservations/move` and `/admin/catalog-import` entering the table), 106
-golden snapshots, 360 integration tests, 389 node tests, 159 UI specs.
+golden snapshots, and — after the two review fixes below added a suite and a case — 377
+integration tests, 403 node tests, 168 UI specs.
 
 ➕ **the `xlsx` advisory note was inverted, not just updated.** It said the risk was accepted
 because "import scripts не являются публичным web upload/runtime endpoint" — which Task 9
@@ -502,9 +503,33 @@ ever formatted — a catalog of two hundred places saved from a formatted templa
 sheet's full 1 048 576 rows and was refused as "not the parking catalog", by
 `npm run db:import:parking-catalog` as much as by the endpoint, since Task 8 gave them one
 reader. The limit now counts the rows `sheet_to_json` actually returned, which is also the
-count that would be staged. The comment claiming the declared count guarded the parse cost was
-wrong and says so now: `xlsx.read` has already parsed the worksheet before either number
-exists, so the only thing in front of the parse is the controller's upload limit.
+count that would be staged.
+
+➕ **review: the same declared range was a denial of service, and now it is bounded.** The fix
+above was right about the refusal and wrong about the cost: `sheet_to_json` *walks* the
+declared range cell by cell, so counting the rows it returned left the walk unbounded, and the
+oversized file was then **accepted**. Measured: a 16 KB workbook holding three real rows and
+`<dimension ref="A1:ZZ100000"/>` cost 36 seconds of synchronous, event-loop-blocking CPU, and
+declaring the sheet maximum is two orders of magnitude worse again — one small upload from any
+signed-in operator stalls every route of this single-process API, and the 10 MB upload limit is
+no defence because the file is tiny. The parse is now bounded at both stages: `sheetRows` on
+`xlsx.read` stops cells being materialized past the row limit, and `readRows` clamps the range
+handed to `sheet_to_json` to `MAX_SHEET_ROWS + 1` rows by `MAX_SHEET_COLUMNS = 64` columns. The
+`+ 1` is load-bearing: clamping to exactly the limit would import the first 5000 rows of a
+larger sheet and report success, so the slack row is what keeps the "more than the 5000 rows
+this import reads" refusal able to fire. `apps/api/src/modules/catalog-import/service.test.js`
+pins all of it without a database, and hands `readSheet` the parsed workbook shape directly
+because `xlsx.write` walks a declared range too — writing that file would cost the test the
+minutes the reader no longer costs the API.
+
+➕ **review: `/admin/reservations/manual` and `/admin/line-occupancy` compared uuids Task 7's
+`normalizeUuid` was written for.** `uuidPattern` carries `/i` and Postgres compares uuids by
+value, so an uppercase id passes the shape check and matches every query, and only the
+JS-to-JS comparisons disagree. Two of them existed: `releasedPlace.owner_user_id === userId`,
+which skipped "the owner cannot be assigned their own released place" and handed an employee
+back the place they had just released; and `reservation.user_id !== userId`, which refused the
+holder of a reservation their own line position with "belongs to another user". Both
+controllers now normalize on the way in, the way `handleAdminReservationMove` already did.
 
 ## Technical Details
 
