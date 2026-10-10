@@ -91,6 +91,51 @@ The harness serializes schema application on a `pg_advisory_lock`: `node --test`
 file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same
 database-wide extension.
 
+#### Every request needs a session
+
+The API is closed by default (ADR 007): a route answers without a session only if its route table
+entry says `public: true`, and seven do. So practically every request a suite makes has to carry a
+session cookie — **and that is already handled**, as long as you use the helpers:
+
+- `startApi()` signs in as the seeded bootstrap operator and registers the cookie it got against
+  the base URL it is listening on. It returns `{ cookie, operator, ... }` alongside `baseUrl`.
+- `postJson`/`postForm`/`getJson` in `fixtures.js` look the cookie up by base URL, so a test
+  does not restate it per call. A suite that boots two APIs gets two independent sessions without
+  saying anything.
+
+The `cookie` option on those helpers is **tri-state**, which is the whole vocabulary of access
+tests: absent means "whatever the jar holds", `null` means send none (how the 401 paths are
+asserted), a string means send that one (how a second operator, or a `parking_admin` hitting a
+`system_admin` route for its 403, is exercised).
+
+Two escape hatches, both deliberate:
+
+- `startApi({ authenticate: false })` — for the auth suite itself, which has to meet a database
+  where activation and login have not happened yet.
+- `startApi({ operator: { login, password } })` — seeds and signs in a different account as the
+  suite's default session instead of `sysadmin`.
+
+A second account's session is obtained the other way round: create the user over
+`POST /admin/users`, `POST /auth/login` as them, and pass the returned `name=value` as `cookie`.
+That is how `auth.itest.js` gets its 403s for a `parking_admin` — the jar stays the
+`system_admin`'s, and only the cases that need the other role say so.
+
+`seedOperatorCredential` writes the password hash straight into `auth_users` because first-run
+activation is a once-per-installation event a suite must be able to skip. The sign-in itself is the
+real `POST /auth/login` against a real scrypt hash, so nothing about sessions is stubbed.
+
+Closing the API did **not** move a single golden snapshot — authentication changes who may ask, not
+what the answer is. If a snapshot moves when you touch the guard, the guard changed a response it
+should not have.
+
+`apps/api/src/route-access.test.js` is the unit-level counterpart and needs no database: it
+enumerates the composed route table, pins the public set and the role-scoped set exhaustively, and
+drives every other route through a real router whose session store resolves nobody. Adding a route
+with `public: true` fails there, in a diff a reviewer sees. Both its probe sets and the anonymous
+probes in `auth.itest.js` are **derived from the table** — never extend them by hand, that is the
+mistake they already made once (`GET /admin/line-groups/:id/occupancy` was closed but never
+actually called anonymously).
+
 #### The end-to-end day
 
 `apps/api/integration/e2e-day.itest.js` is the one suite that crosses every context: it walks a

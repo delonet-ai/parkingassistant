@@ -444,7 +444,9 @@ Excel-файл рассматривается как исходный источ
 - Схема деплоя: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - ADR: [runtime и деплой](docs/adr/001-runtime-and-deployment.md), [база](docs/adr/002-database-baseline.md),
   [модульная архитектура](docs/adr/003-modular-architecture.md), [инвентарь мест](docs/adr/004-place-inventory.md),
-  [деплой стенда](docs/adr/005-stand-deploy-via-host-checkout.md)
+  [деплой стенда](docs/adr/005-stand-deploy-via-host-checkout.md),
+  [админка на Vision UI](docs/adr/006-admin-ui-on-vision-ui.md),
+  [сессии и ролевой доступ](docs/adr/007-session-based-access-control.md)
 - Docker baseline: [docker-compose.yml](docker-compose.yml)
 - Setup для Mac и OMV: [SETUP.md](SETUP.md)
 - Выполненные планы: [docs/plans/completed/](docs/plans/completed/)

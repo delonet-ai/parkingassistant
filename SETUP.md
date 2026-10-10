@@ -220,6 +220,49 @@ DATABASE_URL=postgresql://... npm run db:migrate
 
 Это единственный путь применения SQL: тот же `runMigrations()` использует и интеграционный харнесс.
 
+## First run: задать пароль администратора
+
+**Это первый шаг после миграций — до него не работает ничего.** API закрыт по умолчанию
+([ADR 007](docs/adr/007-session-based-access-control.md)): без сессии отвечают только
+`/health`, `/health/db`, `/auth/bootstrap-status` и четыре `/auth/*`, остальное — `401`.
+Сессию выдаёт только `POST /auth/login`, а пароля ни у кого ещё нет: seed
+`packages/db/seeds/001_bootstrap_system_admin.sql` создаёт `sysadmin` со статусом `invited` и
+литеральной заглушкой `{PENDING_IMPLEMENTATION}` вместо хеша. Войти с ней нельзя.
+
+Открыть `http://<хост>:3340/` — вместо формы входа admin UI покажет экран первичной активации
+(он спрашивает `/auth/bootstrap-status` и видит `invited`). Логин подставлен — `sysadmin`;
+нужно задать пароль **не короче 10 символов** и повторить его.
+
+То же самое без браузера:
+
+```bash
+curl -s http://<хост>:3330/auth/bootstrap-status      # ожидаем "authStatus":"invited"
+curl -s -X POST http://<хост>:3330/auth/activate \
+  -H 'content-type: application/json' \
+  -d '{"login":"sysadmin","password":"<не короче 10 символов>"}'
+```
+
+Активация разрешена **один раз**: только пока `auth_users` содержит ровно одну строку и та
+всё ещё `invited`. Дальше маршрут отказывает навсегда (`409 Activation is not available` — тем
+же текстом на все причины отказа, чтобы не подтверждать существование логинов), а пароли
+назначает `system_admin` на вкладке `Доступ`.
+
+Что сделать сразу после активации:
+
+1. завести на вкладке `Доступ` учётную запись с ролью `parking_admin` для повседневной работы;
+2. перестать пользоваться `sysadmin` для операций — он нужен только для учётных записей.
+
+Сам `sysadmin` себя не разблокирует обратно: системный администратор не может ни снять с себя
+роль `system_admin`, ни отключить свою учётную запись (`409` в обоих случаях). Это сделано
+ровно против того, чтобы в установке с одним администратором не осталось ни одного входа.
+
+⚠️ Сессионная cookie не `Secure`: стенд на plain HTTP, и с `Secure` браузер бы её выбросил.
+На локальной сети это приемлемо, за пределами — нет, нужен TLS.
+
+⚠️ `JWT_SECRET` и `SESSION_SECRET` в `staging/env/app.env` этой схемой не используются вообще:
+токен сессии случайный, в базе лежит его `sha256`, общим секретом ничего не подписывается.
+Оставленные там `change-me` ни на что не влияют.
+
 ## Demo dataset
 
 Демо-данные для стенда живут отдельно от базовых seeds — в `packages/db/seeds/demo/`, на уровень
@@ -289,9 +332,12 @@ docker compose -f docker-compose.test.yml down
 ```
 
 Хелперы: `packages/db/testing/harness.js` (схема + сиды + очистка),
-`apps/api/testing/boot-api.js` (поднимает `apps/api/src/server.js` на свободном порту и ждёт
-`/health`) и `apps/api/testing/fixtures.js` (сотрудники, места, линии, релизы, очередь —
-чтобы предусловия теста читались одним блоком). Подробности — в `AGENTS.md` → Testing.
+`apps/api/testing/boot-api.js` (поднимает `apps/api/src/server.js` на свободном порту, ждёт
+`/health` **и входит как `sysadmin`**) и `apps/api/testing/fixtures.js` (сотрудники, места,
+линии, релизы, очередь — чтобы предусловия теста читались одним блоком). Сессия при этом
+нигде не повторяется вручную: `startApi` кладёт полученную cookie в `apps/api/testing/session.js`
+под своим base URL, а `postJson`/`getJson` её оттуда достают. Подробности — в `AGENTS.md` →
+Testing.
 
 `node --test` запускает каждый файл в отдельном процессе, поэтому наборы применяют схему
 параллельно. `CREATE EXTENSION IF NOT EXISTS` не атомарен относительно конкурентного
@@ -327,4 +373,7 @@ SMOKE_STAND_HOST=127.0.0.1 SMOKE_STAND_API_PORT=3000 SMOKE_STAND_ADMIN_PORT=3100
    `docker compose --env-file staging/env/app.env up -d --build` локально.
 4. Убедиться, что one-shot `migrate` отработал: `docker logs parkingassistant-migrate`.
 5. Проверить стенд: `npm run smoke:stand`.
-6. При необходимости загрузить демо-данные: `npm run db:seed:demo` с `DATABASE_URL` стенда.
+6. **Задать пароль `sysadmin` через экран первичной активации** — см. «First run» выше. До
+   этого шага админка не пускает никого, и это ожидаемо.
+7. Завести `parking_admin` на вкладке `Доступ` и работать под ним.
+8. При необходимости загрузить демо-данные: `npm run db:seed:demo` с `DATABASE_URL` стенда.

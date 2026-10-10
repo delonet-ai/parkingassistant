@@ -439,10 +439,35 @@ until a service account or shared secret exists. Task 6 recorded it; it needs a 
 
 ### Task 11: Update documentation
 
-- [ ] update `docs/TECHNICAL_README.md`: M7 complete, the Known Gaps entries this plan closes removed, the new `Доступ` tab listed
-- [ ] write an ADR for the session design: why a server-side session table rather than a JWT, why the cookie cannot be `Secure` on the stand, and what the first-run activation rule is
-- [ ] update `SETUP.md` with the first-run step — the operator sets the bootstrap password before anything else works
-- [ ] update `AGENTS.md`: tests now need an authenticated client, and how to get one
+- [x] update `docs/TECHNICAL_README.md`: M7 complete, the Known Gaps entries this plan closes removed, the new `Доступ` tab listed
+- [x] write an ADR for the session design: why a server-side session table rather than a JWT, why the cookie cannot be `Secure` on the stand, and what the first-run activation rule is ([ADR 007](../adr/007-session-based-access-control.md))
+- [x] update `SETUP.md` with the first-run step — the operator sets the bootstrap password before anything else works
+- [x] update `AGENTS.md`: tests now need an authenticated client, and how to get one
+
+⚠️ **three Known Gaps entries were stale beyond this plan's own closures, and two counts were
+wrong.** The `actorService: 'admin-web'` gap had been closed by Task 6 and still read as open;
+the M10 section still said the rename was pending. The golden snapshot count was recorded as
+122 against 106 actual files, and the integration count as 288 against 360 — both left over
+from the milestone that wrote them. Counts in prose decay silently, so the ones restated here
+were re-derived rather than copied: 57 closed routes (not the 53 Task 10 recorded, which
+predates `/admin/reservations/move` and `/admin/catalog-import` entering the table), 106
+golden snapshots, 360 integration tests, 389 node tests, 159 UI specs.
+
+➕ **the `xlsx` advisory note was inverted, not just updated.** It said the risk was accepted
+because "import scripts не являются публичным web upload/runtime endpoint" — which Task 9
+made false. The condition under which the risk was accepted no longer holds, so the entry now
+says that, names the two things that mitigate it (the route is session-closed, and a non-zip
+is refused on the `PK` signature before `xlsx.read`), and says plainly that mitigation is not
+removal.
+
+➕ **M12 is marked complete only for the catalog.** `npm run db:import:permanent-assignments`
+is still console-only, so its acceptance criterion is recorded as half-met rather than met —
+and the remaining half is the Known Gaps entry that replaced the old "import is console-only"
+one.
+
+⚠️ `startApi({ operator })` is a supported option with no caller: the `parking_admin` 403
+cases sign in over HTTP and pass the cookie explicitly instead. `AGENTS.md` documents the
+pattern that is actually used, and the option as what it is.
 
 ## Technical Details
 
