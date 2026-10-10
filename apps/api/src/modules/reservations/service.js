@@ -10,6 +10,7 @@ const conflictsRepository = require('../conflicts/repository');
 const employeeRequestsRepository = require('../employee-requests/repository');
 const employeesRepository = require('../employees/repository');
 const guestRequestsRepository = require('../guest-requests/repository');
+const lineOccupancyRepository = require('../line-occupancy/repository');
 const placeReleasesRepository = require('../place-releases/repository');
 const placesRepository = require('../places/repository');
 const queueRepository = require('../queue/repository');
@@ -211,6 +212,144 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
     });
   }
 
+  // A move is one reservation changing place, not a cancel plus a new booking: the id, the
+  // source and the request it answers all survive, and `parking_movements` gets one row
+  // with both ends. The target obeys the rules an assignment obeys — released for the date,
+  // free, not archived, not blocked — and every refusal names what stood in the way.
+  async function moveReservation({ actor, reservationId, toParkingPlaceId, reason }) {
+    return withTransaction(pool, async (repo) => {
+      const reservation = await repository.findReservationForUpdate(repo, reservationId);
+
+      if (!reservation) {
+        throw abortWith(404, 'Reservation not found');
+      }
+
+      if (reservation.status !== 'active') {
+        throw abortWith(409, 'Only active reservations can be moved');
+      }
+
+      if (reservation.parking_place_id === toParkingPlaceId) {
+        throw abortWith(409, `The reservation is already on place ${reservation.parking_place_code}`);
+      }
+
+      const reservationDate = reservation.reservation_date_iso;
+
+      // The same per-date lock a manual assignment takes, so a move and an assignment
+      // racing for one target cannot both pass the checks below.
+      await placeReleasesRepository.lockManualAssignmentForDate(repo, reservationDate);
+
+      const target = await placesRepository.findPlaceForMoveForUpdate(repo, toParkingPlaceId);
+
+      if (!target) {
+        throw abortWith(404, 'Target parking place not found');
+      }
+
+      if (target.deleted_at || !target.is_active) {
+        throw abortWith(409, `Place ${target.code} is archived`, {
+          blocker: { type: 'archived', parkingPlaceCode: target.code }
+        });
+      }
+
+      if (target.place_role === 'blocked') {
+        throw abortWith(409, `Place ${target.code} is blocked`, {
+          blocker: { type: 'blocked', parkingPlaceCode: target.code }
+        });
+      }
+
+      const holder = await repository.findActiveHolderOnPlaceDate(repo, {
+        parkingPlaceId: toParkingPlaceId,
+        reservationDate
+      });
+
+      if (holder) {
+        const holderName = holder.user_display_name || holder.guest_name || 'unknown';
+
+        throw abortWith(409, `Place ${target.code} is already taken on ${reservationDate} by ${holderName}`, {
+          blocker: {
+            type: 'reservation',
+            parkingPlaceCode: target.code,
+            reservationId: holder.id,
+            holderName
+          }
+        });
+      }
+
+      const release = await placeReleasesRepository.findActiveReleaseForPlaceDate(repo, {
+        parkingPlaceId: toParkingPlaceId,
+        reservationDate
+      });
+
+      if (!release) {
+        throw abortWith(409, `Place ${target.code} is not released for ${reservationDate}`, {
+          blocker: { type: 'not_released', parkingPlaceCode: target.code }
+        });
+      }
+
+      if (reservation.user_id && release.owner_user_id === reservation.user_id) {
+        throw abortWith(409, 'Released place owner cannot be moved onto the same released place');
+      }
+
+      const warnings = await calculateAssignmentWarnings(repo, reservationDate, toParkingPlaceId);
+
+      const moved = await repository.moveReservation(repo, { reservationId, toParkingPlaceId });
+
+      const clearedOccupancy = await lineOccupancyRepository.deleteOccupancyForReservationPlace(repo, {
+        reservationId,
+        parkingPlaceId: reservation.parking_place_id
+      });
+
+      await repository.insertMovement(repo, {
+        reservationId,
+        movementDate: reservationDate,
+        fromParkingPlaceId: reservation.parking_place_id,
+        toParkingPlaceId,
+        movementType: 'manual_reassign',
+        reason: reason || 'Manual admin move',
+        actorAuthUserId: auditActor(actor).actorAuthUserId
+      });
+
+      await repository.insertReservationEvent(repo, {
+        reservationId,
+        eventType: 'reservation_moved',
+        source: reservation.source,
+        payload: {
+          reservationDate,
+          fromParkingPlaceId: reservation.parking_place_id,
+          toParkingPlaceId,
+          releaseId: release.release_id
+        }
+      });
+
+      await auditRepository.insertAuditLog(repo, {
+        entityType: 'reservation',
+        entityId: reservationId,
+        action: 'reservation_moved',
+        ...auditActor(actor),
+        metadata: {
+          reservationDate,
+          userId: reservation.user_id,
+          userDisplayName: reservation.user_display_name,
+          guestParkingRequestId: reservation.guest_parking_request_id,
+          fromParkingPlaceId: reservation.parking_place_id,
+          fromParkingPlaceCode: reservation.parking_place_code,
+          toParkingPlaceId,
+          toParkingPlaceCode: target.code,
+          releaseId: release.release_id,
+          reason,
+          clearedOccupancyCount: clearedOccupancy.length,
+          warnings
+        }
+      });
+
+      return {
+        reservation: moved,
+        from: { id: reservation.parking_place_id, code: reservation.parking_place_code },
+        to: { id: target.id, code: target.code },
+        warnings
+      };
+    });
+  }
+
   // Read wrappers used by the history journals other contexts serve.
   async function listReservationsForUser(userId) {
     return repository.listReservationsForUser(dbRepository, userId);
@@ -230,7 +369,8 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
     createManualReservation,
     listMovementsForPlace,
     listReservationsForPlace,
-    listReservationsForUser
+    listReservationsForUser,
+    moveReservation
   };
 }
 

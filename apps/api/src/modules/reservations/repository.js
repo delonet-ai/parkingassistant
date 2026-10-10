@@ -84,19 +84,61 @@ async function insertReservationEvent(db, { reservationId, eventType, payload, s
   );
 }
 
-async function insertMovement(db, { reservationId, movementDate, toParkingPlaceId, movementType, reason }) {
+// `fromParkingPlaceId` is null for a first placement and names the old place for a move;
+// `actorAuthUserId` names the operator where one acted.
+async function insertMovement(
+  db,
+  { reservationId, movementDate, fromParkingPlaceId = null, toParkingPlaceId, movementType, reason, actorAuthUserId = null }
+) {
   return db.queryMany(
     `
       insert into parking_movements (
         reservation_id,
         movement_date,
+        from_parking_place_id,
         to_parking_place_id,
         movement_type,
-        reason
+        reason,
+        actor_auth_user_id
       )
-      values ($1, $2::date, $3, $4, $5)
+      values ($1, $2::date, $3, $4, $5, $6, $7)
     `,
-    [reservationId, movementDate, toParkingPlaceId, movementType, reason]
+    [reservationId, movementDate, fromParkingPlaceId, toParkingPlaceId, movementType, reason, actorAuthUserId]
+  );
+}
+
+// Who holds the place on the date, by name, so a refused move can say whom it ran into.
+async function findActiveHolderOnPlaceDate(db, { parkingPlaceId, reservationDate }) {
+  return db.queryOne(
+    `
+      select
+        r.id,
+        u.display_name as user_display_name,
+        gpr.guest_name
+      from reservations r
+      left join users u on u.id = r.user_id
+      left join guest_parking_requests gpr on gpr.id = r.guest_parking_request_id
+      where r.parking_place_id = $1
+        and r.reservation_date = $2::date
+        and r.status = 'active'
+      limit 1
+    `,
+    [parkingPlaceId, reservationDate]
+  );
+}
+
+async function moveReservation(db, { reservationId, toParkingPlaceId }) {
+  return db.queryOne(
+    `
+      update reservations
+      set
+        parking_place_id = $2,
+        updated_at = now()
+      where id = $1
+        and status = 'active'
+      returning id, reservation_date, source, status
+    `,
+    [reservationId, toParkingPlaceId]
   );
 }
 
@@ -109,6 +151,7 @@ async function findReservationForUpdate(db, reservationId) {
       select
         r.id,
         r.reservation_date,
+        to_char(r.reservation_date, 'YYYY-MM-DD') as reservation_date_iso,
         r.parking_place_id,
         r.user_id,
         r.employee_parking_request_id,
@@ -255,6 +298,7 @@ module.exports = {
   cancelActiveReservation,
   cancelReservation,
   findActiveReservationInRange,
+  findActiveHolderOnPlaceDate,
   findActiveReservationOnPlaceDate,
   findReservationForUpdate,
   insertMovement,
@@ -263,5 +307,6 @@ module.exports = {
   listActiveReservationsForDate,
   listMovementsForPlace,
   listReservationsForPlace,
-  listReservationsForUser
+  listReservationsForUser,
+  moveReservation
 };

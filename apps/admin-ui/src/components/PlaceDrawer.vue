@@ -56,9 +56,23 @@ const hostOptions = computed(() =>
   state.employees.map((employee) => ({ value: employee.id, text: employee.displayName }))
 )
 
+// Where a reservation may move: the day's released places nobody holds yet. A blocked or
+// archived one can still slip in here, and the API refuses it by name — the list is a
+// convenience, not the rule.
+const moveOptions = computed(() =>
+  ((state.dashboard && state.dashboard.releasedPlaces) || [])
+    .filter((item) => !item.isReserved && item.parkingPlace.id !== selected.value?.place.id)
+    .map((item) => ({
+      value: item.parkingPlace.id,
+      text: [item.parkingPlace.code, item.parkingPlace.placeType].filter(Boolean).join(' · ')
+    }))
+)
+
 const releaseNotes = ref('')
 const assignUserId = ref(null)
 const assignReason = ref('')
+const moveToPlaceId = ref(null)
+const moveReason = ref('')
 const guest = ref({ hostUserId: null, guestName: '', guestPhone: '', vehiclePlateNumber: '' })
 const busy = ref(false)
 
@@ -110,6 +124,24 @@ const cancelReservation = () =>
       'Назначение отменено.'
     )
   )
+
+const moveReservation = () =>
+  run(async () => {
+    const result = await submit(
+      '/admin/reservations/move',
+      {
+        reservationId: selected.value.reservation.id,
+        toParkingPlaceId: moveToPlaceId.value,
+        reason: moveReason.value || null
+      },
+      'Назначение переведено на другое место.'
+    )
+    // A refused move keeps what the operator picked, so they can read the reason and retry.
+    if (result.ok) {
+      moveToPlaceId.value = null
+      moveReason.value = ''
+    }
+  })
 
 const cancelRelease = () =>
   run(() =>
@@ -243,6 +275,29 @@ const createGuest = () =>
           >
             Отменить назначение
           </ViButton>
+
+          <template v-if="selected.reservation">
+            <ViText tag="h4" variant="title-h6" class="section-gap">Перевести на другое место</ViText>
+            <ViSelect
+              :value="moveToPlaceId"
+              :options="moveOptions"
+              label="Новое место"
+              label-type="static"
+              text-field-name="text"
+              value-field-name="value"
+              track-by-value
+              has-search
+              clearable
+              @update:value="moveToPlaceId = $event"
+            />
+            <ViInput v-model:value="moveReason" label="Причина перевода" label-type="static" clearable />
+            <ViButton color="primary" :loading="busy" :disabled="!moveToPlaceId" @click="moveReservation">
+              Перевести
+            </ViButton>
+            <ViText v-if="!moveOptions.length" tag="p" variant="body-XS-wide" class="muted">
+              На {{ state.date }} нет свободных отданных мест, переводить некуда.
+            </ViText>
+          </template>
 
           <template v-if="selected.release">
             <ViButton

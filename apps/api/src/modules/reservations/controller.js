@@ -160,6 +160,89 @@ function createReservationsController({ services }) {
     }
   }
 
+  async function handleAdminReservationMove(req, actor) {
+    let body;
+
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'Request body must be valid JSON'
+        }
+      };
+    }
+
+    const reservationId = body.reservationId;
+    const toParkingPlaceId = body.toParkingPlaceId;
+    const reason = typeof body.reason === 'string' ? body.reason.trim() || null : null;
+
+    if (!reservationId || !toParkingPlaceId) {
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'reservationId and toParkingPlaceId are required'
+        }
+      };
+    }
+
+    const invalidId = uuidValidationError({ reservationId, toParkingPlaceId });
+
+    if (invalidId) {
+      return invalidId;
+    }
+
+    try {
+      const { reservation, from, to, warnings } = await service.moveReservation({
+        actor,
+        reservationId,
+        toParkingPlaceId,
+        reason
+      });
+
+      return {
+        statusCode: 200,
+        payload: {
+          status: 'ok',
+          service: 'api',
+          reservation: {
+            id: reservation.id,
+            reservationDate: reservation.reservation_date,
+            source: reservation.source,
+            status: reservation.status,
+            fromParkingPlace: from,
+            parkingPlace: to
+          },
+          warnings
+        }
+      };
+    } catch (error) {
+      if (error instanceof AbortTransaction) {
+        return error.result;
+      }
+
+      // The partial unique index is the last word on "one active reservation per place and
+      // date", should a write slip past the lock-guarded check.
+      if (error.code === '23505') {
+        return {
+          statusCode: 409,
+          payload: {
+            status: 'error',
+            service: 'api',
+            error: 'The target place already has an active reservation for this date'
+          }
+        };
+      }
+
+      return internalError(error, 'handleAdminReservationMove');
+    }
+  }
+
   return {
     name: 'reservations',
     routes: [
@@ -174,6 +257,11 @@ function createReservationsController({ services }) {
         path: '/admin/reservations/cancel',
         advertise: true,
         handler: (context) => handleAdminReservationCancel(context.req, requestActor(context))
+      },
+      {
+        method: 'POST',
+        path: '/admin/reservations/move',
+        handler: (context) => handleAdminReservationMove(context.req, requestActor(context))
       }
     ]
   };

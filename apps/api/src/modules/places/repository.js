@@ -142,8 +142,29 @@ async function findPlaceForHistory(db, placeId) {
   );
 }
 
+// The target of a move, archived or not: the caller refuses an archived or blocked place
+// by name, so this read must not filter them out. The row lock keeps an archive or a
+// role change from landing between the check and the move.
+async function findPlaceForMoveForUpdate(db, parkingPlaceId) {
+  return db.queryOne(
+    `
+      select
+        pp.id,
+        pp.code,
+        pp.place_role,
+        pp.is_active,
+        pp.deleted_at
+      from parking_places pp
+      where pp.id = $1
+      for update of pp
+    `,
+    [parkingPlaceId]
+  );
+}
+
 module.exports = {
   findMultiLinePlaceForUser,
+  findPlaceForMoveForUpdate,
   findPlaceForHistory,
   findPlaceInLineForUpdate,
   findPlaceLineContext,

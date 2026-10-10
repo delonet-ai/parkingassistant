@@ -396,4 +396,259 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       }
     });
   });
+
+  describe('moving a reservation', () => {
+    // A manual reservation on a fresh released place, plus a second released place to
+    // move it to. Each case uses its own date so the pools never meet.
+    async function reservationToMove(date, targetPlace = {}) {
+      const { place: fromPlace } = await fixtures.insertReleasedPlace({ date });
+      const { place: toPlace } = await fixtures.insertReleasedPlace({ date, place: targetPlace });
+      await fixtures.insertReleasedPlace({ date });
+      const employee = await fixtures.insertEmployee({ displayName: 'Переводов Пётр' });
+
+      const created = await postJson(api.baseUrl, '/admin/reservations/manual', {
+        userId: employee.id,
+        parkingPlaceId: fromPlace.id,
+        reservationDate: date
+      });
+      assert.equal(created.status, 201);
+
+      return { employee, fromPlace, toPlace, reservationId: created.payload.reservation.id };
+    }
+
+    async function placeOf(reservationId) {
+      const result = await db.query('select parking_place_id, status from reservations where id = $1', [reservationId]);
+      return result.rows[0];
+    }
+
+    async function movementsOf(reservationId) {
+      const result = await db.query(
+        'select from_parking_place_id, to_parking_place_id, movement_type, reason from parking_movements where reservation_id = $1 order by created_at',
+        [reservationId]
+      );
+      return result.rows;
+    }
+
+    it('moves the reservation in place and records exactly one movement', async () => {
+      const date = '2026-10-01';
+      const { fromPlace, toPlace, reservationId } = await reservationToMove(date);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id,
+        reason: 'Owner came back early'
+      });
+
+      assert.equal(status, 200);
+      assert.equal(payload.reservation.id, reservationId);
+      assert.equal(payload.reservation.status, 'active');
+      assert.equal(payload.reservation.fromParkingPlace.code, fromPlace.code);
+      assert.equal(payload.reservation.parkingPlace.code, toPlace.code);
+      assert.deepEqual(payload.warnings, []);
+
+      // Same row, new place — not a cancel plus a fresh booking.
+      const row = await placeOf(reservationId);
+      assert.equal(row.parking_place_id, toPlace.id);
+      assert.equal(row.status, 'active');
+
+      const onDate = await db.query('select count(*)::int as count from reservations where reservation_date = $1::date', [date]);
+      assert.equal(onDate.rows[0].count, 1);
+
+      // The assignment wrote the first movement; the move adds exactly one more, with both ends.
+      const movements = await movementsOf(reservationId);
+      assert.equal(movements.length, 2);
+      assert.deepEqual(movements[1], {
+        from_parking_place_id: fromPlace.id,
+        to_parking_place_id: toPlace.id,
+        movement_type: 'manual_reassign',
+        reason: 'Owner came back early'
+      });
+
+      const audit = await db.query(
+        "select metadata, actor_auth_user_id from audit_logs where action = 'reservation_moved' and entity_id = $1",
+        [reservationId]
+      );
+      assert.equal(audit.rowCount, 1);
+      assert.equal(audit.rows[0].metadata.fromParkingPlaceCode, fromPlace.code);
+      assert.equal(audit.rows[0].metadata.toParkingPlaceCode, toPlace.code);
+      assert.ok(audit.rows[0].actor_auth_user_id, 'the move names the operator');
+
+      const events = await db.query(
+        "select count(*)::int as count from reservation_events where reservation_id = $1 and event_type = 'reservation_moved'",
+        [reservationId]
+      );
+      assert.equal(events.rows[0].count, 1);
+    });
+
+    it('clears the line position reported at the old place', async () => {
+      const date = '2026-10-02';
+      const { employee, fromPlace, toPlace, reservationId } = await reservationToMove(date);
+      await db.query(
+        `insert into line_occupancy (occupancy_date, line_group_id, parking_place_id, position, subject_type, user_id, reservation_id)
+         values ($1::date, $2, $3, 1, 'employee', $4, $5)`,
+        [date, fromPlace.line_group_id, fromPlace.id, employee.id, reservationId]
+      );
+
+      const { status } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id
+      });
+
+      assert.equal(status, 200);
+      const left = await db.query('select count(*)::int as count from line_occupancy where reservation_id = $1', [reservationId]);
+      assert.equal(left.rows[0].count, 0);
+    });
+
+    // Every refusal must leave the reservation where it was and add no movement.
+    async function assertNothingMoved(reservationId, fromPlace) {
+      const row = await placeOf(reservationId);
+      assert.equal(row.parking_place_id, fromPlace.id);
+      assert.equal(row.status, 'active');
+      assert.equal((await movementsOf(reservationId)).length, 1);
+
+      const audit = await db.query(
+        "select count(*)::int as count from audit_logs where action = 'reservation_moved' and entity_id = $1",
+        [reservationId]
+      );
+      assert.equal(audit.rows[0].count, 0);
+    }
+
+    it('refuses a target already taken on that date, naming who holds it', async () => {
+      const date = '2026-10-03';
+      const { fromPlace, toPlace, reservationId } = await reservationToMove(date);
+      const holder = await fixtures.insertEmployee({ displayName: 'Занятов Захар' });
+      const taken = await postJson(api.baseUrl, '/admin/reservations/manual', {
+        userId: holder.id,
+        parkingPlaceId: toPlace.id,
+        reservationDate: date
+      });
+      assert.equal(taken.status, 201);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id
+      });
+
+      assert.equal(status, 409);
+      assert.match(payload.error, /already taken/);
+      assert.match(payload.error, /Занятов Захар/);
+      assert.equal(payload.blocker.type, 'reservation');
+      assert.equal(payload.blocker.holderName, 'Занятов Захар');
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    it('refuses an archived target', async () => {
+      const date = '2026-10-04';
+      const { fromPlace, toPlace, reservationId } = await reservationToMove(date);
+      await db.query('update parking_places set is_active = false, deleted_at = now() where id = $1', [toPlace.id]);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id
+      });
+
+      assert.equal(status, 409);
+      assert.match(payload.error, new RegExp(`${toPlace.code} is archived`));
+      assert.equal(payload.blocker.type, 'archived');
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    it('refuses a blocked target', async () => {
+      const date = '2026-10-05';
+      const { fromPlace, toPlace, reservationId } = await reservationToMove(date, { placeRole: 'blocked' });
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: toPlace.id
+      });
+
+      assert.equal(status, 409);
+      assert.match(payload.error, new RegExp(`${toPlace.code} is blocked`));
+      assert.equal(payload.blocker.type, 'blocked');
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    it('refuses a target that is not released for the date', async () => {
+      const date = '2026-10-06';
+      const { fromPlace, reservationId } = await reservationToMove(date);
+      const unreleased = await fixtures.insertPlace();
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: unreleased.id
+      });
+
+      assert.equal(status, 409);
+      assert.equal(payload.blocker.type, 'not_released');
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
+    it('refuses an unknown reservation and a malformed body', async () => {
+      const { toPlace } = await reservationToMove('2026-10-07');
+
+      const unknown = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId: '00000000-0000-4000-8000-000000000000',
+        toParkingPlaceId: toPlace.id
+      });
+      assert.equal(unknown.status, 404);
+
+      const missing = await postJson(api.baseUrl, '/admin/reservations/move', { reservationId: toPlace.id });
+      assert.equal(missing.status, 400);
+    });
+
+    it('warns when a guest is moved in front of an early departure, as placing one does', async () => {
+      const date = '2026-10-08';
+      const lineGroup = await fixtures.insertLineGroup({ capacity: 2 });
+
+      // The guest lands on the only released place, then a front-of-line place opens up.
+      const { place: guestPlace } = await fixtures.insertReleasedPlace({ date, place: { placeType: 'single' } });
+      const host = await fixtures.insertEmployee();
+      const guest = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
+        hostUserId: host.id,
+        requestDate: date,
+        guestName: 'Гостев Переезд',
+        guestPhone: '+79001234568',
+        vehiclePlateNumber: 'В456ОР777'
+      });
+      assert.equal(guest.status, 201);
+      assert.equal(guest.payload.request.assignedReservation.parkingPlace.code, guestPlace.code);
+
+      const { place: frontPlace } = await fixtures.insertReleasedPlace({
+        date,
+        place: { placeType: 'double', lineGroupId: lineGroup.id, linePositionHint: 1 }
+      });
+      const blocked = await fixtures.insertEmployee({ displayName: 'Раннева Ранняя' });
+      const rearPlace = await fixtures.insertPlace({ lineGroupId: lineGroup.id, linePositionHint: 2 });
+      await fixtures.insertLineOccupancy({
+        date,
+        lineGroupId: lineGroup.id,
+        parkingPlaceId: rearPlace.id,
+        position: 2,
+        userId: blocked.id
+      });
+      await fixtures.insertDeparturePlan({ userId: blocked.id, date, departureTime: '16:30', isEarly: true });
+
+      const reservation = await db.query(
+        "select id from reservations where guest_parking_request_id = $1 and status = 'active'",
+        [guest.payload.request.id]
+      );
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId: reservation.rows[0].id,
+        toParkingPlaceId: frontPlace.id
+      });
+
+      assert.equal(status, 200);
+      assert.equal(payload.warnings.length, 1);
+      assert.equal(payload.warnings[0].type, 'early_departure_blocking_risk');
+      assert.equal(payload.warnings[0].affectedUser.id, blocked.id);
+      assert.equal(payload.warnings[0].assignedParkingPlaceCode, frontPlace.code);
+
+      const audit = await db.query(
+        "select metadata from audit_logs where action = 'reservation_moved' and entity_id = $1",
+        [reservation.rows[0].id]
+      );
+      assert.equal(audit.rows[0].metadata.warnings.length, 1);
+    });
+  });
 });

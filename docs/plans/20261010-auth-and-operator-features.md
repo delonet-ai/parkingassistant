@@ -303,12 +303,27 @@ jobs work again.
 - Modify: `apps/api/src/modules/reservations/{controller,service}.js`
 - Modify: `apps/admin-ui/src/components/PlaceDrawer.vue` and its spec
 
-- [ ] add `POST /admin/reservations/move` taking `{reservationId, toParkingPlaceId, reason}`, moving the reservation and writing one `parking_movements` row with `movementType: 'manual_reassign'` in a single transaction — **not** `'manual'`, which is not a member of the `movement_type` enum (`001_initial_schema.sql:15`); do not extend the enum, `manual_reassign` already means this — `insertMovement` in `reservations/repository.js` already exists and is already called by the assignment path
-- [ ] refuse with the same rules an assignment obeys: a target that is occupied on that date, archived, or blocked answers `409` naming the blocker, and the move leaves nothing behind
-- [ ] return the warnings an assignment returns, so moving a guest in front of an early departure warns exactly as placing one does
-- [ ] add «Перевести на другое место» to the place drawer: a `ViSelect` of candidate places plus a reason, posting the new endpoint
-- [ ] write integration tests for the happy path (one movement row, not a cancel plus an insert), the three refusals, and the warning; write a UI spec for the posted body
-- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 8
+- [x] add `POST /admin/reservations/move` taking `{reservationId, toParkingPlaceId, reason}`, moving the reservation and writing one `parking_movements` row with `movementType: 'manual_reassign'` in a single transaction — **not** `'manual'`, which is not a member of the `movement_type` enum (`001_initial_schema.sql:15`); do not extend the enum, `manual_reassign` already means this — `insertMovement` in `reservations/repository.js` already exists and is already called by the assignment path
+- [x] refuse with the same rules an assignment obeys: a target that is occupied on that date, archived, or blocked answers `409` naming the blocker, and the move leaves nothing behind
+- [x] return the warnings an assignment returns, so moving a guest in front of an early departure warns exactly as placing one does
+- [x] add «Перевести на другое место» to the place drawer: a `ViSelect` of candidate places plus a reason, posting the new endpoint
+- [x] write integration tests for the happy path (one movement row, not a cancel plus an insert), the three refusals, and the warning; write a UI spec for the posted body
+- [x] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 8 (348/348 integration, 151 UI specs, 358 node tests, lint clean, no golden moved)
+
+**the shape:** the move updates `reservations.parking_place_id` in place, so the id, the source
+and the request it answers survive, and `parking_movements` gets one row with both
+`from_parking_place_id` and `to_parking_place_id` (and the operator in `actor_auth_user_id`).
+It takes the same per-date advisory lock a manual assignment takes, and checks the target in
+the order archived → blocked → taken → not released; each `409` carries a `blocker` object
+naming what stood in the way. The route is not advertised in the `GET /` index, like Task 5's
+account routes, so `health.json` does not move.
+
+➕ **a fourth refusal, not released for the date.** The assignment rule this mirrors requires an
+active release on the target; without it the owner would arrive to find someone on their place.
+
+➕ **a moved holder's line position is cleared.** A `line_occupancy` row tied to the reservation
+at the old place would claim they still stand there; the move deletes it and audits the count,
+and the holder reports the new position afresh.
 
 ### Task 8: Share the import logic without changing what it decides
 

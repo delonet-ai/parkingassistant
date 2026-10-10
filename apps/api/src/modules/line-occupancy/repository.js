@@ -182,7 +182,22 @@ async function listOccupancyForUser(db, userId) {
   );
 }
 
+// A moved reservation no longer stands where its holder reported standing, so the report
+// tied to the old place goes; the holder reports the new position afresh.
+async function deleteOccupancyForReservationPlace(db, { reservationId, parkingPlaceId }) {
+  return db.queryMany(
+    `
+      delete from line_occupancy
+      where reservation_id = $1
+        and parking_place_id = $2
+      returning id
+    `,
+    [reservationId, parkingPlaceId]
+  );
+}
+
 module.exports = {
+  deleteOccupancyForReservationPlace,
   deleteOccupancyForSubject,
   listOccupancyForUser,
   findEmployeeOccupancy,

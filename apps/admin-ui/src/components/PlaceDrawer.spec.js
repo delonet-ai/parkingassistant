@@ -138,4 +138,69 @@ describe('PlaceDrawer', () => {
       notes: null
     })
   })
+
+  describe('moving a reservation to another place', () => {
+    // p1 is held for the day; p2 is released and free, p3 is released but already taken.
+    function setReservedDay() {
+      setDay({
+        dashboard: {
+          releasedPlaces: [
+            { parkingPlace: { id: 'p1', code: '118' }, owner: { displayName: 'Иванов' }, releaseId: 'rel1', isReserved: true },
+            { parkingPlace: { id: 'p2', code: '120', placeType: 'double' }, owner: { displayName: 'Сидоров' }, releaseId: 'rel2', isReserved: false },
+            { parkingPlace: { id: 'p3', code: '121', placeType: 'single' }, owner: { displayName: 'Орлов' }, releaseId: 'rel3', isReserved: true }
+          ],
+          reservations: [{ id: 'res1', parkingPlace: { id: 'p1' }, source: 'manual', user: { displayName: 'Петров' } }],
+          guestRequests: []
+        }
+      })
+    }
+
+    const moveSelect = (wrapper) =>
+      wrapper.findAllComponents({ name: 'ViSelect' }).find((select) => select.props('label') === 'Новое место')
+
+    it('offers only the free released places other than this one', () => {
+      setReservedDay()
+      const wrapper = mount(PlaceDrawer)
+
+      expect(wrapper.text()).toContain('Перевести на другое место')
+      expect(moveSelect(wrapper).props('options').map((option) => option.value)).toEqual(['p2'])
+    })
+
+    it('is not offered for a place nobody holds', () => {
+      setDay()
+
+      expect(mount(PlaceDrawer).text()).not.toContain('Перевести на другое место')
+    })
+
+    it('posts the reservation, the picked place and the reason the API expects', async () => {
+      setReservedDay()
+      const fetchMock = stubPost()
+      const wrapper = mount(PlaceDrawer)
+
+      moveSelect(wrapper).vm.$emit('update:value', 'p2')
+      await wrapper.vm.$nextTick()
+      const reasonInput = wrapper
+        .findAllComponents({ name: 'ViInput' })
+        .find((input) => input.props('label') === 'Причина перевода')
+      await reasonInput.find('input').setValue('владелец вернулся')
+      await wrapper.findAll('button').find((button) => button.text() === 'Перевести').trigger('click')
+      await Promise.resolve()
+
+      const [url, init] = fetchMock.mock.calls[0]
+
+      expect(url).toBe('/api/admin/reservations/move')
+      expect(JSON.parse(init.body)).toEqual({
+        reservationId: 'res1',
+        toParkingPlaceId: 'p2',
+        reason: 'владелец вернулся'
+      })
+    })
+
+    it('keeps the move button disabled until a place is picked', () => {
+      setReservedDay()
+      const button = mount(PlaceDrawer).findAll('button').find((item) => item.text() === 'Перевести')
+
+      expect(button.attributes('disabled')).toBeDefined()
+    })
+  })
 })
