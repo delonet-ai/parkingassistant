@@ -22,7 +22,8 @@ const xlsx = require('xlsx');
 const { startApi } = require('../testing/boot-api');
 const { getJson, postForm, postJson } = require('../testing/fixtures');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
-const { PROBLEM_REPORT_LIMIT } = require('../../../packages/domain/catalog-rows');
+const { CATALOG_COLUMNS, PROBLEM_REPORT_LIMIT } = require('../../../packages/domain/catalog-rows');
+const { MAX_SHEET_ROWS } = require('../src/modules/catalog-import/service');
 
 // The sheet the real file uses, including the title row the importer skips and the
 // header spelling with its trailing spaces. 101/102/103 are one triple line, 110 is a
@@ -295,6 +296,65 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
     assert.equal(status, 400);
     assert.match(payload.error, /Workbook could not be read/);
     assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
+  // The likeliest thing to be wrong with a workbook: the header is not in row 2. Every row
+  // then maps to five empty cells, the mapping reads them as the sheet's blank separator lines
+  // and skips them, and the import used to refuse the file with an empty problem list — the
+  // operator was told nothing about the only thing that was wrong.
+  it('refuses a workbook whose header is not where the importer reads it, and says so', async () => {
+    const noTitleRow = workbookBuffer([HEADER[1], ...PLACE_ROWS]);
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(noTitleRow, { dryRun: true })
+    );
+
+    assert.equal(status, 400);
+    assert.match(payload.error, /no header row with/);
+    // The message names the columns the operator has to put back, not just their absence.
+    for (const column of CATALOG_COLUMNS) {
+      assert.ok(payload.error.includes(column), payload.error);
+    }
+    assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
+  // An .xlsx is a zip, so a sheet of repeated junk rows stays far under the upload limit at
+  // two hundred thousand rows — and every row read becomes a staging INSERT inside the open
+  // transaction. The sheet is refused by its declared size, before a row object exists.
+  it('refuses a sheet with more rows than the import reads', async () => {
+    const junk = [];
+
+    for (let index = 0; index < MAX_SHEET_ROWS + 1; index += 1) {
+      junk.push(['G4', String(1000 + index), 'Закреплено', 'ИТ', '']);
+    }
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(workbookBuffer([...HEADER, ...junk]), { dryRun: true })
+    );
+
+    assert.equal(status, 400);
+    assert.match(payload.error, new RegExp(`more than the ${MAX_SHEET_ROWS}`));
+    assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
+  // A sheet name is a client-supplied string, and `workbook.Sheets` is an object: `__proto__`
+  // finds a truthy inherited property, which skipped the refusal and answered "nothing was
+  // understood" about a sheet that does not exist.
+  it('refuses a sheet named after an inherited property of the sheet map', async () => {
+    for (const name of ['__proto__', 'constructor', 'toString']) {
+      const { status, payload } = await postForm(
+        api.baseUrl,
+        '/admin/catalog-import',
+        catalogForm(catalog, { dryRun: true, sheet: name })
+      );
+
+      assert.equal(status, 400, JSON.stringify(payload));
+      assert.match(payload.error, new RegExp(`Sheet not found: ${name}`));
+    }
   });
 
   // 413 and 400 are different answers to different mistakes, and the controller tells them

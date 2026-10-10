@@ -2,7 +2,7 @@
 
 const { isIsoDate } = require('../../../../../packages/shared/dates');
 const { readJsonBody } = require('../../../../../packages/shared/http');
-const { uuidValidationError } = require('../../support/params');
+const { normalizeUuid, uuidValidationError } = require('../../support/params');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
 const { requestActor } = require('../../support/actor');
@@ -176,8 +176,11 @@ function createReservationsController({ services }) {
       };
     }
 
-    const reservationId = body.reservationId;
-    const toParkingPlaceId = body.toParkingPlaceId;
+    // Lowercased, because the uuid shape accepts either case while the service compares the
+    // target against the id Postgres returned — which is lowercase. An uppercase id would slip
+    // past "already on this place" and be refused as "taken by" its own holder instead.
+    const reservationId = normalizeUuid(body.reservationId);
+    const toParkingPlaceId = normalizeUuid(body.toParkingPlaceId);
     const reason = typeof body.reason === 'string' ? body.reason.trim() || null : null;
 
     if (!reservationId || !toParkingPlaceId) {

@@ -9,6 +9,7 @@ const {
   inferPositionHint,
   isGuest,
   mapCatalogRows,
+  missingCatalogColumns,
   normalizeCode,
   normalizeFloor
 } = require('./catalog-rows');
@@ -273,4 +274,24 @@ test('a problem quotes the row of the sheet, not the position in the array', () 
       [9, 'duplicate_code']
     ]
   );
+});
+
+// The header is the one thing the row-level problems cannot report: without it every row maps
+// to five empty cells, which the mapping reads as a blank separator line and skips. A reader
+// that did not ask this question refused the file with an empty problem list.
+test('missingCatalogColumns names the required columns the header does not have', () => {
+  assert.deepEqual(missingCatalogColumns([row({})]), []);
+  // A sheet read one row too low: the first data row became the header.
+  assert.deepEqual(missingCatalogColumns([{ 'G4': 'G4', '101': '102', 'Закреплено': 'Закреплено' }]), [
+    'Уровень',
+    'Место ',
+    'Статус'
+  ]);
+  // The trailing space in `Место ` is part of the key the cells are read by.
+  assert.deepEqual(missingCatalogColumns([{ 'Уровень': 'G4', 'Место': '101', 'Статус': 'Закреплено' }]), [
+    'Место '
+  ]);
+  // The two optional columns are not required: a sheet without them still describes places.
+  assert.deepEqual(missingCatalogColumns([{ 'Уровень': 'G4', 'Место ': '101', 'Статус': 'Закреплено' }]), []);
+  assert.deepEqual(missingCatalogColumns([]), ['Уровень', 'Место ', 'Статус']);
 });

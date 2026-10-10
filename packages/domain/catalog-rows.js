@@ -82,6 +82,26 @@ function sheetRowOf(row, index) {
   return Number.isInteger(recorded) ? recorded + 1 : index + FIRST_DATA_ROW;
 }
 
+// The header the catalog sheet is read by, with the trailing spaces the real file has: the
+// cells are looked up by these literal keys, so the spelling is part of the contract.
+const CATALOG_COLUMNS = ['Уровень', 'Место ', 'Статус', 'Дирекция ', 'Кем'];
+
+// Without these three no row can describe a place. A sheet whose header is not where the
+// reader looks for it — a workbook saved without the title row, so the header lands in row 1
+// and `range: 1` skips it — therefore maps every row to five empty cells, which `isBlankRow`
+// reads as a separator line and drops *without a word*. The import then refuses the file with
+// an empty problem list, which tells the operator nothing about the one thing that is wrong.
+const REQUIRED_CATALOG_COLUMNS = ['Уровень', 'Место ', 'Статус'];
+
+// Which required columns the sheet's header does not have. Read off the first mapped row
+// because that is where the reader puts the header: `defval` gives every row every header
+// key, so one row is the whole answer.
+function missingCatalogColumns(rows) {
+  const header = new Set(Object.keys((rows && rows[0]) || {}));
+
+  return REQUIRED_CATALOG_COLUMNS.filter((column) => !header.has(column));
+}
+
 function readCells(row) {
   return {
     floor: clean(row['Уровень']),
@@ -219,12 +239,14 @@ function mapCatalogRows(rows, source = {}) {
 }
 
 module.exports = {
+  CATALOG_COLUMNS,
   PROBLEM_REPORT_LIMIT,
   REFUSAL_DUPLICATE_CODE,
   clean,
   inferPositionHint,
   isGuest,
   mapCatalogRows,
+  missingCatalogColumns,
   normalizeCode,
   normalizeFloor
 };

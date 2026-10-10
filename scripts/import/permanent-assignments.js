@@ -5,6 +5,11 @@ const path = require('node:path');
 const xlsx = require('xlsx');
 const { Pool } = require('pg');
 
+// The same `clean` and `normalizeCode` the catalog importer reads a row with: this script
+// matches its rows against `parking_places.code`, so a private copy of the normalization would
+// let the two importers disagree about the same workbook the first time either rule changed.
+const { clean, normalizeCode } = require('../../packages/domain/catalog-rows');
+
 const sourcePath =
   process.env.CATALOG_XLSX_PATH || '/app/storage/imports/parking-catalog.xlsx';
 const sheetName = process.env.CATALOG_XLSX_SHEET || 'Лист1';
@@ -14,16 +19,6 @@ const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
   console.error('DATABASE_URL is required');
   process.exit(1);
-}
-
-function clean(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function normalizeCode(value) {
-  const text = clean(value);
-  const match = text.match(/\d+/);
-  return match ? match[0] : text;
 }
 
 function normalizePerson(value) {

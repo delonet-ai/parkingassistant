@@ -2,7 +2,11 @@
 
 const xlsx = require('xlsx');
 
-const { mapCatalogRows } = require('../../../../../packages/domain/catalog-rows');
+const {
+  CATALOG_COLUMNS,
+  mapCatalogRows,
+  missingCatalogColumns
+} = require('../../../../../packages/domain/catalog-rows');
 const { withTransaction } = require('../../repositories/db');
 const { AbortTransaction } = require('../../support/transaction');
 const { auditActor } = require('../../support/actor');
@@ -23,12 +27,35 @@ const repository = require('./repository');
 // is named explicitly instead.
 const DEFAULT_SHEET = 'Лист1';
 
+// How many rows of one sheet the import will read. The real catalog is a few hundred places,
+// and the limit is three orders of magnitude of headroom — but an .xlsx is a zip, so a sheet of
+// repeated junk rows stays well under the upload limit at two hundred thousand rows, and each
+// row read becomes an `INSERT` into the staging table inside the open transaction. Refusing the
+// sheet by its declared size costs nothing and keeps a single-process API answering.
+const MAX_SHEET_ROWS = 5000;
+
 /** A workbook this module cannot read: not a spreadsheet, or no such sheet in it. */
 class CatalogWorkbookError extends Error {
   constructor(message) {
     super(message);
     this.name = 'CatalogWorkbookError';
   }
+}
+
+/**
+ * How many rows the sheet says it has, read from its range rather than from its rows: the
+ * answer has to come before `sheet_to_json` materializes an object per row, which is the cost
+ * the limit exists to refuse.
+ */
+function declaredRowCount(sheet) {
+  if (!sheet || !sheet['!ref']) {
+    return 0;
+  }
+
+  const range = xlsx.utils.decode_range(sheet['!ref']);
+  const rows = range.e.r - range.s.r + 1;
+
+  return Number.isFinite(rows) && rows > 0 ? rows : 0;
 }
 
 /**
@@ -41,15 +68,40 @@ class CatalogWorkbookError extends Error {
  */
 function readSheet(workbook, { sheetName, sourceFile = null } = {}) {
   const resolved = sheetName || DEFAULT_SHEET;
-  const sheet = workbook.Sheets[resolved];
 
-  if (!sheet) {
+  // Asked of `SheetNames`, not of `Sheets[resolved]`: the sheet name is a client-supplied
+  // string, and `sheet=__proto__` (or `constructor`, or `toString`) finds a truthy *inherited*
+  // property on the map of sheets, skipping this refusal to fail later and less clearly.
+  if (!workbook.SheetNames.includes(resolved)) {
     throw new CatalogWorkbookError(
       `Sheet not found: ${resolved} (workbook has ${workbook.SheetNames.join(', ') || 'no sheets'})`
     );
   }
 
+  const sheet = workbook.Sheets[resolved];
+  const declaredRows = declaredRowCount(sheet);
+
+  if (declaredRows > MAX_SHEET_ROWS) {
+    throw new CatalogWorkbookError(
+      `Sheet ${resolved} has ${declaredRows} rows, more than the ${MAX_SHEET_ROWS} this import reads:` +
+        ' this is not the parking catalog'
+    );
+  }
+
   const rows = xlsx.utils.sheet_to_json(sheet, { range: 1, defval: '' });
+
+  // Before the rows: a sheet whose header is missing maps every row to empty cells, which the
+  // mapping reads as blank separator lines and skips silently — so the refusal below would be
+  // "nothing was understood" with nothing said about why.
+  const missingColumns = rows.length > 0 ? missingCatalogColumns(rows) : [];
+
+  if (missingColumns.length > 0) {
+    throw new CatalogWorkbookError(
+      `Sheet ${resolved} has no header row with ${missingColumns.join(', ')}:` +
+        ` the header belongs in row 2, with the columns ${CATALOG_COLUMNS.join(', ')}`
+    );
+  }
+
   const { places, problems, problemsTotal } = mapCatalogRows(rows, {
     sourceFile,
     sourceSheet: resolved
@@ -80,15 +132,20 @@ function readCatalogBuffer(buffer, options = {}) {
     throw new CatalogWorkbookError('Workbook could not be read: the file is not an .xlsx workbook');
   }
 
+  const sheetName = options.sheetName || DEFAULT_SHEET;
   let workbook;
 
   try {
-    workbook = xlsx.read(buffer, { type: 'buffer' });
+    // Only the sheet the import reads is materialized; `SheetNames` is still the whole list, so
+    // "Sheet not found" can still say what the workbook does have. A catalog file carries one
+    // sheet, but a workbook with a megabyte of unrelated sheets would otherwise be parsed in
+    // full to read one of them.
+    workbook = xlsx.read(buffer, { type: 'buffer', sheets: [sheetName] });
   } catch (error) {
     throw new CatalogWorkbookError(`Workbook could not be read: ${error.message}`);
   }
 
-  return readSheet(workbook, options);
+  return readSheet(workbook, { ...options, sheetName });
 }
 
 function createCatalogImportService({ pool }) {
@@ -170,6 +227,7 @@ function createCatalogImportService({ pool }) {
 
 module.exports = {
   CatalogWorkbookError,
+  MAX_SHEET_ROWS,
   createCatalogImportService,
   readCatalogBuffer
 };

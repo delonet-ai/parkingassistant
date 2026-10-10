@@ -12,6 +12,15 @@ function isUuid(value) {
   return typeof value === 'string' && uuidPattern.test(value);
 }
 
+// A uuid as the database spells it. Postgres compares uuids by value, so it accepts either
+// case and answers in lowercase; a handler that then compares an id *as a string* against one
+// Postgres returned has to agree on the spelling, or an uppercase id passes the shape check and
+// fails the comparison. Anything not uuid-shaped is returned untouched, so the caller's own
+// required and shape checks still see what was sent.
+function normalizeUuid(value) {
+  return isUuid(value) ? value.toLowerCase() : value;
+}
+
 // Returns a ready-to-return 400 naming every field that is present but not uuid-shaped, or
 // null when they all pass. Absent fields are skipped on purpose: "missing" is the caller's
 // own required-check to report, and folding the two together would relabel every existing
@@ -59,6 +68,7 @@ function parsePositiveLimit(searchParams, fallback = 100, maximum = 300) {
 
 module.exports = {
   normalizeOptionalString,
+  normalizeUuid,
   parsePositiveLimit,
   splitDisplayName,
   uuidValidationError

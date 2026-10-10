@@ -670,6 +670,23 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       await assertNothingMoved(reservationId, fromPlace);
     });
 
+    // The uuid shape accepts either case and Postgres compares uuids by value, but the guard
+    // above is a JS string comparison against the lowercase id Postgres returned. An uppercase
+    // id used to slip past it and be refused as "taken by" the reservation's own holder.
+    it('refuses the same place written in uppercase for the same reason', async () => {
+      const date = '2026-10-19';
+      const { fromPlace, reservationId } = await reservationToMove(date);
+
+      const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
+        reservationId,
+        toParkingPlaceId: fromPlace.id.toUpperCase()
+      });
+
+      assert.equal(status, 409);
+      assert.match(payload.error, new RegExp(`already on place ${fromPlace.code}`));
+      await assertNothingMoved(reservationId, fromPlace);
+    });
+
     it('refuses a target place that does not exist', async () => {
       const date = '2026-10-12';
       const { fromPlace, reservationId } = await reservationToMove(date);

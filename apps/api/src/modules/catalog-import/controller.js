@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  MultipartFormatError,
   PayloadTooLargeError,
   parseMultipartFormData,
   readRawBody
@@ -24,6 +25,22 @@ const { CatalogWorkbookError, readCatalogBuffer } = require('./service');
 const UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
 const FILE_FIELD = 'catalogFile';
 
+// How much of the uploaded filename is kept. It is the client's string, and it is stamped into
+// `metadata.sourceFile` of every staged place — so its length is paid once per row, and a
+// megabyte-long name on a many-row sheet multiplies into a jsonb nobody asked for. The path is
+// dropped with it: a browser sends a bare name, and anything else is not one.
+const SOURCE_FILE_MAX_LENGTH = 200;
+
+function sourceFileLabel(filename) {
+  const name = String(filename || '')
+    .split(/[\\/]/)
+    .pop()
+    .slice(0, SOURCE_FILE_MAX_LENGTH)
+    .trim();
+
+  return name || null;
+}
+
 function badRequest(error, extra = {}) {
   return {
     statusCode: 400,
@@ -46,20 +63,27 @@ function createCatalogImportController({ services }) {
       const body = await readRawBody(context.req, UPLOAD_LIMIT_BYTES);
       form = parseMultipartFormData(context.req.headers['content-type'] || '', body);
     } catch (error) {
-      // Both failures are the request's fault and both quote nothing but their own message:
+      // Two failures are the request's fault and both quote nothing but their own message:
       // a body over the limit, or a content type that is not multipart. Told apart by type —
-      // on the message, rewording the shared parser would turn a 413 into "malformed".
-      return {
-        statusCode: error instanceof PayloadTooLargeError ? 413 : 400,
-        payload: {
-          status: 'error',
-          service: 'api',
-          error: error.message
-        }
-      };
+      // on the message, rewording the shared parser would turn a 413 into "malformed". A third
+      // failure here is the socket, not the form (a body that stopped mid-upload), and calling
+      // that a client format error would hide it from the log instead of reporting it.
+      if (error instanceof PayloadTooLargeError || error instanceof MultipartFormatError) {
+        return {
+          statusCode: error instanceof PayloadTooLargeError ? 413 : 400,
+          payload: {
+            status: 'error',
+            service: 'api',
+            error: error.message
+          }
+        };
+      }
+
+      return internalError(error, 'handleAdminCatalogImport');
     }
 
     const file = form.files.get(FILE_FIELD);
+    const sourceFile = sourceFileLabel(file && file.filename);
     const dryRun = String(form.fields.get('dryRun') ?? 'true').trim().toLowerCase() !== 'false';
     const sheetName = (form.fields.get('sheet') || '').trim() || undefined;
 
@@ -70,7 +94,7 @@ function createCatalogImportController({ services }) {
     let sheet;
 
     try {
-      sheet = readCatalogBuffer(file.buffer, { sheetName, sourceFile: file.filename });
+      sheet = readCatalogBuffer(file.buffer, { sheetName, sourceFile });
     } catch (error) {
       if (error instanceof CatalogWorkbookError) {
         return badRequest(error.message);
@@ -109,7 +133,7 @@ function createCatalogImportController({ services }) {
           import: {
             ...summary,
             sheet: sheet.sheetName,
-            sourceFile: file.filename,
+            sourceFile,
             rowsRead: sheet.rowsRead
           },
           problems: sheet.problems,

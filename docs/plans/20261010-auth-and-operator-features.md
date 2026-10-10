@@ -394,6 +394,21 @@ renamed `.txt` would otherwise be refused with "Sheet not found: Лист1" and 
 looking for the wrong mistake. A valid workbook that maps to no place at all is a 400 too, with
 the problem rows, rather than a 200 that applies nothing.
 
+➕ The upsert sets `is_active = true` beside `deleted_at = null`, which the CLI's copy did not:
+archiving a slot clears both, so a re-import used to revive a place only half way — visible to
+`/admin/places`, releases and reservations, invisible in the `Места` grid, and counted into a
+capacity that same grid then called broken. This *is* a change to what the import decides, and
+the consequence belongs in review: a slot archived by hand comes back on the next import while
+its code is still in the sheet. Recorded in `scripts/import/README.md` for the operator.
+
+➕ Two more refusals the reader owes the operator, both added after review:
+**the header must be where the reader looks for it** (row 2 — a workbook saved without the title
+row maps every row to empty cells, which the mapping reads as the sheet's blank separator lines
+and skips, so the file was refused with an empty problem list and nothing said about the only
+thing that was wrong), and **a sheet declaring more than 5000 rows is not the catalog** — an
+.xlsx is a zip, so two hundred thousand junk rows fit under the upload limit, and each row read
+becomes a staging `INSERT` inside the open transaction of a single-process API.
+
 ⚠️ `/admin/catalog-import` is deliberately **not** `advertise`d in the index at `GET /`: that
 list is a golden snapshot and this task does not regenerate it — the same choice Task 7 made for
 `/admin/reservations/move`. Both belong in the index the next time the snapshots move.
