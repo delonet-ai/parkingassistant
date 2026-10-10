@@ -11,8 +11,28 @@ const { after, afterEach, before, describe, it } = require('node:test');
 
 const { startApi } = require('../testing/boot-api');
 const { getJson, postJson } = require('../testing/fixtures');
+const { createModules } = require('../src/modules');
+const { buildRouteTable } = require('../src/router');
 const { verifyPassword } = require('../../../packages/shared/passwords');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
+
+// Every route the composed table scopes to a role, read from the table rather than listed
+// here. The role guard is only worth as much as its coverage, and a seventh account route
+// added next month would otherwise be refused by nothing this suite looks at.
+function roleScopedRoutes() {
+  const { modules } = createModules({
+    appTimezone: 'Europe/Moscow',
+    dbRepository: null,
+    guestReserveMinimum: 5,
+    pool: null,
+    startedAt: '2026-01-01T00:00:00.000Z'
+  });
+  const table = buildRouteTable(modules);
+
+  return [...table.exactRoutes.entries()]
+    .filter(([, route]) => Array.isArray(route.roles) && route.roles.length > 0)
+    .map(([key]) => key);
+}
 
 const GOOD_PASSWORD = 'first-run-password';
 
@@ -900,6 +920,14 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
       ['/admin/users/disable', { authUserId: victim.payload.user.id }],
       ['/admin/users/enable', { authUserId: victim.payload.user.id }]
     ];
+
+    // "Every" means every: the probes above plus the list read, against the table itself.
+    // A role-scoped route this case does not call fails here rather than going unchecked.
+    assert.deepEqual(
+      ['GET /admin/users', ...writes.map(([pathname]) => `POST ${pathname}`)].sort(),
+      roleScopedRoutes().sort(),
+      'a role-scoped route is not probed for a parking_admin — add it to this case'
+    );
 
     for (const [pathname, body] of writes) {
       const { status, payload } = await postJson(api.baseUrl, pathname, body, { cookie });

@@ -15,6 +15,8 @@
 const assert = require('node:assert/strict');
 const { after, before, describe, it } = require('node:test');
 
+const { createModules } = require('../src/modules');
+const { createDbRepository } = require('../src/repositories/db');
 const { SESSION_COOKIE_NAME } = require('../src/support/cookies');
 const { startApi } = require('../testing/boot-api');
 const { createFixtures, getJson, postJson } = require('../testing/fixtures');
@@ -190,6 +192,45 @@ describe('audit actor (integration)', { skip: skipWithoutDatabase() }, () => {
       [payload.jobRun.id]
     );
     assert.equal(run.rows[0].actor_service, 'admin-ui');
+  });
+
+  // The other half of the same question, and the half no HTTP request can ask today: a run
+  // nobody started. The scheduler posts to `/admin/jobs/*` with no cookie, so since Task 3 it
+  // is refused at the guard and never reaches the service — which is why this case drives the
+  // service in-process against the same scratch schema, with the `actor` the scheduler's
+  // request would produce once it has a way in: none.
+  //
+  // What it pins is that `jobs` is written because nobody was signed in, not because a label
+  // was hard-coded: the cases above show the same code path naming a person.
+  it('names the service, and no person, on a job run that no operator started', async () => {
+    const { services } = createModules({
+      appTimezone: 'Europe/Moscow',
+      dbRepository: createDbRepository(db.pool),
+      guestReserveMinimum: 0,
+      pool: db.pool,
+      startedAt: new Date().toISOString()
+    });
+
+    const result = await services.jobs.runRebuildConflicts({ actor: null, targetDate: DATE });
+    const jobRunId = result.jobRun.id;
+
+    const run = await db.query('select actor_service from job_runs where id = $1', [jobRunId]);
+    assert.equal(run.rows[0].actor_service, 'jobs');
+
+    // By the run's id, not by "the latest row": the operator-started run above writes the
+    // same action, and picking the newest would let the two cases assert each other's row.
+    const audit = await db.query(
+      `
+        select actor_service, actor_auth_user_id
+        from audit_logs
+        where action = 'job_rebuild_conflicts_success' and metadata->>'jobRunId' = $1
+      `,
+      [jobRunId]
+    );
+
+    assert.equal(audit.rows.length, 1);
+    assert.equal(audit.rows[0].actor_service, 'jobs');
+    assert.equal(audit.rows[0].actor_auth_user_id, null);
   });
 
   it('serves the operator to the journal reader, by login and display name', async () => {

@@ -164,23 +164,76 @@ describe('route access control over HTTP', () => {
   }
 
   // Pattern routes are registered as a regular expression, so the table cannot be asked for a
-  // concrete path. These are the two history journals; the uuid never reaches a query because
-  // the guard answers first.
-  const PATTERN_PROBES = [
-    ['GET', '/admin/employees/00000000-0000-0000-0000-000000000000/history'],
-    ['GET', '/admin/places/00000000-0000-0000-0000-000000000000/history']
-  ];
+  // concrete path — it has to be built back from the pattern. Doing that by hand cost a hole:
+  // the list used to name the two history journals literally, and
+  // `GET /admin/line-groups/:id/occupancy` was added later and never probed anonymously.
+  // Deriving the path means a pattern route registered tomorrow is probed the day it appears.
+  //
+  // The uuid never reaches a query: the guard answers before the handler parses it.
+  const PROBE_ID = '00000000-0000-0000-0000-000000000000';
+
+  function probePathFor(pattern) {
+    const literal = pattern.source
+      .replace(/^\^/, '')
+      .replace(/\$$/, '')
+      .replace(/\(\[\^\/\]\+\)/g, PROBE_ID)
+      .replace(/\\\//g, '/');
+
+    assert.ok(
+      literal.startsWith('/') && !/[()[\]\\?*+|]/.test(literal),
+      `cannot build a concrete path from ${pattern} — teach probePathFor the new syntax`
+    );
+
+    return literal;
+  }
+
+  const closedPatternRoutes = table.patternRoutes.filter((route) => route.public !== true);
 
   const anonymousProbes = [
     ...[...table.exactRoutes.entries()]
       .filter(([, route]) => route.public !== true)
       .map(([key]) => key.split(' ')),
-    ...PATTERN_PROBES
+    ...closedPatternRoutes.map((route) => [route.method, probePathFor(route.pattern)])
   ];
 
   it('has a closed route to probe for every context', () => {
     // Guards the loop below against passing vacuously if the table stops composing.
     assert.ok(anonymousProbes.length >= 45, `expected the closed routes to be enumerated, got ${anonymousProbes.length}`);
+  });
+
+  // The enumeration is the claim: every closed route in the composed table is probed below,
+  // pattern routes included. Asserted here so a route that the probe builder silently dropped
+  // fails loudly instead of leaving a gap nobody counts.
+  it('probes every closed route in the composed table', () => {
+    const closedCount =
+      [...table.exactRoutes.values()].filter((route) => route.public !== true).length +
+      closedPatternRoutes.length;
+
+    assert.equal(anonymousProbes.length, closedCount);
+    assert.equal(
+      anonymousProbes.filter(([, pathname]) => pathname.startsWith('/admin/')).length,
+      [...table.exactRoutes.entries()].filter(
+        ([key, route]) => route.public !== true && key.includes(' /admin/')
+      ).length + closedPatternRoutes.length,
+      'every /admin route, pattern routes included, has to be among the probes'
+    );
+  });
+
+  // Each derived path has to actually reach the route it was derived from; a pattern whose
+  // probe fell through to another route (or to the 404 branch) would assert nothing.
+  it('derives a probe path that matches the pattern it came from', () => {
+    assert.ok(closedPatternRoutes.length >= 3, 'the three journals and the occupancy read');
+
+    for (const route of closedPatternRoutes) {
+      const pathname = probePathFor(route.pattern);
+
+      assert.match(pathname, route.pattern, `${pathname} does not match ${route.pattern}`);
+      assert.equal(
+        table.exactRoutes.has(`${route.method} ${pathname}`),
+        false,
+        `${pathname} collides with an exact route, so the probe would not reach the pattern`
+      );
+    }
   });
 
   for (const [method, pathname] of anonymousProbes) {

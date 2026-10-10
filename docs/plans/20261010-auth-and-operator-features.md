@@ -400,12 +400,42 @@ list is a golden snapshot and this task does not regenerate it — the same choi
 
 ### Task 10: Verify acceptance criteria
 
-- [ ] verify no `/admin/*` route answers without a session: enumerate the router's table and call each one anonymously
-- [ ] verify a `parking_admin` cannot reach any user-management route
-- [ ] verify the audit trail names a person for operator actions and a service for job actions
-- [ ] run `npm run test:integration` with `DATABASE_URL_TEST` set — all suites green, twice in a row
-- [ ] run `npm run admin-ui:build` — no unresolved-font warnings
-- [ ] run `npm run test:ui && npm run check && npm run lint && npm test`
+- [x] verify no `/admin/*` route answers without a session: enumerate the router's table and call each one anonymously (53 closed routes, each answering 401 — 50 exact plus three pattern routes)
+- [x] verify a `parking_admin` cannot reach any user-management route (403 on all six, and the probe set is now checked against the table)
+- [x] verify the audit trail names a person for operator actions and a service for job actions (both halves asserted; the service half needed a new case)
+- [x] run `npm run test:integration` with `DATABASE_URL_TEST` set — all suites green, twice in a row (360/360 twice)
+- [x] run `npm run admin-ui:build` — no unresolved-font warnings (clean, no warnings of any kind)
+- [x] run `npm run test:ui && npm run check && npm run lint && npm test` (159 UI specs, 176 files parsed, lint clean, 389 node tests)
+
+⚠️ **the first criterion was not met when this task started, and enumerating by hand is why.**
+`route-access.test.js` built its anonymous probes from `table.exactRoutes` — complete by
+construction — and then appended a hand-written pair of pattern routes. The table has **three**
+closed pattern routes: `GET /admin/line-groups/:id/occupancy` was added later and was never
+called anonymously. It does answer 401, so nothing was open; what was missing was the proof,
+which is exactly what a hand-maintained list of a derived thing loses. The probes are now
+derived from the pattern source (`([^/]+)` → a zero uuid), with two assertions that keep them
+honest: that the probe count equals the table's closed-route count, and that each derived path
+actually matches the pattern it came from and collides with no exact route.
+
+➕ The `parking_admin` case in `auth.itest.js` listed its six routes by hand too. It still
+builds the request bodies explicitly — a role refusal is only interesting against a request
+that would otherwise have worked — but the set of routes it probes is now compared against the
+role-scoped routes in the composed table, so a seventh account route fails the suite instead of
+going unchecked.
+
+➕ **"a service for job actions" had no test, because no request can produce one.** Every
+assertion was about an operator-started job, which records `admin-ui` and the person. The
+scheduler's own run — `jobs`, no person — is unreachable over HTTP since Task 3 (the gap Task 6
+recorded), so `audit-actor.itest.js` now drives the jobs service in-process against the same
+scratch schema with `actor: null`, which is the actor the scheduler's request will produce once
+it has a way in, and asserts `jobs` with a null `actor_auth_user_id` on both `job_runs` and the
+audit row. Verified by mutation: hard-coding the fallback to `admin-ui` fails this case and
+nothing else. The row is found by the run's id rather than "the latest row", so this case and
+the operator-started one above cannot assert each other's row.
+
+⚠️ The scheduler still cannot reach the API — unchanged by this task, and the one item on the
+plan's own acceptance list that remains false on the stand. The 07:00 and 19:00 jobs answer 401
+until a service account or shared secret exists. Task 6 recorded it; it needs a task of its own.
 
 ### Task 11: Update documentation
 
