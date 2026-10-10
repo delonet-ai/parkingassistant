@@ -301,7 +301,7 @@ jobs work again.
 - Modify: `apps/api/src/modules/reservations/{controller,service}.js`
 - Modify: `apps/admin-ui/src/components/PlaceDrawer.vue` and its spec
 
-- [ ] add `POST /admin/reservations/move` taking `{reservationId, toParkingPlaceId, reason}`, moving the reservation and writing one `parking_movements` row with `movementType: 'manual'` in a single transaction — `insertMovement` in `reservations/repository.js` already exists and is already called by the assignment path
+- [ ] add `POST /admin/reservations/move` taking `{reservationId, toParkingPlaceId, reason}`, moving the reservation and writing one `parking_movements` row with `movementType: 'manual_reassign'` in a single transaction — **not** `'manual'`, which is not a member of the `movement_type` enum (`001_initial_schema.sql:15`); do not extend the enum, `manual_reassign` already means this — `insertMovement` in `reservations/repository.js` already exists and is already called by the assignment path
 - [ ] refuse with the same rules an assignment obeys: a target that is occupied on that date, archived, or blocked answers `409` naming the blocker, and the move leaves nothing behind
 - [ ] return the warnings an assignment returns, so moving a guest in front of an early departure warns exactly as placing one does
 - [ ] add «Перевести на другое место» to the place drawer: a `ViSelect` of candidate places plus a reason, posting the new endpoint
