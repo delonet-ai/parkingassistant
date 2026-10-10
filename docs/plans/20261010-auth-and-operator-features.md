@@ -531,6 +531,40 @@ back the place they had just released; and `reservation.user_id !== userId`, whi
 holder of a reservation their own line position with "belongs to another user". Both
 controllers now normalize on the way in, the way `handleAdminReservationMove` already did.
 
+### Task 12: Let the scheduler back in
+
+Closing the API closed it to the scheduler too, which is the one acceptance criterion Task 10
+could not tick: `apps/jobs/src/scheduler.js:88` posts with nothing but a `content-type`, and the
+five job routes it calls have been answering `401` since Task 3. The 07:00 and 19:00 jobs have not
+run on the stand since. This task is the fix, and it is deliberately the narrowest one that keeps
+the audit trail honest.
+
+**the shape, and why not the alternatives.** A shared service token in a header, compared
+timing-safe, resolving to **no** user: the audit row then says `jobs` with a null
+`actor_auth_user_id`, which is what `audit-actor.itest.js` already pins and what an unattended run
+actually is. A service *account* with a password and a session was the obvious alternative and is
+rejected: it would make the trail name a near-person and turn that test into a lie. Moving the
+scheduler off HTTP onto in-process calls is cleaner still and is rejected for a different reason —
+the jobs container would need its own database credentials and connection pool, which is a change
+to the deployment shape, not to this plan.
+
+**Files:**
+- Modify: `apps/api/src/router.js` — accept a service token as an alternative to a session, for routes that say so
+- Modify: `apps/api/src/modules/jobs/controller.js` — mark the five scheduler routes `service: true`
+- Modify: `apps/jobs/src/scheduler.js` — send the header
+- Modify: `apps/api/src/route-access.test.js`, `apps/jobs/src/scheduler.test.js`
+- Modify: `docker-compose.yml`, `.env.example`, `SETUP.md`, `docs/DEPLOYMENT.md`
+
+- [ ] add `service: true` to the five routes the scheduler posts — `/admin/jobs/{lock-departure-plans,process-queue,rebuild-conflicts,freeze-next-day,unlock-employee-pool}` — and to nothing else; `/admin/jobs/runs` is a read for the operator's screen and stays session-only
+- [ ] accept `X-Service-Token` on those routes only, comparing `timingSafeEqual` over the SHA-256 of each side so unequal lengths cannot throw, and resolve the request to `{ authUser: null, roles: [] }` so `auditActor` keeps writing the service label
+- [ ] when `JOBS_SERVICE_TOKEN` is unset or empty, the header path is **off**, not open: an absent variable must not let an absent header authenticate. Assert this directly — it is the hole this design can actually have
+- [ ] keep deny-by-default intact: a session still works on those routes, a token still fails everywhere else, and `route-access.test.js` asserts the set of `service: true` routes is exactly those five, so a sixth cannot be added quietly
+- [ ] make the scheduler send the header when it has a token and log a refusal that names the cause when it does not — a `401` at 07:00 must not look like an empty queue
+- [ ] add `JOBS_SERVICE_TOKEN` to `.env.example` and to both the `api` and `jobs` services in `docker-compose.yml`, and document generating one (`openssl rand -hex 32`) in `SETUP.md` and `docs/DEPLOYMENT.md`
+- [ ] settle the two secrets this design does not use: `JWT_SECRET` and `SESSION_SECRET` are passed to the `api` container and read by nothing (ADR 007 explains why), and are still `change-me`. Remove them from `.env.example` and the compose environment, or write down why they stay
+- [ ] verify the jobs path end to end rather than by unit test alone: run the scheduler against a booted API with the token set and watch a job complete, then run it with the wrong token and see the refusal logged
+- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test`
+
 ## Technical Details
 
 **Password storage.** `scrypt` from `node:crypto`, cost parameters stored alongside the hash so
@@ -563,7 +597,7 @@ user, whose `password_hash` is a placeholder — which is exactly why activation
   `parking_admin` for day-to-day use and stop using `sysadmin` for operations
 - put the stand behind TLS if it ever leaves the local network: the session cookie is not
   `Secure`, and on plain HTTP it travels in clear
-- decide whether `JWT_SECRET` and `SESSION_SECRET` in `staging/env/app.env` are still needed —
-  this design uses neither, and both are still `change-me`
+- deploy with `JOBS_SERVICE_TOKEN` generated per environment and never shared between the stand
+  and production — Task 12 adds it, and a job route accepts whatever it is set to
 - the employee self-service UI (M11) becomes possible after this plan: it needs an identity for
   the employee, which is the piece that was missing
