@@ -27,6 +27,8 @@ authenticated client in Task 3; that is the task's real work, not an afterthough
   - Create: `apps/api/src/modules/auth/{controller,service,repository}.js` — credentials and sessions
   - Create: `packages/shared/passwords.js` — scrypt hashing, no dependency
   - Create: `packages/shared/multipart.js` — moved from `apps/admin-ui/multipart.js`, used by both
+  - Create: `packages/domain/catalog-rows.js` — the catalog row mapping lifted out of
+    `scripts/import/parking-catalog.js`, so the CLI and the upload endpoint decide a row alike
   - Modify: `apps/api/src/router.js` — the guard, and `public: true` on the routes that stay open
   - Modify: `apps/api/src/modules/index.js` — register the auth context
   - Modify: `apps/api/testing/boot-api.js`, `apps/api/testing/fixtures.js`,
@@ -64,7 +66,7 @@ authenticated client in Task 3; that is the task's real work, not an afterthough
 
 - **testing approach**: regular — build the behaviour, then cover it, including the refusal paths
 - verification command: `npm run test:ui && npm run check && npm run lint && npm test`
-- integration command (Tasks 1–3, 6–8): `npm run test:integration` with `DATABASE_URL_TEST` set
+- integration command (Tasks 1–3, 6–10): `npm run test:integration` with `DATABASE_URL_TEST` set
 - complete each task fully before moving to the next
 - **CRITICAL: all checks must pass before starting the next task**
 - **CRITICAL: update this plan file when scope changes during implementation**
@@ -308,22 +310,43 @@ jobs work again.
 - [ ] write integration tests for the happy path (one movement row, not a cancel plus an insert), the three refusals, and the warning; write a UI spec for the posted body
 - [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 8
 
-### Task 8: Import the Excel catalog from the UI
+### Task 8: Share the import logic without changing what it decides
+
+A refactor with no new behaviour, kept separate on purpose: the one way to get this wrong is to
+leave the old rules in place and write a second copy beside them, and a copy passes every test
+while quietly forking what the importer decides. Splitting the move from the feature is what makes
+that visible in review.
 
 **Files:**
 - Move: `apps/admin-ui/multipart.js` → `packages/shared/multipart.js` (update both importers)
+- Create: `packages/domain/catalog-rows.js` and its test — the pure row mapping lifted out of the script
+- Modify: `scripts/import/parking-catalog.js` — imports what was lifted, keeps no copy
+- Modify: `infra/docker/admin-ui.Dockerfile`
+
+- [ ] move the multipart parser into `packages/shared`: it is ESM today because `apps/admin-ui` is `"type": "module"`, while `packages/shared` is CJS — convert it to `module.exports = { parseMultipartFormData, readRawBody }`, which Node's named-export interop keeps working for `server.js`'s `import { ... }`, and prove the UI server still starts and still parses an upload with a test rather than by eye
+- [ ] update `infra/docker/admin-ui.Dockerfile`, which names `apps/admin-ui/multipart.js` in the `COPY` at line 41: miss this and the image builds fine and then cannot start
+- [ ] lift the pure row mapping out of `scripts/import/parking-catalog.js` — `clean`, `normalizeFloor`, `normalizeCode`, `inferPositionHint`, `isGuest`, `rowToPlace` (lines 17–96) — into `packages/domain/catalog-rows.js`, and make the script import them; the script must keep **no** copy
+- [ ] write unit tests for the lifted mapping on rows shaped like the real sheet (see `CATALOG_ROWS` in `apps/api/integration/e2e-day.itest.js:63`): a guest row, a closed-assignment row, a position word that becomes a hint and is then discarded, a row with no hint, and a row that must be refused
+- [ ] leave `importPlaces` (the staged upsert, lines 124–335) where it is — moving the SQL is Task 9's problem, and mixing it in here is what makes a refactor unreviewable
+- [ ] the proof that nothing changed is the e2e suite: it already writes a catalog workbook and imports it, so `apps/api/integration/e2e-day.itest.js` must stay green with no edit to its assertions
+- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 9, and no golden snapshot may move, because no endpoint answers anything new yet
+
+### Task 9: Import the Excel catalog from the UI
+
+**Files:**
 - Create: `apps/api/src/modules/catalog-import/{controller,service}.js`
+- Modify: `scripts/import/parking-catalog.js` — the CLI becomes a thin caller of the service's logic
 - Modify: `apps/admin-ui/src/pages/PlacesPage.vue`, add `CatalogImport.vue` and its spec
 
-- [ ] move the multipart parser into `packages/shared` so the API and the UI server share one; `apps/admin-ui/server.js` imports it from there and `infra/docker/admin-ui.Dockerfile` copies what it needs (the deployment test already asserts this)
-- [ ] add `POST /admin/catalog-import` with `dryRun`, reusing the column mapping and validation of `scripts/import/parking-catalog.js` rather than re-deriving them — extract the shared logic instead of copying it
-- [ ] make the dry run answer counts and problems: how many places would be created, how many updated, which rows were not understood and why
-- [ ] make the apply idempotent on a re-upload of the same file, which is the property the CLI script already has and the one most likely to be lost
-- [ ] build the UI: upload on the `Места` tab, preview the counts, then apply — with the preview being a separate, explicit step
-- [ ] write integration tests from a generated `.xlsx` (the e2e suite already does this) covering dry run, apply, re-apply, and a malformed file
-- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 9
+- [ ] add `POST /admin/catalog-import` taking the workbook as multipart plus a `dryRun` flag, mapping rows through `packages/domain/catalog-rows.js` from Task 8 — the endpoint decides nothing about a row that the CLI does not already decide
+- [ ] move the staged upsert into the module's service so the endpoint and the CLI run the same transaction; the CLI keeps its own argument and connection handling and nothing else
+- [ ] make the dry run answer counts and problems — how many places would be created, how many updated, which rows were not understood and why — and write nothing, in a transaction that rolls back rather than a code path that merely avoids writing
+- [ ] make the apply idempotent on a re-upload of the same file, which is the property the CLI already has and the one most likely to be lost
+- [ ] build the UI: upload on the `Места` tab, preview the counts, then apply — the preview being a separate, explicit step
+- [ ] write integration tests from a generated `.xlsx` covering dry run (and that it wrote nothing), apply, re-apply changing nothing, and a malformed file; write a UI spec for the two-step flow
+- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 10
 
-### Task 9: Verify acceptance criteria
+### Task 10: Verify acceptance criteria
 
 - [ ] verify no `/admin/*` route answers without a session: enumerate the router's table and call each one anonymously
 - [ ] verify a `parking_admin` cannot reach any user-management route
@@ -332,7 +355,7 @@ jobs work again.
 - [ ] run `npm run admin-ui:build` — no unresolved-font warnings
 - [ ] run `npm run test:ui && npm run check && npm run lint && npm test`
 
-### Task 10: Update documentation
+### Task 11: Update documentation
 
 - [ ] update `docs/TECHNICAL_README.md`: M7 complete, the Known Gaps entries this plan closes removed, the new `Доступ` tab listed
 - [ ] write an ADR for the session design: why a server-side session table rather than a JWT, why the cookie cannot be `Secure` on the stand, and what the first-run activation rule is
