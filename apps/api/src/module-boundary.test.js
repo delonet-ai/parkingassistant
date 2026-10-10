@@ -156,6 +156,7 @@ test('every route the monolith served is still registered, with the same method'
     'GET /bot/line/blocking-contacts',
     'GET /health',
     'GET /health/db',
+    'POST /admin/catalog-import',
     'POST /admin/departure-plans',
     'POST /admin/employee-parking-requests',
     'POST /admin/employee-parking-requests/cancel',

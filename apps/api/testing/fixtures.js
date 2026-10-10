@@ -273,6 +273,25 @@ async function postJson(target, pathname, body, options = {}) {
   return { status: response.status, payload: await response.json() };
 }
 
+/**
+ * The multipart variant, for the one endpoint that takes a file.
+ *
+ * `fetch` derives the content type and the boundary from the FormData, which is exactly what a
+ * browser does — setting the header by hand here would send a boundary the body does not use
+ * and the parser would find no parts. The session travels the same way as for a JSON write.
+ */
+async function postForm(target, pathname, form, options = {}) {
+  const baseUrl = baseUrlOf(target);
+
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    method: 'POST',
+    headers: sessionHeaders(baseUrl, options),
+    body: form
+  });
+
+  return { status: response.status, payload: await response.json() };
+}
+
 async function getJson(target, pathname, options = {}) {
   const baseUrl = baseUrlOf(target);
 
@@ -281,4 +300,4 @@ async function getJson(target, pathname, options = {}) {
   return { status: response.status, payload: await response.json() };
 }
 
-module.exports = { addDays, baseUrlOf, createFixtures, dayRange, getJson, postJson };
+module.exports = { addDays, baseUrlOf, createFixtures, dayRange, getJson, postForm, postJson };

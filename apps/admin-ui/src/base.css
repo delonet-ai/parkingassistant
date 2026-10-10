@@ -72,6 +72,14 @@ body {
   gap: 12px;
 }
 
+/* Lines that belong together inside a card or an alert — a list of import problems, where
+   12px between one-line items reads as separate paragraphs. */
+.stack-tight {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .row {
   display: flex;
   flex-wrap: wrap;

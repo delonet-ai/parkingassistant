@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { ViCard, ViCardContent } from '@vi-frontend/vision-ui/next'
 import { ViAlert, ViSelect, ViText } from '@vi-frontend/vision-ui'
 
+import CatalogImport from '../components/CatalogImport.vue'
 import InventoryEditor from '../components/InventoryEditor.vue'
 import MapUpload from '../components/MapUpload.vue'
 import { FLOORS, currentFloor, state } from '../store'
@@ -59,6 +60,13 @@ const capacityMismatches = computed(() => diagnostics.value.lineCapacityMismatch
           Инвентарь · этаж {{ currentFloor().title }}
         </ViText>
         <InventoryEditor />
+      </ViCardContent>
+    </ViCard>
+
+    <ViCard variant="outlined">
+      <ViCardContent>
+        <ViText tag="h3" variant="title-h5" class="section-head">Импорт каталога из Excel</ViText>
+        <CatalogImport />
       </ViCardContent>
     </ViCard>
 

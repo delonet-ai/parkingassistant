@@ -4,6 +4,8 @@ const { createAuditController } = require('./audit/controller');
 const { createAuditService } = require('./audit/service');
 const { createAuthController } = require('./auth/controller');
 const { createAuthService } = require('./auth/service');
+const { createCatalogImportController } = require('./catalog-import/controller');
+const { createCatalogImportService } = require('./catalog-import/service');
 const { createConflictsController } = require('./conflicts/controller');
 const { createConflictsService } = require('./conflicts/service');
 const { createContactAccessController } = require('./contact-access/controller');
@@ -53,6 +55,7 @@ function createServices(deps) {
   return {
     audit: createAuditService(deps),
     auth: createAuthService(deps),
+    catalogImport: createCatalogImportService(deps),
     conflicts: createConflictsService(deps),
     contactAccess: createContactAccessService(deps),
     dashboard: createDashboardService(deps),
@@ -81,6 +84,7 @@ function createControllers(deps) {
     createAuthController(deps),
     createEmployeesController(deps),
     createPlacesController(deps),
+    createCatalogImportController(deps),
     createPlaceLinesController(deps),
     createPermanentAssignmentsController(deps),
     createAuditController(deps),

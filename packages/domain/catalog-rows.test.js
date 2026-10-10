@@ -7,6 +7,7 @@ const {
   clean,
   inferPositionHint,
   isGuest,
+  mapCatalogRows,
   normalizeCode,
   normalizeFloor,
   rowToPlace
@@ -136,4 +137,55 @@ test('isGuest matches the status stem, whatever the ending', () => {
   assert.equal(isGuest('гостевая стоянка'), true);
   assert.equal(isGuest('Закреплено'), false);
   assert.equal(isGuest(''), false);
+});
+
+// mapCatalogRows is what both importers call: the CLI renders its problems as warnings, the
+// upload endpoint answers with them. The row numbers it reports are Excel's, counted from the
+// sheet the importer reads with `range: 1` — title on 1, header on 2, first place on 3.
+
+test('a whole sheet maps to the places to write and the rows that will not be written', () => {
+  const { places, problems } = mapCatalogRows(
+    [
+      row({ place: '101 передний' }),
+      row({ place: 'Резерв' }),
+      row({ place: '110', level: '' }),
+      row({ place: '120', status: 'Гостевое' })
+    ],
+    SOURCE
+  );
+
+  assert.deepEqual(
+    places.map((place) => place.code),
+    ['101', '120']
+  );
+  assert.deepEqual(problems, [
+    { row: 4, reason: 'place_without_digits', code: null, floor: 'G4', place: 'Резерв', status: 'Закреплено' },
+    { row: 5, reason: 'missing_required_cells', code: null, floor: '', place: '110', status: 'Закреплено' }
+  ]);
+});
+
+test('a repeated code keeps the first row and reports the second', () => {
+  const { places, problems } = mapCatalogRows(
+    [row({ place: '101 передний' }), row({ place: '101', assignee: 'Петров' })],
+    SOURCE
+  );
+
+  assert.equal(places.length, 1);
+  // The first occurrence won: the title still carries the position word from row 3.
+  assert.equal(places[0].title, '101 передний');
+  assert.deepEqual(problems, [
+    { row: 4, reason: 'duplicate_code', code: '101', floor: 'G4', place: '101', status: 'Закреплено' }
+  ]);
+});
+
+test('an empty sheet maps to nothing at all, not to an error', () => {
+  assert.deepEqual(mapCatalogRows([], SOURCE), { places: [], problems: [] });
+  assert.deepEqual(mapCatalogRows(undefined, SOURCE), { places: [], problems: [] });
+});
+
+test('every mapped place carries the source labels the sheet was read under', () => {
+  const { places } = mapCatalogRows([row({ place: '101' })], SOURCE);
+
+  assert.equal(places[0].metadata.sourceFile, 'parking-catalog.xlsx');
+  assert.equal(places[0].metadata.sourceSheet, 'Лист1');
 });

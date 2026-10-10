@@ -367,13 +367,36 @@ required by path, the way `apps/api/src/services/availability.js` requires `gues
 - Modify: `scripts/import/parking-catalog.js` — the CLI becomes a thin caller of the service's logic
 - Modify: `apps/admin-ui/src/pages/PlacesPage.vue`, add `CatalogImport.vue` and its spec
 
-- [ ] add `POST /admin/catalog-import` taking the workbook as multipart plus a `dryRun` flag, mapping rows through `packages/domain/catalog-rows.js` from Task 8 — the endpoint decides nothing about a row that the CLI does not already decide
-- [ ] move the staged upsert into the module's service so the endpoint and the CLI run the same transaction; the CLI keeps its own argument and connection handling and nothing else
-- [ ] make the dry run answer counts and problems — how many places would be created, how many updated, which rows were not understood and why — and write nothing, in a transaction that rolls back rather than a code path that merely avoids writing
-- [ ] make the apply idempotent on a re-upload of the same file, which is the property the CLI already has and the one most likely to be lost
-- [ ] build the UI: upload on the `Места` tab, preview the counts, then apply — the preview being a separate, explicit step
-- [ ] write integration tests from a generated `.xlsx` covering dry run (and that it wrote nothing), apply, re-apply changing nothing, and a malformed file; write a UI spec for the two-step flow
-- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 10
+- [x] add `POST /admin/catalog-import` taking the workbook as multipart plus a `dryRun` flag, mapping rows through `packages/domain/catalog-rows.js` from Task 8 — the endpoint decides nothing about a row that the CLI does not already decide
+- [x] move the staged upsert into the module's service so the endpoint and the CLI run the same transaction; the CLI keeps its own argument and connection handling and nothing else
+- [x] make the dry run answer counts and problems — how many places would be created, how many updated, which rows were not understood and why — and write nothing, in a transaction that rolls back rather than a code path that merely avoids writing
+- [x] make the apply idempotent on a re-upload of the same file, which is the property the CLI already has and the one most likely to be lost (asserted on the rows, not on a count: a re-import must not recreate a place, or every reservation pointing at its id would be orphaned)
+- [x] build the UI: upload on the `Места` tab, preview the counts, then apply — the preview being a separate, explicit step
+- [x] write integration tests from a generated `.xlsx` covering dry run (and that it wrote nothing), apply, re-apply changing nothing, and a malformed file; write a UI spec for the two-step flow
+- [x] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test` — must pass before task 10 (359/359 integration, 159 UI specs, 386 node tests, lint clean, `npm run admin-ui:build` clean, no golden snapshot touched)
+
+➕ The staged upsert went into `apps/api/src/modules/catalog-import/repository.js` rather than
+into the service: it is ~200 lines of SQL, and ADR 003 puts SQL in the repository. The service
+owns the transaction and the dry run's rollback, which is the layer rule, not an exception to it.
+
+➕ `dryRun` defaults to **true** — only the exact string `false` writes. A caller that forgets
+the flag gets a report, not a rewritten catalog, which is the direction this particular mistake
+has to fall: the catalog is every place's title, line and role.
+
+➕ `mapCatalogRows(rows, source)` joined `packages/domain/catalog-rows.js`, and `rowToPlace` is
+now a thin reader of the same `classifyRow`. The refusal reasons had to become *data* for the UI
+to show which rows were dropped and why, and a second copy of the conditions that refuse a row
+is exactly what Task 8 existed to prevent.
+
+➕ The endpoint refuses a workbook that is not a zip (`PK` signature) before handing it to
+`xlsx.read`: the library parses arbitrary text into a one-sheet workbook called `Sheet1`, so a
+renamed `.txt` would otherwise be refused with "Sheet not found: Лист1" and send the operator
+looking for the wrong mistake. A valid workbook that maps to no place at all is a 400 too, with
+the problem rows, rather than a 200 that applies nothing.
+
+⚠️ `/admin/catalog-import` is deliberately **not** `advertise`d in the index at `GET /`: that
+list is a golden snapshot and this task does not regenerate it — the same choice Task 7 made for
+`/admin/reservations/move`. Both belong in the index the next time the snapshots move.
 
 ### Task 10: Verify acceptance criteria
 

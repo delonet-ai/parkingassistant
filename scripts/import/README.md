@@ -18,6 +18,13 @@ npm run db:import:parking-catalog
 
 The first importer intentionally loads only place catalog data. Source status, department, and assignee are stored in `parking_places.metadata` until permanent assignment import rules are confirmed.
 
+The same import is available to the operator from the admin UI, on the `Места` tab: it uploads
+the workbook to `POST /admin/catalog-import`, which previews the counts first and writes only on
+an explicit second step. The script and the endpoint share both the row mapping
+(`packages/domain/catalog-rows.js`) and the staged upsert
+(`apps/api/src/modules/catalog-import`), so they cannot disagree about a file — this script is
+argument and connection handling around the same service.
+
 ## Permanent Assignments
 
 Imports employees from the same workbook and creates active `permanent_assignments` for rows marked as `Закреплено`.
