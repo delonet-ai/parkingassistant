@@ -2,19 +2,17 @@
 
 ## Files
 
-- `infra/docker/app.Dockerfile` - base runtime for `api`, `bot-adapter`, `jobs`
+- `infra/docker/app.Dockerfile` - runtime for `api` and `bot-adapter`
+- `infra/docker/jobs.Dockerfile` - runtime for the `jobs` scheduler
 - `infra/docker/admin-ui.Dockerfile` - runtime for `admin-ui`
 
 ## Current State
 
-Это инфраструктурный baseline, а не финальная сборка приложения.
-
 Сейчас Dockerfile:
 
 - фиксируют целевой runtime на `node:22-bookworm-slim`
-- задают единый `WORKDIR`
+- `app` и `jobs` работают из `/app`; `admin-ui` — из `/app/apps/admin-ui`, потому что его образ
+  повторяет дерево репозитория: `server.js` импортирует `packages/shared/multipart.js`
+  относительным путём. Топология закреплена `infra/deployment.test.js` (входит в `npm test`)
 - добавляют `dumb-init`
-- оставляют placeholder-команды запуска
-
-Когда определим package manager и framework stack, заменим placeholder-команды на реальные build и start команды.
 

@@ -5,19 +5,23 @@
 ```text
 apps/
   api/
-  admin-web/
+  admin-ui/
   bot-adapter/
+  jobs/
 packages/
   db/
   domain/
-  jobs/
   shared/
 docs/
   api/
   adr/
   catalog/
+  plans/
 infra/
 ```
+
+`packages/jobs/` exists as an empty placeholder and is not a package: the scheduler lives in
+`apps/jobs` and the work itself in the API's job endpoints (see `TASKS.md` → Status).
 
 ## Bounded Areas
 
@@ -36,7 +40,7 @@ apps/api/src/modules/<context>/
 
 Dependency direction is one-way — `controller → service → repository`, any layer → `packages/domain` — and is enforced by `no-restricted-imports` / `no-restricted-syntax` rules in `eslint.config.js`, not by convention. See [ADR 003](adr/003-modular-architecture.md).
 
-The contexts are `employees`, `places`, `place-lines`, `permanent-assignments`, `place-releases`, `employee-requests`, `guest-requests`, `reservations`, `queue`, `line-occupancy`, `departure-plans`, `conflicts`, `contact-access`, `maps`, `dashboard`, `audit`, `jobs`, `system`. `availability` is a read model over `place-releases`, `places` and `reservations` rather than a context of its own; `dashboard` owns no repository, because its handler is a composition of three other contexts' reads.
+The contexts are `auth`, `catalog-import`, `employees`, `places`, `place-lines`, `permanent-assignments`, `place-releases`, `employee-requests`, `guest-requests`, `reservations`, `queue`, `line-occupancy`, `departure-plans`, `conflicts`, `contact-access`, `maps`, `dashboard`, `audit`, `jobs`, `system`. `availability` is a read model over `place-releases`, `places` and `reservations` rather than a context of its own; `dashboard` owns no repository, because its handler is a composition of three other contexts' reads.
 
 `queue` has a service but no controller: it serves no route of its own and runs only under the process-queue job.
 
@@ -50,33 +54,34 @@ The lint rules cover every layer, not just the two the boundary started with: `p
 
 All database access goes through `apps/api/src/repositories/db.js`: `createDbRepository(pool)` for pool-scoped reads, `withTransaction(pool, fn)` for anything transactional. `withTransaction` yields a client-bound repository with the same `queryOne` / `queryMany` surface, issues `begin`/`commit`/`rollback` around the callback, and always releases the client. A service that needs to abort throws — the helper never inspects the return value.
 
-### `apps/admin-web`
+### `apps/admin-ui`
 
-Administrative web interface for parking admins and system admins. Server-rendered HTML, no
-framework and no build step.
-
-It is layered the same way the API is, with the layers renamed to what they actually do here:
+The administrative web interface for parking admins and system admins: Vue 3 + Vite on the
+Vision UI design system. It replaced the server-rendered `apps/admin-web`, which is deleted
+(see [ADR 006](adr/006-admin-ui-on-vision-ui.md)) — the one ESM package in the repo, the one
+with a build step, and the one with its own test runner (vitest + happy-dom, `npm run test:ui`,
+specs named `*.spec.js`).
 
 ```text
-apps/admin-web/src/
-  server.js            bootstrap: config + listen, nothing else
-  config.js            the only reader of process.env
-  api-client.js        fetchJson / postJson — the only caller of the API
-  http/
-    router.js          dispatches into the route groups in order
-    routes/
-      assets.js        /health, floor-plan files, JSON proxies, the place drawer
-      page.js          GET / — builds the page model and hands it to renderPage()
-      forms.js         the form POSTs: post to the API, redirect back with a notice flag
-  pages/               one renderer per tab, plus the shared shell (layout.js)
-  components/          the tables, forms and panels the pages compose
+apps/admin-ui/
+  server.js            production host: serves dist/, the floor-plan files and /api/* proxy
+  src/
+    api.js             the only caller of the API, JSON and multipart alike
+    store.js           the one reactive day model every tab reads
+    pages/             one component per tab
+    components/        the tables, drawers and forms the pages compose
 ```
 
-The dependency direction is one-way — `routes → pages → components` — and the rule that makes
-it worth having is that **nothing under `pages/` or `components/` performs I/O**. A page is a
-pure function from a model to an HTML string, so `pages/pages.test.js` renders every tab
-directly from a fixture. `tabs.test.js` still drives the real process over HTTP against a
-stubbed API, which is what catches the wiring the pure tests cannot see.
+Two rules are not stylistic. **No parking rule is evaluated here** — statuses and "today" come
+from the API, so the UI cannot disagree with it. And **every call goes through `src/api.js`**,
+because that is the only place a `401` becomes a return to the login screen; a component that
+reached for `fetch` itself would leave the operator with a toast and a dead session.
+
+`server.js` is ESM but imports `packages/shared/multipart.js`, which is CommonJS. Node's
+named-export interop carries that, so the shared file must keep a literal `module.exports`; and
+because the import is relative, the runtime image mirrors the repository tree
+(`WORKDIR /app/apps/admin-ui`) rather than flattening into `/app`. `infra/deployment.test.js`
+pins that topology.
 
 ### `apps/bot-adapter`
 
@@ -95,27 +100,30 @@ through repositories and hand it to these; nothing here knows about Postgres, HT
 | `line-inventory.js` | capacity ↔ slot count ↔ place type, slot position assignment, place role and guest rank normalization, slot status precedence, archive-blocker naming |
 | `line-ordering.js` | line position validity, "who is ahead of me", how a blocking contact may be reached |
 | `conflicts.js` | conflict classification (guest = warning, employee = info) and early-departure assignment warnings |
+| `catalog-rows.js` | one Excel catalog row → one place: required cells, code and floor normalization, position hint, guest detection, and the reasons a row is refused |
 
-`packages/domain/index.js` is the barrel the API imports; a renderer that needs one rule
-(admin-web's place drawer and `derivePlaceStatus`) requires the single module directly.
+`packages/domain/index.js` is the barrel the API imports. A module whose names are too generic
+for every service to pull in — `catalog-rows.js`, with its `clean` and `normalizeCode` — is
+deliberately left out of the barrel and required by path instead.
 - conflict detection
 
 ### `packages/db`
 
 Database schema, migrations, repositories, import scripts, and seed data.
 
-### `packages/jobs`
+### `apps/jobs`
 
-Background jobs for:
-
-- `19:00` day freeze and employee pool opening
-- `07:00` departure edit lock
-- start-of-day queue processing
-- conflict rebuilds
+The scheduler: a minute tick that calls the API's job endpoints. Five runs — the `07:00`
+departure-edit lock, start-of-day queue processing, the conflict rebuild, and the two `19:00`
+runs that freeze the next day and open the employee pool. The work itself is the API's; this
+process only decides when.
 
 ### `packages/shared`
 
-Common DTOs, enums, time helpers, error codes, and logging primitives used across apps.
+Leaf utilities with no knowledge of the domain and no imports from any app: `dates` (the
+timezone-aware day arithmetic), `errors` (the API error payload shape), `http` (the JSON
+request/response helpers), `multipart` (the form parser both upload paths use) and `passwords`
+(scrypt hashing and verification).
 
 ## Role Model
 
@@ -136,10 +144,14 @@ Common DTOs, enums, time helpers, error codes, and logging primitives used acros
 - works only through bot
 - releases place, requests place, sets line position, sets departure time
 
+The two web roles are rows in `auth_roles` and are enforced on the route table, not in the UI:
+a `parking_admin` who opens an account route gets `403` ([ADR 007](adr/007-session-based-access-control.md)).
+`employee` is not a web account — the bot scenarios are still deferred.
+
 ## Key Design Rules
 
 - business logic lives only in backend and domain packages
-- admin web and bot adapter use backend API only
+- admin UI and bot adapter use backend API only
 - all date and cutoff rules use one explicit timezone, `APP_TIMEZONE` — including every
   "today" default, which must never be derived in UTC
 - every important assignment change is traceable with actor and source

@@ -339,11 +339,13 @@
 - list requests
 - queue view
 - manual assignment
+- move a reservation to another place
 - create and assign guest
 - list conflicts
 - audit log
 - assignment history
 - floor map data
+- import the place catalog from Excel, with a preview that writes nothing
 
 `System Admin API`
 

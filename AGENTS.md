@@ -26,9 +26,21 @@ plain Node `http` (no web framework), PostgreSQL 16. Only runtime deps are `pg` 
   - colours, radii and spacing come from tokens (`rgb(var(--vi-color-…))`, `var(--vi-radius-…)`,
     `var(--vi-vr-…)`); a hard-coded hex is a defect;
   - no parking rule is evaluated in the UI. Statuses and "today" come from the API.
+  One file crosses the CommonJS line on purpose: `server.js` imports
+  `packages/shared/multipart.js`, which is CommonJS, and Node's named-export interop carries it
+  — so that file must keep a literal `module.exports` and must not gain ESM syntax. Because the
+  import is relative, `infra/docker/admin-ui.Dockerfile` mirrors the repository tree
+  (`WORKDIR /app/apps/admin-ui`) instead of flattening into `/app`; `infra/deployment.test.js`,
+  part of `npm test`, fails if a new relative import of `server.js` is not copied to the same
+  depth in that image.
 - `apps/bot-adapter` — Yandex Messenger bot.
 - `apps/jobs` — scheduled jobs (19:00, 07:00, daily rules).
-- `packages/shared` — pure utilities (`dates`, `errors`, `http`, `html`). Easiest place to add tests.
+- `packages/shared` — leaf utilities, no app imports: `dates`, `errors`, `http`, `multipart`,
+  `passwords`. Easiest place to add tests.
+- `packages/domain` — pure rules, zero I/O: `queue`, `guest-reserve`, `scheduling`, `conflicts`,
+  `line-inventory`, `line-ordering`, `catalog-rows`. `index.js` is a barrel; a module whose names
+  are too generic for every service to import (`catalog-rows`, with its `clean` and
+  `normalizeCode`) is deliberately left out of it and required by path.
 - `packages/db/schema` — SQL migrations (source of truth for the data model).
 
 ## Validation gate — run before marking any task complete
@@ -46,8 +58,9 @@ complete or commit if any of them fail. CI (`.github/workflows/ci.yml`) runs the
 
 - CommonJS only. No ESM `import`/`export`, no TypeScript, no build step.
 - Match the surrounding style: `'use strict'` at file top, 2-space indent, single quotes.
-- Prefer adding pure, testable functions in `packages/shared` and covering them with `*.test.js`
-  files colocated next to the source (see `packages/shared/dates.test.js`).
+- Prefer adding pure, testable functions in `packages/shared` (no domain knowledge) or
+  `packages/domain` (parking rules, still no I/O) and covering them with `*.test.js` files
+  colocated next to the source (see `packages/shared/dates.test.js`).
 - Keep the dependency list minimal — justify any new runtime dependency.
 
 ## Testing
@@ -84,8 +97,10 @@ a suite that wants a different reserve has to boot its own API with that value.
 
 `apps/api/testing/fixtures.js` builds the domain preconditions (`insertEmployee`, `insertPlace`,
 `insertLineGroup`, `insertReleasedPlace`, `insertQueuedRequest`, `insertLineOccupancy`,
-`insertDeparturePlan`) plus `postJson`/`getJson`. Prefer it over inline SQL so a test states what it
-needs, not how the tables are wired.
+`insertDeparturePlan`) plus `postJson`/`postForm`/`getJson`. Prefer it over inline SQL so a test
+states what it needs, not how the tables are wired. `postForm` deliberately sets no
+`content-type`: `fetch` derives it and the boundary from the `FormData`, and a header written by
+hand would name a boundary the body does not use.
 
 The harness serializes schema application on a `pg_advisory_lock`: `node --test` runs one process per
 file, and `CREATE EXTENSION IF NOT EXISTS` races against concurrent creation of the same

@@ -60,10 +60,12 @@ layer simply does not have that file. Tests live next to the code they cover
 
 ### Bounded contexts
 
-The split is by the question the operator is answering, not by table. Eighteen contexts:
+The split is by the question the operator is answering, not by table. Twenty contexts:
 
 | Context | Owns |
 |---|---|
+| `auth` | credentials, sessions, accounts and roles ([ADR 007](007-session-based-access-control.md)) |
+| `catalog-import` | the Excel place catalog: reading a sheet, the staged upsert, the dry run |
 | `employees` | employee catalog, activation, contacts |
 | `places` | per-place attributes, `place_role`, place history |
 | `place-lines` | line inventory: create / list / archive elements |
@@ -213,5 +215,5 @@ snapshot and, so it fails without a database, by a unit test.
 `queue` ended up with a service and no controller: it serves no route of its own and is
 driven only by the process-queue job. With `dashboard` (a context with no repository) and
 `system` (a repository for reads that belong to no business context), that makes three of
-the eighteen contexts that do not have all three files. The layer rules hold regardless;
+the twenty contexts that do not have all three files. The layer rules hold regardless;
 the file set is not the contract.

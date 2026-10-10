@@ -44,7 +44,9 @@
 - `parkingassistant-admin-ui`
 
 `infra/docker/admin-ui.Dockerfile` собирает его в двух стадиях: Vite собирает бандл, а в runtime
-попадают только `server.js`, `multipart.js` и `dist` — без `node_modules`.
+попадают `server.js`, `packages/shared/multipart.js` и `dist` — без `node_modules`. Дерево
+каталогов повторяет репозиторий (`WORKDIR /app/apps/admin-ui`), потому что `server.js`
+импортирует парсер относительным путём; топология закреплена `infra/deployment.test.js`.
 
 ### Infrastructure images
 
@@ -196,11 +198,12 @@ Internet
 
 - `DATABASE_URL`
 - `APP_TIMEZONE`
-- `JWT_SECRET`
-- `SESSION_SECRET`
 - `YANDEX_MESSENGER_*`
 - `MAP_STORAGE_*`
 - `IMPORT_STORAGE_*`
+
+`JWT_SECRET` и `SESSION_SECRET` в этом списке не нужны и подлежат удалению там, где ещё заданы:
+сессия — строка в `auth_sessions`, токен случайный и ничем не подписывается ([ADR 007](adr/007-session-based-access-control.md)).
 
 Секреты:
 

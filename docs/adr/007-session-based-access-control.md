@@ -120,7 +120,8 @@ Postgres port published on the host already has, and is tracked with it in M9.
 `auth_users` holds exactly one row, that row is still `invited`, and the submitted login
 matches it. All three are checked inside a transaction over `select … for update` on the table,
 so two activations racing cannot both win. After that the route refuses forever and passwords
-are set by a `system_admin` through `POST /admin/users/:id/password`.
+are set by a `system_admin` through `POST /admin/users/password`, which takes the user id in
+the body.
 
 Two guards exist for the mistakes a role cannot prevent, both of which would leave the
 installation with one fewer way in and, with a single administrator, with none: a `system_admin`
@@ -150,7 +151,8 @@ it should not have. Only Task 6 — the audit trail naming people — regenerate
 the actor fields differed.
 
 **The scheduler cannot reach the API.** `apps/jobs` calls the job endpoints over HTTP with no
-credential, so the 07:00 and 19:00 runs answer 401 on the stand. This is the one acceptance
+credential, so **all five** scheduled runs — 07:00, 08:00, 08:05 and two at 19:00 — answer 401 on
+the stand, `process_queue` among them, which is the run that hands out released places. This is the one acceptance
 item of the M7 plan that remains false, and it needs a service account or a shared secret —
 deliberately not improvised here, because the obvious shortcuts (a public job route, an
 IP allowlist) each reopen part of what this ADR closed. The audit side is already prepared for

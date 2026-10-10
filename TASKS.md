@@ -17,8 +17,10 @@
 - `floor-maps` и кликабельные зоны на плане **сняты целиком** и заменены инвентарём
   элементов-линий (см. [ADR 004](docs/adr/004-place-inventory.md)). План этажа остался статичной
   картинкой-ориентиром.
-- `auth`, `access-control`, `admin-users` и сценарии `bot-adapter` отложены post-MVP: схема в БД
-  есть, runtime-кода нет.
+- `auth`, `access-control` и `admin-users` реализованы в M7, но собраны в один контекст
+  `apps/api/src/modules/auth` плюс роли на записях route-таблицы, а не в три модуля
+  (см. [ADR 007](docs/adr/007-session-based-access-control.md)). Post-MVP отложены только
+  сценарии `bot-adapter`.
 - `packages/jobs` как отдельный пакет не появился — планировщик живёт в `apps/jobs`, а сами задачи
   реализованы job-эндпоинтами API.
 
