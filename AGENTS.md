@@ -256,3 +256,19 @@ export DATABASE_URL_TEST=postgresql://parkingassistant_test:parkingassistant_tes
 npm run test:integration
 docker compose -f docker-compose.test.yml down
 ```
+
+## Before an unattended run
+
+`ralphex` ends each run with an external review by `codex`, and a dead `codex` token fails the
+whole run at that point — after the task phase has already spent hours. `codex login status` does
+not catch it: it reads `~/.codex/auth.json` and answers "Logged in using ChatGPT" while every call
+returns `401`. Check with a real call instead:
+
+```bash
+./scripts/dev/check-review-auth.sh     # exit 0 → the review phase will run
+```
+
+If it refuses: `codex login --device-auth` (the browser flow wants a callback on the container's
+own `localhost:1455`, which is unreachable from a laptop; the device flow prints a code instead).
+A login done in the container is lost when the container is recreated — `claude-dev-ctl
+save-codex-auth <container>` on the host copies it to the master copy, and needs root there.
