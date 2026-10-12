@@ -289,12 +289,21 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
     assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
   });
 
-  // A real zip that is not a workbook gets past the `PK` signature check, so it is `xlsx.read`
-  // itself that has to refuse it. Without the try/catch around that call this is a 500 quoting
-  // the library, and the suite's "not a workbook" case above would not notice: it stops at the
-  // signature check, and both refusals start with the same sentence.
+  // A real zip that is not a workbook gets past the `PK` signature check and past the bound on
+  // what the archive unpacks to, so it is `xlsx.read` itself that has to refuse it. Without the
+  // try/catch around that call this is a 500 quoting the library, and the suite's "not a
+  // workbook" case above would not notice: it stops at the signature check, and all three
+  // refusals start with the same sentence.
+  //
+  // Written through `xlsx.CFB`, which writes the zip `xlsx` reads, so the archive carries the
+  // central directory the size bound reads — bytes that merely start with `PK` are refused
+  // before the parser and would not reach it.
   it('refuses a zip that is not a workbook, without leaking the parser’s error as a 500', async () => {
-    const zipButNotAWorkbook = Buffer.concat([Buffer.from('PK\u0003\u0004', 'binary'), Buffer.alloc(512, 7)]);
+    const archive = xlsx.CFB.utils.cfb_new();
+
+    xlsx.CFB.utils.cfb_add(archive, '/notes.txt', Buffer.from('this is a zip, not a workbook', 'utf8'));
+
+    const zipButNotAWorkbook = xlsx.CFB.write(archive, { type: 'buffer', fileType: 'zip' });
 
     const { status, payload } = await postForm(
       api.baseUrl,

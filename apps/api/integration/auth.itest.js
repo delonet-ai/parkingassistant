@@ -187,6 +187,27 @@ describe('auth activation (integration)', { skip: skipWithoutDatabase() }, () =>
     assert.equal((await sysadminRow()).status, 'invited');
   });
 
+  // The one body an anonymous client can push at this API. Unbounded, the reader held all of it
+  // and then built a string from it, so a few concurrent requests to a `public: true` route
+  // could exhaust the process without a credential, a route or even valid JSON. 413, not 400:
+  // there is nothing here the client fixes by correcting its JSON.
+  it('refuses an oversized body on the public routes with 413, holding none of it', async () => {
+    await boot();
+
+    for (const pathname of ['/auth/activate', '/auth/login']) {
+      const response = await fetch(`${api.baseUrl}${pathname}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ login: 'sysadmin', password: 'x'.repeat(2 * 1024 * 1024) })
+      });
+
+      assert.equal(response.status, 413);
+      assert.match((await response.json()).error, /too large/);
+    }
+
+    assert.equal((await sysadminRow()).status, 'invited');
+  });
+
   it('answers an unknown login with the same 409 as a wrong state, so logins cannot be enumerated', async () => {
     await boot();
 

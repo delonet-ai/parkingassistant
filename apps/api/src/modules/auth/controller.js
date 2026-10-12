@@ -1,6 +1,6 @@
 'use strict';
 
-const { readJsonBody } = require('../../../../../packages/shared/http');
+const { PayloadTooLargeError, readJsonBody } = require('../../../../../packages/shared/http');
 const { readCookie, serializeCookie } = require('../../support/cookies');
 const { AbortTransaction } = require('../../support/transaction');
 const { internalError } = require('../../support/http-errors');
@@ -25,6 +25,27 @@ function badRequest(error) {
       error
     }
   };
+}
+
+// What the body reader refused, as a response. Told apart by type, because the two refusals are
+// different statuses: a body past the reader's limit is 413 and nothing the client can fix by
+// correcting its JSON, and 400 "must be valid JSON" would send it round the same request again.
+//
+// These four routes are the ones that need the distinction most: they are `public: true`, so
+// theirs is the one body a client that has not signed in can push.
+function bodyRefusal(error) {
+  if (error instanceof PayloadTooLargeError) {
+    return {
+      statusCode: 413,
+      payload: {
+        status: 'error',
+        service: 'api',
+        error: 'Request body is too large'
+      }
+    };
+  }
+
+  return badRequest('Request body must be valid JSON');
 }
 
 function unauthorized(error) {
@@ -73,8 +94,8 @@ function createAuthController({ services }) {
 
     try {
       body = await readJsonBody(req);
-    } catch {
-      return badRequest('Request body must be valid JSON');
+    } catch (error) {
+      return bodyRefusal(error);
     }
 
     const { login, password } = readCredentials(body);
@@ -120,8 +141,8 @@ function createAuthController({ services }) {
 
     try {
       body = await readJsonBody(req);
-    } catch {
-      return badRequest('Request body must be valid JSON');
+    } catch (error) {
+      return bodyRefusal(error);
     }
 
     const { login, password } = readCredentials(body);
@@ -236,8 +257,8 @@ function createAuthController({ services }) {
   async function readBody(req) {
     try {
       return { body: await readJsonBody(req) };
-    } catch {
-      return { refusal: badRequest('Request body must be valid JSON') };
+    } catch (error) {
+      return { refusal: bodyRefusal(error) };
     }
   }
 

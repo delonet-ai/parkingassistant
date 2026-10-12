@@ -616,6 +616,39 @@ to the deployment shape, not to this plan.
 - [x] verify the jobs path end to end rather than by unit test alone: run the scheduler against a booted API with the token set and watch a job complete, then run it with the wrong token and see the refusal logged
 - [x] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test`
 
+➕ **review: the floor-plan upload was reworked in this task's commit, and that is scope this
+plan had not written down.** `apps/admin-ui/server.js` gained a body limit (`BODY_LIMIT_BYTES`
+with a `413` that closes the connection), a per-floor queue so two uploads of the same floor
+cannot interleave, a fresh uuid in every stored filename, and a sweep of the floor's superseded
+files once a new plan is recorded; `src/maps.js` was extracted for the URL building the pages
+repeated. One behaviour change for the operator sits inside it: **`.pdf` is no longer accepted**.
+The plan is rendered in an `<img>` (ADR 004), a pdf never appeared there, and storing one swept
+away the image that did — so it is refused on upload now, with the message that it has to be
+saved as a picture first. `README.md` has always told operators to convert. The API's
+`map_file_type` enum still allows `pdf`, deliberately: the plans already recorded under it stay
+readable.
+
+➕ **review: the catalog upload inflated the archive before anything bounded it.** Every other
+bound in `catalog-import/service.js` bounds the *cell walk*, and all of them get their say after
+`xlsx.read` has unpacked the zip — which is where the cost is. Measured: a 200 KB archive whose
+one large member is junk took 274 MB of resident memory and half a second of synchronous work,
+and was then refused as "Unsupported ZIP file" — after the damage. At the endpoint's 10 MB limit
+that is gigabytes, from one upload by one signed-in operator, in a single-process API. The fix
+reads the uncompressed length of every entry out of the zip's central directory — the tail of the
+archive, no decompression — and refuses over `MAX_INFLATED_BYTES` (64 MB, an order of magnitude
+over a sheet of `MAX_SHEET_ROWS` by `MAX_SHEET_COLUMNS`). An archive whose directory cannot be
+read is refused too, rather than unpacked blind.
+
+➕ **review: `readJsonBody` had no limit, on the public routes as well.** It accumulated every
+chunk and then built a string from the lot, so the only ceiling was Node's maximum string length
+— half a gigabyte per request, and `/auth/activate` and `/auth/login` are `public: true`, so a
+client with no credential and no valid JSON could ask for it. Both shared readers now count bytes
+as they arrive and throw `PayloadTooLargeError` past `BODY_LIMIT_BYTES` (1 MB; the largest body
+this API takes is a few hundred bytes, and the one endpoint that reads a file uses `readRawBody`
+with its own limit). The four `/auth/*` routes answer **413** for it rather than 400 "must be
+valid JSON" — there is nothing there a client fixes by correcting its JSON. The closed routes
+answer 400 for an oversized body, which is a refusal either way; the bound is what mattered.
+
 ## Technical Details
 
 **Password storage.** `scrypt` from `node:crypto`, cost parameters stored alongside the hash so

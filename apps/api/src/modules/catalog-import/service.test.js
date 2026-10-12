@@ -174,6 +174,49 @@ test('refuses a file that is not a workbook before handing it to the parser', ()
 });
 
 /**
+ * The uncompressed length of the first entry, rewritten in the central directory.
+ *
+ * A zip states that length twice — in the entry's local header and again in the directory at the
+ * end — and the reader's bound reads the directory, because that is the copy it can find without
+ * walking the archive. Patching it is how the test gets an archive that *claims* to unpack to
+ * gigabytes without allocating them: an actual compression bomb would cost the test run the very
+ * memory the bound exists to refuse.
+ */
+function withDeclaredInflatedSize(buffer, bytes) {
+  const patched = Buffer.from(buffer);
+  const eocd = patched.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const firstEntry = patched.readUInt32LE(eocd + 16);
+
+  assert.equal(patched.readUInt32LE(firstEntry), 0x02014b50, 'central directory starts at the offset the EOCD gives');
+  patched.writeUInt32LE(bytes, firstEntry + 24);
+
+  return patched;
+}
+
+test('refuses an archive that unpacks to more than the import reads, before unpacking it', () => {
+  const workbook = workbookBuffer(catalogRows(1));
+
+  // Unpatched, the real catalog passes: the bound must not be one the honest file trips.
+  assert.equal(readCatalogBuffer(workbook, { sheetName: 'Лист1' }).places.length, 1);
+
+  assert.throws(
+    () => readCatalogBuffer(withDeclaredInflatedSize(workbook, 2 * 1024 * 1024 * 1024), { sheetName: 'Лист1' }),
+    (error) => error instanceof CatalogWorkbookError && /unpacks to 2048 MB/.test(error.message)
+  );
+});
+
+test('refuses an archive whose directory cannot be read rather than unpacking it blind', () => {
+  const workbook = workbookBuffer(catalogRows(1));
+
+  // The tail cut off: `PK` still opens the file, so the signature check passes it, and without
+  // the directory there is no declared size to judge the parse by.
+  assert.throws(
+    () => readCatalogBuffer(workbook.subarray(0, workbook.length - 40), { sheetName: 'Лист1' }),
+    (error) => error instanceof CatalogWorkbookError && /does not carry the directory/.test(error.message)
+  );
+});
+
+/**
  * A catalog with blank rows between its places: one place on row 3, then nothing until the row
  * asked for. The shape the row limit alone cannot judge — the limit counts rows that carry
  * something, and the parse stops at an absolute sheet row.

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const http = require('node:http');
 
-const { readFormBody, readJsonBody, sendJson } = require('./http');
+const { BODY_LIMIT_BYTES, PayloadTooLargeError, readFormBody, readJsonBody, sendJson } = require('./http');
 
 function createMockRes() {
   return {
@@ -53,6 +53,32 @@ test('readJsonBody returns an empty object for an empty body', async () => {
 
 test('readJsonBody throws on invalid JSON', async () => {
   await assert.rejects(() => readJsonBody(requestFrom('{not json')), SyntaxError);
+});
+
+/** A body streamed in chunks, so the limit is met before the whole of it exists. */
+function requestOf(bytes, chunkSize = 64 * 1024) {
+  return (async function* () {
+    for (let sent = 0; sent < bytes; sent += chunkSize) {
+      yield Buffer.alloc(Math.min(chunkSize, bytes - sent), 0x20);
+    }
+  })();
+}
+
+test('readJsonBody refuses a body past the limit instead of holding it', async () => {
+  // Chunks counted on the way in: the generator below would yield 4 MB, and the reader has to
+  // stop before it has them all. Asserted on the type, which is what tells a controller to
+  // answer 413 rather than "must be valid JSON".
+  await assert.rejects(() => readJsonBody(requestOf(4 * 1024 * 1024)), PayloadTooLargeError);
+  await assert.rejects(() => readJsonBody(requestOf(32), 16), PayloadTooLargeError);
+
+  // The limit itself is not refused, and the default leaves room for every body this API takes.
+  const body = JSON.stringify({ comment: 'x'.repeat(2048) });
+  assert.deepEqual(await readJsonBody(requestFrom(body)), JSON.parse(body));
+  assert.ok(BODY_LIMIT_BYTES >= 64 * 1024);
+});
+
+test('readFormBody refuses a body past the limit', async () => {
+  await assert.rejects(() => readFormBody(requestOf(32), 16), PayloadTooLargeError);
 });
 
 test('readFormBody parses urlencoded form fields', async () => {

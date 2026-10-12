@@ -610,6 +610,91 @@ function lastPopulatedSheetRow(part) {
   return count;
 }
 
+// How much the archive may unpack to, summed over its entries.
+//
+// Every other bound in this module bounds the *cell walk*, and all of them get their say too
+// late: `xlsx.read` inflates every entry of the zip while reading the archive — the comment on
+// `bookFiles` below says so — and only then is there a sheet to clamp a range on or rows to
+// count. Deflate reaches about a thousand to one on repetitive bytes, so the ten megabytes the
+// endpoint accepts is some ten gigabytes of inflation and tens of seconds of synchronous work
+// in a single-process API, from one upload by one operator. The file does not even have to look
+// like a catalog: it is refused after the parse, not before it.
+//
+// So the sizes are read where they cost a scan of the tail rather than a decompression: a zip's
+// central directory states the uncompressed length of every entry, and it sits at the end of
+// the archive. A sheet of `MAX_SHEET_ROWS` by `MAX_SHEET_COLUMNS` is a few megabytes of XML, so
+// this leaves an order of magnitude over the real catalog and still bounds what one request can
+// allocate.
+const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
+
+const EOCD_SIGNATURE = 0x06054b50;
+const CENTRAL_ENTRY_SIGNATURE = 0x02014b50;
+const EOCD_SIZE = 22;
+const CENTRAL_ENTRY_SIZE = 46;
+// The field value a zip writes when the real one lives in a zip64 record instead.
+const ZIP64_ESCAPE = 0xffffffff;
+
+/** The offset of the end-of-central-directory record, which the archive's comment follows. */
+function endOfCentralDirectory(buffer) {
+  const earliest = Math.max(0, buffer.length - EOCD_SIZE - 0xffff);
+
+  for (let at = buffer.length - EOCD_SIZE; at >= earliest; at -= 1) {
+    if (buffer.readUInt32LE(at) === EOCD_SIGNATURE) {
+      return at;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * What this archive unpacks to, summed over its directory, or `null` when the directory is not
+ * one this scan can read — a truncated tail, or the zip64 records it deliberately does not
+ * follow. `null` is a refusal at the call site rather than a pass: an archive whose declared
+ * sizes cannot be read is exactly the archive whose inflation must not be attempted.
+ */
+function inflatedSize(buffer) {
+  const eocd = endOfCentralDirectory(buffer);
+
+  if (eocd === null) {
+    return null;
+  }
+
+  const entries = buffer.readUInt16LE(eocd + 10);
+  let at = buffer.readUInt32LE(eocd + 16);
+
+  if (at === ZIP64_ESCAPE || entries === 0xffff) {
+    return null;
+  }
+
+  let total = 0;
+
+  for (let entry = 0; entry < entries; entry += 1) {
+    if (at < 0 || at + CENTRAL_ENTRY_SIZE > buffer.length) {
+      return null;
+    }
+
+    if (buffer.readUInt32LE(at) !== CENTRAL_ENTRY_SIGNATURE) {
+      return null;
+    }
+
+    const uncompressed = buffer.readUInt32LE(at + 24);
+
+    if (uncompressed === ZIP64_ESCAPE) {
+      return null;
+    }
+
+    total += uncompressed;
+    at +=
+      CENTRAL_ENTRY_SIZE +
+      buffer.readUInt16LE(at + 28) +
+      buffer.readUInt16LE(at + 30) +
+      buffer.readUInt16LE(at + 32);
+  }
+
+  return total;
+}
+
 /**
  * A catalog sheet, read from the bytes of a workbook. The only reader: the CLI reads the file
  * from the imports mount and the endpoint takes an upload, and both hand over a buffer, so
@@ -623,6 +708,23 @@ function lastPopulatedSheetRow(part) {
 function readCatalogBuffer(buffer, options = {}) {
   if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
     throw new CatalogWorkbookError('Workbook could not be read: the file is not an .xlsx workbook');
+  }
+
+  const inflated = inflatedSize(buffer);
+
+  if (inflated === null) {
+    throw new CatalogWorkbookError(
+      'Workbook could not be read: the file does not carry the directory an .xlsx workbook ends' +
+        ' with, so what unpacking it would cost cannot be told'
+    );
+  }
+
+  if (inflated > MAX_INFLATED_BYTES) {
+    throw new CatalogWorkbookError(
+      `Workbook could not be read: the file unpacks to ${Math.round(inflated / (1024 * 1024))} MB,` +
+        ` more than the ${MAX_INFLATED_BYTES / (1024 * 1024)} MB this import reads: this is not` +
+        ' the parking catalog'
+    );
   }
 
   const sheetName = options.sheetName || DEFAULT_SHEET;
