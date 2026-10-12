@@ -25,6 +25,25 @@ describe('requestActor', () => {
     assert.deepEqual(requestActor({ authUser: null }), { authUserId: null, service: ADMIN_UI });
     assert.deepEqual(requestActor(undefined), { authUserId: null, service: ADMIN_UI });
   });
+
+  // A request the router let in on the service token: no person, and the label the router set
+  // rather than the route's default. Calling that run `admin-ui` would read as an operator
+  // opening a screen at 07:00, which is the lie `audit-actor.itest.js` exists to prevent.
+  it('names the service client, not the route default, for a token-authenticated request', () => {
+    assert.deepEqual(requestActor({ authUser: null, roles: [], serviceClient: JOBS }), {
+      authUserId: null,
+      service: JOBS
+    });
+  });
+
+  // The flag wins over whatever the route passes, and over a session that is not there: the
+  // router sets it only when the token was what opened the door.
+  it('ignores the route default and any authUser when the service client is set', () => {
+    assert.deepEqual(requestActor({ authUser: { id: 'u1' }, serviceClient: JOBS }, BOT), {
+      authUserId: null,
+      service: JOBS
+    });
+  });
 });
 
 describe('auditActor', () => {

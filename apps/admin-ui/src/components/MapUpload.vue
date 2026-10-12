@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { ViButton, ViText } from '@vi-frontend/vision-ui'
 
 import { api } from '../api'
+import { planImageSrc } from '../maps'
 import { loadDay, notify, state } from '../store'
 
 const busy = ref(null)
@@ -62,9 +63,9 @@ async function upload(map, event) {
       </ViText>
 
       <img
-        v-if="map.metadata"
+        v-if="planImageSrc(map)"
         class="plan-thumb"
-        :src="`/maps/parking-${map.code}.png`"
+        :src="planImageSrc(map)"
         :alt="`План этажа ${map.title}`"
         onerror="this.style.display='none'"
       />
@@ -72,7 +73,7 @@ async function upload(map, event) {
       <input
         :ref="(element) => (inputs[map.code] = element)"
         type="file"
-        accept=".png,.jpg,.jpeg,.webp,.pdf"
+        accept=".png,.jpg,.jpeg,.webp"
         hidden
         @change="upload(map, $event)"
       />

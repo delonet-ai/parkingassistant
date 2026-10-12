@@ -8,7 +8,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, existsSync } from 'node:fs'
-import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -166,21 +166,82 @@ const FLOOR_PLANS = [
   { code: 'g5', title: 'G5', floorLabel: '5' }
 ]
 
+// What the SPA can draw, which is narrower than the `map_file_type` enum the API accepts.
+// The plan is a static reference image in an `<img>` (ADR 004), so a floor plan the browser
+// will not render is refused here rather than stored: the previous plan is swept once a new
+// one is recorded, and a pdf would have left the floor with nothing visible at all. A pdf
+// from the building management has to be saved as a raster image first — which README's
+// "PDF-карты этажей нужно преобразовать в пригодный для интерфейса растровый формат" has
+// always said. svg is out for the same reason it always was.
 const PLAN_TYPES = new Map([
   ['.png', 'png'],
   ['.jpg', 'jpg'],
   ['.jpeg', 'jpg'],
-  ['.webp', 'webp'],
-  ['.pdf', 'pdf']
+  ['.webp', 'webp']
 ])
+
+const floorPlanQueues = new Map()
+
+/**
+ * Runs `task` after every earlier task queued under `key` has settled. In-process, which is
+ * enough: one admin-ui process owns the maps volume.
+ */
+function oneAtATime(key, task) {
+  const run = (floorPlanQueues.get(key) || Promise.resolve()).then(task)
+  const settled = run.catch(() => {})
+
+  floorPlanQueues.set(key, settled)
+  settled.then(() => {
+    if (floorPlanQueues.get(key) === settled) {
+      floorPlanQueues.delete(key)
+    }
+  })
+
+  return run
+}
+
+/**
+ * Deletes the floor's earlier plan files, once the API's row names a newer one.
+ *
+ * Best effort on purpose: the upload has already succeeded by the time this runs, and an
+ * unreferenced file nobody reads is a smaller fault than a 500 over an upload that worked.
+ */
+async function removeSupersededPlans(mapCode, keep) {
+  // `parking-g3.png` is what the fixed-name uploads left behind, `parking-g3-<uuid>.png` what
+  // this server writes now; the separator keeps the pattern off every other floor's files.
+  const superseded = new RegExp(`^parking-${mapCode}[-.]`)
+  let names = []
+
+  try {
+    names = await readdir(mapStoragePath)
+  } catch (error) {
+    console.error(`admin-ui: cannot list ${mapStoragePath} to sweep earlier ${mapCode} plans`, error)
+    return
+  }
+
+  for (const name of names) {
+    if (name === keep || !superseded.test(name)) {
+      continue
+    }
+
+    try {
+      // Files only: a directory under the floor's prefix is not something this server put
+      // there, so it is reported rather than removed.
+      await rm(path.join(mapStoragePath, name), { force: true })
+    } catch (error) {
+      console.error(`admin-ui: earlier floor plan ${name} left behind`, error)
+    }
+  }
+}
 
 /**
  * The floor plan upload is the one request this server does more than proxy.
  *
  * The API stores metadata only — code, title, path, type and checksum — so the file itself has
  * to be written into the shared storage directory first, and the API told where it landed.
- * Carried over from admin-web unchanged, including the fixed filename per floor: replacing a
- * plan overwrites the previous file, and the version in the API is what records the change.
+ * Carried over from admin-web, except for the one fixed filename per floor it used to
+ * overwrite: every upload now writes its own name and the floor's earlier files are swept once
+ * the API's row names the new one. The version in the API still records the change.
  */
 async function uploadFloorPlan(req, res) {
   let form = null
@@ -221,60 +282,84 @@ async function uploadFloorPlan(req, res) {
     sendJson(res, 400, {
       status: 'error',
       service: 'admin-ui',
-      error: 'Поддерживаются png, jpg, webp и pdf.'
+      error: 'Поддерживаются png, jpg и webp. PDF-план нужно сохранить картинкой.'
     })
     return
   }
 
-  const filename = `parking-${plan.code}.${fileType === 'jpg' ? 'jpg' : fileType}`
-  const target = path.join(mapStoragePath, filename)
-  // This server checks no session of its own — the API does, on the call below. Writing the
-  // plan straight into place would let an anonymous request replace a floor plan and only then
-  // be refused, so it waits beside the target and takes its place only once the API agrees.
+  // The file name carries a fresh uuid, and the bytes are in it before the API hears about
+  // them. Two failures are closed by that order, and neither is closed by writing the floor's
+  // one fixed name:
   //
-  // The staging name is a fresh uuid, not pid plus clock: `filename` is one of three fixed
-  // values, so two uploads of the same floor within one millisecond would otherwise compute
-  // the *same* pending path — and one of the two may be the anonymous request this mechanism
-  // exists to refuse. It would then be the refused request's bytes that get renamed into
-  // place, or its `rm` that deletes the file the authorized request is about to promote.
-  const pending = path.join(mapStoragePath, `.${filename}.${randomUUID()}.upload`)
-  await mkdir(mapStoragePath, { recursive: true })
-  await writeFile(pending, file.buffer)
+  // This server checks no session of its own — the API does, on the call below. A plan written
+  // straight into the active path would let an anonymous request replace a floor plan and only
+  // then be refused. And bytes moved into place *after* the API answers leave the record ahead
+  // of the file whenever that move fails: the row would name a path, a type and a checksum
+  // that no file answers, and the operator's plan would be the previous one or none at all.
+  //
+  // A path nothing references yet has neither fault. The upload either becomes the floor's
+  // plan together with the record that names it, or is deleted having been refused in so many
+  // words — a refusal nobody heard leaves the bytes alone, see the catch below.
+  const filename = `parking-${plan.code}-${randomUUID()}.${fileType}`
+  const target = path.join(mapStoragePath, filename)
 
   let upstream = null
+  let written = false
 
   try {
-    // The operator's session has to travel with this one too: the API refuses an anonymous
-    // write, and that refusal is what keeps the pending file out of place.
-    upstream = await fetch(new URL('/admin/map-backgrounds', apiBaseUrl), {
-      method: 'POST',
-      headers: upstreamHeaders(req, { 'content-type': 'application/json' }),
-      body: JSON.stringify({
-        mapCode: plan.code,
-        mapTitle: form.fields.get('mapTitle') || plan.title,
-        floorLabel: form.fields.get('floorLabel') || plan.floorLabel,
-        filePath: `/maps/${filename}`,
-        fileType,
-        sourceChecksum: createHash('sha256').update(file.buffer).digest('hex')
+    // One floor at a time, from the write to the sweep below: the API keeps one row per
+    // floor, so two uploads of the same floor could otherwise commit in one order and sweep in
+    // the other — and the later sweep would delete the file the surviving row names.
+    await oneAtATime(plan.code, async () => {
+      // Inside the queue, not before it: the sweep deletes every earlier file of the floor,
+      // and it cannot tell a superseded plan from a candidate another request is still
+      // waiting to commit. Written ahead of the queue, this upload's bytes would be swept by
+      // the upload in front of it and its own record would then name nothing.
+      await mkdir(mapStoragePath, { recursive: true })
+      await writeFile(target, file.buffer)
+      written = true
+
+      // The operator's session has to travel with this one too: the API refuses an anonymous
+      // write, and that refusal is what keeps these bytes out of the record.
+      upstream = await fetch(new URL('/admin/map-backgrounds', apiBaseUrl), {
+        method: 'POST',
+        headers: upstreamHeaders(req, { 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          mapCode: plan.code,
+          mapTitle: form.fields.get('mapTitle') || plan.title,
+          floorLabel: form.fields.get('floorLabel') || plan.floorLabel,
+          filePath: `/maps/${filename}`,
+          fileType,
+          sourceChecksum: createHash('sha256').update(file.buffer).digest('hex')
+        })
       })
+
+      if (!upstream.ok) {
+        // Nothing references these bytes, and a refused upload must not leave a full-size
+        // plan in the shared volume forever.
+        await rm(target, { force: true })
+        return
+      }
+
+      await removeSupersededPlans(plan.code, filename)
     })
   } catch (error) {
-    await rm(pending, { force: true })
-    sendJson(res, 502, { status: 'error', service: 'admin-ui', error: `api unreachable: ${error.message}` })
-    return
-  }
-
-  if (upstream.ok) {
-    // A failed promotion must not leave the staging file behind: it is invisible to the SPA
-    // but it is a full-size plan sitting in the shared volume forever.
-    try {
-      await rename(pending, target)
-    } catch (error) {
-      await rm(pending, { force: true })
+    if (!written) {
+      // Storage itself refused the plan, so the API was never asked and there is nothing to
+      // reconcile. Not this handler's 502 either: the API is not the part that failed.
       throw error
     }
-  } else {
-    await rm(pending, { force: true })
+
+    // The candidate stays. A rejected `fetch` does not say whether the API answered: the
+    // request may have been refused before it was read, or committed and the answer lost on
+    // the way back. Only an explicit non-success response, handled above, proves these bytes
+    // are referenced by nothing — so deleting them here would be the record-ahead-of-the-file
+    // fault again, this time with no way to notice it. An unread file costs disk and is swept
+    // by the floor's next successful upload; a row naming a deleted plan costs the operator
+    // their plan.
+    console.error(`admin-ui: floor plan ${filename} kept — the API's answer never arrived`, error)
+    sendJson(res, 502, { status: 'error', service: 'admin-ui', error: `api unreachable: ${error.message}` })
+    return
   }
 
   const payload = Buffer.from(await upstream.arrayBuffer())

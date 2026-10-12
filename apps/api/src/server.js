@@ -22,6 +22,9 @@ const startedAt = new Date().toISOString();
 const databaseUrl = process.env.DATABASE_URL;
 const appTimezone = process.env.APP_TIMEZONE || 'Europe/Moscow';
 const guestReserveMinimum = Number(process.env.GUEST_RESERVE_MINIMUM || 5);
+// The shared secret the scheduler presents on the five job routes. Unset means the header path
+// is off, not open — see the guard in router.js.
+const jobsServiceToken = process.env.JOBS_SERVICE_TOKEN || null;
 
 const pool = databaseUrl
   ? new Pool({
@@ -46,7 +49,12 @@ const { modules, services } = createModules({
 // The guard's session lookup is the auth context's `resolveSession`; the router reads the
 // cookie and never learns how a session is stored.
 const server = http.createServer(
-  createApiRouter({ modules, sendJson, resolveSession: services.auth.resolveSession })
+  createApiRouter({
+    modules,
+    sendJson,
+    resolveSession: services.auth.resolveSession,
+    serviceToken: jobsServiceToken
+  })
 );
 
 server.listen(port, '0.0.0.0', () => {

@@ -8,7 +8,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { addDaysToIsoDate, currentClock, isDue, jobs } = require('./scheduler');
+const { addDaysToIsoDate, currentClock, isDue, jobs, requestHeaders } = require('./scheduler');
 
 describe('jobs scheduler', () => {
   it('schedules every job the plan requires', () => {
@@ -65,6 +65,24 @@ describe('jobs scheduler', () => {
     assert.equal(addDaysToIsoDate('2026-01-31', 1), '2026-02-01');
     assert.equal(addDaysToIsoDate('2026-12-31', 1), '2027-01-01');
     assert.equal(addDaysToIsoDate('2028-02-28', 1), '2028-02-29');
+  });
+
+  // Since Task 3 the job routes need a caller the API recognizes, and the scheduler has no
+  // operator to sign in as: it presents `JOBS_SERVICE_TOKEN` in `X-Service-Token`. Without the
+  // header every run answered 401, which is how the stand spent weeks with no 07:00 job.
+  it('sends the service token when it has one', () => {
+    assert.deepEqual(requestHeaders('secret-token'), {
+      'content-type': 'application/json',
+      'x-service-token': 'secret-token'
+    });
+  });
+
+  it('sends no token header at all when the variable is unset', () => {
+    // An empty header is a second thing for the API to refuse, and it would read in the log
+    // as "the token was wrong" rather than "there was no token".
+    // Passed explicitly rather than relying on the default: the default reads the process
+    // environment, and a test that asserted it would pass or fail with the shell it ran in.
+    assert.deepEqual(requestHeaders(''), { 'content-type': 'application/json' });
   });
 
   it('reads the clock as a zero-padded date and 24-hour time', () => {

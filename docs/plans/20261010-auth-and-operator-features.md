@@ -522,6 +522,57 @@ pins all of it without a database, and hands `readSheet` the parsed workbook sha
 because `xlsx.write` walks a declared range too — writing that file would cost the test the
 minutes the reader no longer costs the API.
 
+➕ **review: the slack row only answered for a sheet whose rows are dense.** The parse cutoff is
+an absolute sheet row while the limit counts rows that *carry* something, so a sheet with blank
+stretches fell between them: a valid header, one place on row 3, blanks through the cutoff and
+another place a thousand rows past it came back as `rowsRead: 1` with no problem reported, and
+applying that preview imported half a catalog. The reader now asks the worksheet itself where its
+last populated row is — `bookFiles` keeps the zip parts `xlsx` inflated anyway, and a backwards
+`Buffer` scan for the last `<v>`/`<is>` inside `<sheetData>` names the `<row>` it sits in without
+materializing one cell — and refuses anything past the row the parse stops at. Three details are
+load-bearing and each is pinned by a test: a *value*, not a cell, because the real template writes
+`<row>` tags and `<c>` cells for rows it has only formatted; only what is inside `<sheetData>`, so
+a `<v>` in some `<extLst>` extension cannot be read as a cell in one of those formatted rows; and
+the `r` attribute when the row has one, falling back to counting row tags when it does not, which
+is how a worksheet that numbers rows by position is read. `LAST_SHEET_ROW` now names the one row
+the parser cutoff, the `sheet_to_json` range and this check all stop at, so "the reader saw the
+whole sheet" cannot be three facts that disagree. A workbook whose sheet part this scan cannot
+locate (an .xlsb, whose rows are binary records) is left as forgiving as it was.
+
+➕ **review: the same truncation was still reachable through namespace-prefixed worksheet XML.**
+The scan matched the literal `<sheetData>`, `<row>`, `<v>` and `<is>` tags, and SpreadsheetML
+lets a writer bind the spreadsheet namespace to a prefix instead of the default one —
+`<x:sheetData><x:row><x:c><x:v>` is the same document, `xlsx` parses it without complaint, and
+the scan saw no rows at all: the sparse workbook came back `rowsRead: 1` with the place on row
+6003 dropped and nothing said. `xl/workbook.xml` had the same hole from the other end —
+`<x:sheet>` left the sheet's part unlocatable, which the check read as "this workbook does not
+say" and passed. Both now match elements by **local name** and check what frames the name, which
+is also what tells `<x:row>` from `<x:rowBreaks>` and from `</x:row>` without adding an XML
+parser. Two consequences are deliberate: a value the scan cannot place in a row is now a
+**refusal** rather than a shrug, because "I don't know what the parse missed" must not end in an
+import of half a catalog; and the forgiving answer is kept for the one case it was written for —
+a workbook whose sheet part is not XML at all. The regression test rebuilds the prefixed
+worksheet through `xlsx.CFB`, which reads and writes the zip `xlsx` already unpacks, so it needs
+no zip tool of its own, and it asserts the under-the-cut workbook is still read in full: a check
+that refused everything prefixed would pass the refusal test while refusing a real file.
+
+➕ **review: and a third door — the attributes were read only as `="…"`.** The prefix fix made the
+scan namespace-aware and left the quoting literal, and XML spells an attribute value in single
+quotes as readily as in double ones, with space around the `=` if the writer likes. `xlsx` parses
+every form, so the same sparse workbook truncated again twice over: with `r='6003'` the row scan
+fell through to counting tags and answered row 4, and with `r:id='rId1'` the sheet's part was not
+located at all, which the forgiving branch read as "not an XML workbook" and passed — `rowsRead:
+1` either way, the place on row 6003 dropped, nothing said. All four attributes the reader needs
+(`r:id`, `Id`, `Target`, the row's `r`) now go through one `attributeValue()` that takes either
+quoting and the spacing, and the relationship is found by comparing parsed `Id`s rather than by
+building a pattern around one — which also retires the escaping the interpolated id needed. Two
+answers tightened with it: a `<row>` that states its number but not *as* a number is "cannot
+tell" rather than a fall through to a positional count about a different sheet; and an **XML**
+workbook whose sheet part cannot be resolved is now a refusal, with the forgiving branch narrowed
+to the case it was written for — a workbook whose parts are not XML (`xl/workbook.bin`, an .xlsb).
+"Sheet not found" still wins for a sheet the workbook simply does not have, since that names the
+operator's actual mistake.
+
 ➕ **review: `/admin/reservations/manual` and `/admin/line-occupancy` compared uuids Task 7's
 `normalizeUuid` was written for.** `uuidPattern` carries `/i` and Postgres compares uuids by
 value, so an uppercase id passes the shape check and matches every query, and only the
@@ -555,15 +606,15 @@ to the deployment shape, not to this plan.
 - Modify: `apps/api/src/route-access.test.js`, `apps/jobs/src/scheduler.test.js`
 - Modify: `docker-compose.yml`, `.env.example`, `SETUP.md`, `docs/DEPLOYMENT.md`
 
-- [ ] add `service: true` to the five routes the scheduler posts — `/admin/jobs/{lock-departure-plans,process-queue,rebuild-conflicts,freeze-next-day,unlock-employee-pool}` — and to nothing else; `/admin/jobs/runs` is a read for the operator's screen and stays session-only
-- [ ] accept `X-Service-Token` on those routes only, comparing `timingSafeEqual` over the SHA-256 of each side so unequal lengths cannot throw, and resolve the request to `{ authUser: null, roles: [] }` so `auditActor` keeps writing the service label
-- [ ] when `JOBS_SERVICE_TOKEN` is unset or empty, the header path is **off**, not open: an absent variable must not let an absent header authenticate. Assert this directly — it is the hole this design can actually have
-- [ ] keep deny-by-default intact: a session still works on those routes, a token still fails everywhere else, and `route-access.test.js` asserts the set of `service: true` routes is exactly those five, so a sixth cannot be added quietly
-- [ ] make the scheduler send the header when it has a token and log a refusal that names the cause when it does not — a `401` at 07:00 must not look like an empty queue
-- [ ] add `JOBS_SERVICE_TOKEN` to `.env.example` and to both the `api` and `jobs` services in `docker-compose.yml`, and document generating one (`openssl rand -hex 32`) in `SETUP.md` and `docs/DEPLOYMENT.md`
-- [ ] settle the two secrets this design does not use: `JWT_SECRET` and `SESSION_SECRET` are passed to the `api` container and read by nothing (ADR 007 explains why), and are still `change-me`. Remove them from `.env.example` and the compose environment, or write down why they stay
-- [ ] verify the jobs path end to end rather than by unit test alone: run the scheduler against a booted API with the token set and watch a job complete, then run it with the wrong token and see the refusal logged
-- [ ] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test`
+- [x] add `service: true` to the five routes the scheduler posts — `/admin/jobs/{lock-departure-plans,process-queue,rebuild-conflicts,freeze-next-day,unlock-employee-pool}` — and to nothing else; `/admin/jobs/runs` is a read for the operator's screen and stays session-only
+- [x] accept `X-Service-Token` on those routes only, comparing `timingSafeEqual` over the SHA-256 of each side so unequal lengths cannot throw, and resolve the request to `{ authUser: null, roles: [] }` so `auditActor` keeps writing the service label
+- [x] when `JOBS_SERVICE_TOKEN` is unset or empty, the header path is **off**, not open: an absent variable must not let an absent header authenticate. Assert this directly — it is the hole this design can actually have
+- [x] keep deny-by-default intact: a session still works on those routes, a token still fails everywhere else, and `route-access.test.js` asserts the set of `service: true` routes is exactly those five, so a sixth cannot be added quietly
+- [x] make the scheduler send the header when it has a token and log a refusal that names the cause when it does not — a `401` at 07:00 must not look like an empty queue
+- [x] add `JOBS_SERVICE_TOKEN` to `.env.example` and to both the `api` and `jobs` services in `docker-compose.yml`, and document generating one (`openssl rand -hex 32`) in `SETUP.md` and `docs/DEPLOYMENT.md`
+- [x] settle the two secrets this design does not use: `JWT_SECRET` and `SESSION_SECRET` are passed to the `api` container and read by nothing (ADR 007 explains why), and are still `change-me`. Remove them from `.env.example` and the compose environment, or write down why they stay
+- [x] verify the jobs path end to end rather than by unit test alone: run the scheduler against a booted API with the token set and watch a job complete, then run it with the wrong token and see the refusal logged
+- [x] run `npm run test:integration` and `npm run test:ui && npm run check && npm run lint && npm test`
 
 ## Technical Details
 

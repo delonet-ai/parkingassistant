@@ -101,6 +101,41 @@ describe('CatalogImport', () => {
     expect(buttonBy(wrapper, 'Применить')).toBeDefined()
   })
 
+  it('does not approve a file the operator switched away from while it was being checked', async () => {
+    // The check of file A is still in flight when the operator picks file B. A's answer must
+    // not become the preview: "Применить" would then upload B, which nobody checked.
+    let answer = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            answer = () =>
+              resolve(
+                new Response(JSON.stringify(DRY_RUN), {
+                  status: 200,
+                  headers: { 'content-type': 'application/json' }
+                })
+              )
+          })
+      )
+    )
+    const wrapper = mount(CatalogImport)
+
+    await choose(wrapper, 'a.xlsx')
+    await buttonBy(wrapper, 'Проверить файл').trigger('click')
+    // The picker is locked while a file is being checked…
+    expect(buttonBy(wrapper, 'Выбрать файл').attributes('disabled')).toBeDefined()
+
+    // …and if the input changes anyway, the stale answer is dropped.
+    await choose(wrapper, 'b.xlsx')
+    answer()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('b.xlsx')
+    expect(buttonBy(wrapper, 'Применить')).toBeUndefined()
+  })
+
   it('applies with dryRun=false and reloads the day', async () => {
     const fetchMock = stub([{ body: DRY_RUN }, { body: APPLIED }, { body: { status: 'ok' } }])
     const wrapper = mount(CatalogImport)

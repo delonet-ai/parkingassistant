@@ -5,6 +5,17 @@ const { mapParkingPlaceMap } = require('../../serializers/maps');
 const { internalError } = require('../../support/http-errors');
 const { requestActor } = require('../../support/actor');
 
+// Same shape admin-ui serves from: a single file-name segment, with no separators, no `%`
+// escapes and no leading dot. The `/maps/` prefix is the path the browser asks for; the bare
+// name is what the demo seeds hold.
+const MAP_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function isLocalMapPath(filePath) {
+  const name = filePath.startsWith('/maps/') ? filePath.slice('/maps/'.length) : filePath;
+
+  return MAP_FILE_NAME.test(name);
+}
+
 function createMapsController({ services }) {
   const service = services.maps;
 
@@ -88,6 +99,20 @@ function createMapsController({ services }) {
           status: 'error',
           service: 'api',
           error: 'fileType must be one of pdf, svg, png, jpg, webp'
+        }
+      };
+    }
+
+    // The stored path ends up as an image source in every operator's browser, so it must name a
+    // file in admin-ui's own map volume and nothing else: `//host/x`, `https://host/x` or an
+    // unrelated absolute path would turn one admin's upload into a request everyone else makes.
+    if (!isLocalMapPath(filePath)) {
+      return {
+        statusCode: 400,
+        payload: {
+          status: 'error',
+          service: 'api',
+          error: 'filePath must name a map file, optionally prefixed with /maps/'
         }
       };
     }

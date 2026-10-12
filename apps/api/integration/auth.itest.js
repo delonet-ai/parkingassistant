@@ -985,3 +985,142 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
     assert.equal((await userRow(sysadminId)).status, 'active');
   });
 });
+
+// The service token (Task 12), against a real API and a real database.
+//
+// The scheduler in `apps/jobs` has no operator and no cookie, so from Task 3 until this
+// existed every one of its five daily posts answered 401 and the stand ran no job at all. The
+// unit-level counterparts are `router.test.js` (the guard) and `route-access.test.js` (which
+// routes carry the flag); what only an integration test can show is that the token actually
+// reaches the work: a job run lands in `job_runs`, attributed to the service and to nobody.
+describe('jobs service token (integration)', { skip: skipWithoutDatabase() }, () => {
+  const TOKEN = 'c3b1e6a1f0'.repeat(6);
+  const DATE = '2026-11-18';
+
+  // One per route group the scheduler posts to would be redundant — the guard does not read
+  // the path beyond its flag. `rebuild-conflicts` is the cheapest of the five: it needs no
+  // places, no queue and no releases to answer 200.
+  const JOB_PATH = '/admin/jobs/rebuild-conflicts';
+
+  let db = null;
+  let api = null;
+  let tokenlessApi = null;
+
+  before(async () => {
+    db = await createTestDatabase();
+    api = await startApi({
+      databaseUrl: db.connectionString,
+      authenticate: false,
+      env: { JOBS_SERVICE_TOKEN: TOKEN }
+    });
+    // The other half of the design: the same database, an API that was given no token. A
+    // deployment that forgets the variable must get a closed API, not an open one.
+    tokenlessApi = await startApi({ databaseUrl: db.connectionString, authenticate: false });
+  });
+
+  after(async () => {
+    if (api) {
+      await api.stop();
+    }
+    if (tokenlessApi) {
+      await tokenlessApi.stop();
+    }
+    if (db) {
+      await db.drop();
+    }
+  });
+
+  // Plain `fetch`, not the fixtures helpers: no session is involved anywhere in this suite,
+  // and the request below is byte for byte what `apps/jobs/src/scheduler.js` sends.
+  async function postAsScheduler(baseUrl, pathname, { token, body = { date: DATE } } = {}) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token === undefined ? {} : { 'x-service-token': token })
+      },
+      body: JSON.stringify(body)
+    });
+
+    return { status: response.status, payload: await response.json() };
+  }
+
+  it('runs a job for the scheduler, with the token and no cookie', async () => {
+    const { status, payload } = await postAsScheduler(api.baseUrl, JOB_PATH, { token: TOKEN });
+
+    assert.equal(status, 200, JSON.stringify(payload));
+    assert.equal(payload.status, 'ok');
+    assert.ok(payload.jobRun && payload.jobRun.id, 'the run has to be recorded');
+
+    // The audit question, which is why the token resolves nobody rather than signing in as a
+    // service account: the run names the service and no person. A session-shaped answer here
+    // would make `audit-actor.itest.js` describe a system that does not exist.
+    const run = await db.query(
+      'select job_name, status, actor_service from job_runs where id = $1',
+      [payload.jobRun.id]
+    );
+    assert.deepEqual(run.rows, [{ job_name: 'rebuild_conflicts', status: 'success', actor_service: 'jobs' }]);
+
+    const audit = await db.query(
+      `
+        select actor_service, actor_auth_user_id
+        from audit_logs
+        where action = 'job_rebuild_conflicts_success' and metadata->>'jobRunId' = $1
+      `,
+      [payload.jobRun.id]
+    );
+    assert.deepEqual(audit.rows, [{ actor_service: 'jobs', actor_auth_user_id: null }]);
+  });
+
+  it('refuses a wrong token and an absent one, and writes no run', async () => {
+    const before = await db.query('select count(*)::int as count from job_runs');
+
+    for (const token of [undefined, '', 'wrong', `${TOKEN}x`]) {
+      const { status, payload } = await postAsScheduler(api.baseUrl, JOB_PATH, { token });
+
+      assert.equal(status, 401, `token ${JSON.stringify(token)} answered ${status}`);
+      assert.equal(payload.code, 'unauthorized');
+    }
+
+    const after = await db.query('select count(*)::int as count from job_runs');
+    assert.equal(after.rows[0].count, before.rows[0].count, 'a refused job must not record a run');
+  });
+
+  // The hole this design can actually have, and the reason the check is written as "no
+  // configured token refuses everything" rather than "compare the two values".
+  it('refuses every caller when the API was given no token, header or not', async () => {
+    for (const token of [undefined, '', TOKEN]) {
+      const { status } = await postAsScheduler(tokenlessApi.baseUrl, JOB_PATH, { token });
+
+      assert.equal(status, 401, `token ${JSON.stringify(token)} was let into an API with none configured`);
+    }
+  });
+
+  it('does not open the rest of the API, reads on the same context included', async () => {
+    const runs = await fetch(`${api.baseUrl}/admin/jobs/runs`, { headers: { 'x-service-token': TOKEN } });
+    assert.equal(runs.status, 401, 'the operator’s jobs screen is session-only');
+
+    const places = await fetch(`${api.baseUrl}/admin/places`, { headers: { 'x-service-token': TOKEN } });
+    assert.equal(places.status, 401);
+  });
+
+  // A job an operator starts from the jobs screen takes the session path on the same route,
+  // and is theirs: the token did not replace the cookie, it was added beside it.
+  it('still accepts a session on the same route, attributed to the operator', async () => {
+    const operatorApi = await startApi({
+      databaseUrl: db.connectionString,
+      env: { JOBS_SERVICE_TOKEN: TOKEN }
+    });
+
+    try {
+      const { status, payload } = await postJson(operatorApi.baseUrl, JOB_PATH, { date: DATE });
+
+      assert.equal(status, 200, JSON.stringify(payload));
+
+      const run = await db.query('select actor_service from job_runs where id = $1', [payload.jobRun.id]);
+      assert.deepEqual(run.rows, [{ actor_service: 'admin-ui' }]);
+    } finally {
+      await operatorApi.stop();
+    }
+  });
+});

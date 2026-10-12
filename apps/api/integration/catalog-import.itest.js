@@ -350,6 +350,31 @@ describe('catalog import over HTTP (integration)', { skip: skipWithoutDatabase()
     assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
   });
 
+  // The limit counts rows that carry something, while the parse stops at an absolute sheet row —
+  // so a sheet with blank stretches could hold places past the parse and still come back under
+  // the limit. This one is a valid header, one place on row 3 and another a thousand rows past
+  // the cut: it used to be accepted as a one-place catalog, with the second place gone and no
+  // problem reported, and applying that preview imported half a catalog.
+  it('refuses a sheet whose blank rows hide places past the row the parse reads', async () => {
+    const sparse = [...HEADER, PLACE_ROWS[0]];
+
+    while (sparse.length < MAX_SHEET_ROWS + 1000) {
+      sparse.push([]);
+    }
+
+    sparse.push(PLACE_ROWS[1]);
+
+    const { status, payload } = await postForm(
+      api.baseUrl,
+      '/admin/catalog-import',
+      catalogForm(workbookBuffer(sparse), { dryRun: true })
+    );
+
+    assert.equal(status, 400);
+    assert.match(payload.error, new RegExp(`more than the ${MAX_SHEET_ROWS}`));
+    assert.deepEqual(await placeCodes(), ['101', '102', '103', '110', '120']);
+  });
+
   // The row limit used to be measured against the sheet's declared `!ref` range, and Excel
   // declares `<dimension>` over every row it has ever formatted — a one-place catalog saved
   // from a formatted template declares the sheet's full million. The real workbook was

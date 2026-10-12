@@ -57,17 +57,25 @@ async function send(dryRun) {
     return
   }
 
+  // The file this request is about, kept apart from `chosen`: the answer approves *this* file,
+  // and if the operator picks another one (or cancels) while it is in flight, rendering the
+  // answer would put the old file's counts above an "Применить" that uploads the new one.
+  const file = chosen.value
   busy.value = dryRun ? 'preview' : 'apply'
 
   try {
     const form = new FormData()
-    form.append('catalogFile', chosen.value)
+    form.append('catalogFile', file)
     form.append('dryRun', dryRun ? 'true' : 'false')
 
     // Through api.js, not `fetch`: a session that expired between choosing the file and
     // applying it has to drop to the login screen, the same as every other refused call.
     const result = await api.postForm('/admin/catalog-import', form)
     const payload = result.data
+
+    if (dryRun && chosen.value !== file) {
+      return
+    }
 
     // A refusal may still carry the rows it could not read — that is the answer to "why
     // nothing was understood", so it is rendered rather than swallowed with the toast.
@@ -118,14 +126,20 @@ async function send(dryRun) {
         hidden
         @change="chooseFile"
       />
-      <ViButton size="small" variant="outlined" color="secondary" @click="fileInput?.click()">
+      <ViButton
+        size="small"
+        variant="outlined"
+        color="secondary"
+        :disabled="Boolean(busy)"
+        @click="fileInput?.click()"
+      >
         Выбрать файл
       </ViButton>
       <ViButton
         size="small"
         variant="outlined"
         color="secondary"
-        :disabled="!chosen"
+        :disabled="!chosen || Boolean(busy)"
         :loading="busy === 'preview'"
         @click="send(true)"
       >
@@ -145,7 +159,7 @@ async function send(dryRun) {
         <ViButton size="small" :loading="busy === 'apply'" @click="send(false)">
           Применить к каталогу
         </ViButton>
-        <ViButton size="small" variant="outlined" color="secondary" @click="reset">
+        <ViButton size="small" variant="outlined" color="secondary" :disabled="Boolean(busy)" @click="reset">
           Отменить
         </ViButton>
       </div>

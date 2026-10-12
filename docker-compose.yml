@@ -57,8 +57,10 @@ services:
       APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-parkingassistant}:${POSTGRES_PASSWORD:-parkingassistant}@postgres:5432/${POSTGRES_DB:-parkingassistant}
-      JWT_SECRET: ${JWT_SECRET:-change-me}
-      SESSION_SECRET: ${SESSION_SECRET:-change-me}
+      # Nothing signs anything with a shared secret here (ADR 007): the session token is
+      # random and the stored hash is unkeyed, so JWT_SECRET and SESSION_SECRET used to be
+      # passed in and read by nobody. The one secret this API does read is the scheduler's.
+      JOBS_SERVICE_TOKEN: ${JOBS_SERVICE_TOKEN:-}
       MAP_STORAGE_PATH: /app/storage/maps
       IMPORT_STORAGE_PATH: /app/storage/imports
     ports:
@@ -128,6 +130,9 @@ services:
       APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
       API_BASE_URL: http://api:3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-parkingassistant}:${POSTGRES_PASSWORD:-parkingassistant}@postgres:5432/${POSTGRES_DB:-parkingassistant}
+      # Must be the same value as the api service's: it is what gets the scheduler past the
+      # guard on the five job routes. Unset on either side means no job runs.
+      JOBS_SERVICE_TOKEN: ${JOBS_SERVICE_TOKEN:-}
       JOBS_SCHEDULER_ENABLED: ${JOBS_SCHEDULER_ENABLED:-true}
       JOB_PROCESS_QUEUE_TIME: ${JOB_PROCESS_QUEUE_TIME:-08:00}
       JOB_FREEZE_NEXT_DAY_TIME: ${JOB_FREEZE_NEXT_DAY_TIME:-19:00}

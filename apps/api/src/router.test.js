@@ -21,9 +21,9 @@ const SESSION = {
 // escaped the request listener, became an unhandled rejection, and took the process down
 // under Node's default. A malformed uuid in a POST body was enough to trigger it, so this
 // was a remote DoS rather than a tidiness problem. The router now catches every route.
-function startServer(routes, { resolveSession = async () => SESSION } = {}) {
+function startServer(routes, { resolveSession = async () => SESSION, serviceToken } = {}) {
   const modules = [{ name: 'test', routes }];
-  const server = http.createServer(createApiRouter({ modules, sendJson: writeJson, resolveSession }));
+  const server = http.createServer(createApiRouter({ modules, sendJson: writeJson, resolveSession, serviceToken }));
 
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -379,5 +379,152 @@ describe('createApiRouter access control', () => {
   // and a wiring mistake would silently produce the second.
   it('refuses to be constructed without a resolveSession function', () => {
     assert.throws(() => createApiRouter({ modules: [], sendJson: writeJson }), /resolveSession/);
+  });
+});
+
+// The service token (Task 12). The scheduler in `apps/jobs` has no operator, so the five job
+// writes accept a shared secret in `X-Service-Token` as an alternative to a cookie. Which
+// routes carry `service: true` is pinned over the real table in route-access.test.js; what is
+// asserted here is the guard's behaviour, and above all the two ways it could be a hole: an
+// unset token must not authenticate an absent header, and the token must not open anything
+// else.
+describe('createApiRouter service token', () => {
+  const servers = [];
+
+  after(() => Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve)))));
+
+  const TOKEN = 'a'.repeat(64);
+
+  async function withRoutes(routes, options) {
+    const started = await startServer(routes, options);
+    servers.push(started.server);
+    return started;
+  }
+
+  const okHandler = async () => ({ statusCode: 200, payload: { status: 'ok', service: 'api' } });
+
+  function serviceRoute(handler = okHandler) {
+    return [{ method: 'POST', path: '/admin/jobs/process-queue', service: true, handler }];
+  }
+
+  it('lets a correct token into a route that says `service: true`', async () => {
+    const { url } = await withRoutes(serviceRoute(), {
+      resolveSession: async () => null,
+      serviceToken: TOKEN
+    });
+
+    const response = await fetch(url('/admin/jobs/process-queue'), {
+      method: 'POST',
+      headers: { 'x-service-token': TOKEN }
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  it('resolves nobody: the handler sees the service client and no authUser', async () => {
+    let seen = null;
+
+    const { url } = await withRoutes(
+      serviceRoute(async (context) => {
+        seen = {
+          authUser: context.authUser,
+          roles: context.roles,
+          session: context.session,
+          serviceClient: context.serviceClient
+        };
+        return okHandler();
+      }),
+      { resolveSession: async () => null, serviceToken: TOKEN }
+    );
+
+    await fetch(url('/admin/jobs/process-queue'), { method: 'POST', headers: { 'x-service-token': TOKEN } });
+
+    // `jobs`, not an operator: this is what makes the audit row say `jobs` with a null
+    // `actor_auth_user_id` instead of borrowing the admin UI's label.
+    assert.deepEqual(seen, { authUser: null, roles: [], session: null, serviceClient: 'jobs' });
+  });
+
+  it('does not consult the session store when the token matches', async () => {
+    let resolveCalls = 0;
+
+    const { url } = await withRoutes(serviceRoute(), {
+      resolveSession: async () => {
+        resolveCalls += 1;
+        return null;
+      },
+      serviceToken: TOKEN
+    });
+
+    await fetch(url('/admin/jobs/process-queue'), { method: 'POST', headers: { 'x-service-token': TOKEN } });
+
+    assert.equal(resolveCalls, 0);
+  });
+
+  it('still accepts a session on a `service: true` route, so the operator can run a job by hand', async () => {
+    const { url } = await withRoutes(serviceRoute(), { serviceToken: TOKEN });
+
+    const response = await fetch(url('/admin/jobs/process-queue'), { method: 'POST' });
+
+    assert.equal(response.status, 200);
+  });
+
+  // The hole this design can actually have: a deployment that forgot the variable would turn
+  // every job route into a public one if an absent expectation matched an absent header.
+  it('refuses every token when none is configured, including an absent header', async () => {
+    const { url } = await withRoutes(serviceRoute(), { resolveSession: async () => null });
+
+    for (const headers of [{}, { 'x-service-token': '' }, { 'x-service-token': TOKEN }]) {
+      const response = await fetch(url('/admin/jobs/process-queue'), { method: 'POST', headers });
+
+      assert.equal(response.status, 401, `headers ${JSON.stringify(headers)} were let in`);
+    }
+  });
+
+  it('refuses a wrong token, of equal and of different length', async () => {
+    const { url } = await withRoutes(serviceRoute(), {
+      resolveSession: async () => null,
+      serviceToken: TOKEN
+    });
+
+    // The short one is the case `timingSafeEqual` would throw on if the two sides were
+    // compared raw instead of as digests, which the guard answers 500 to rather than 401.
+    for (const presented of ['b'.repeat(64), 'short', `${TOKEN}x`]) {
+      const response = await fetch(url('/admin/jobs/process-queue'), {
+        method: 'POST',
+        headers: { 'x-service-token': presented }
+      });
+
+      assert.equal(response.status, 401, `token ${presented} was let in`);
+    }
+  });
+
+  it('refuses the token on a route that does not say `service: true`', async () => {
+    const { url } = await withRoutes([{ method: 'GET', path: '/admin/jobs/runs', handler: okHandler }], {
+      resolveSession: async () => null,
+      serviceToken: TOKEN
+    });
+
+    const response = await fetch(url('/admin/jobs/runs'), { headers: { 'x-service-token': TOKEN } });
+
+    assert.equal(response.status, 401);
+  });
+
+  it('refuses before the handler runs, so a wrong token cannot do work', async () => {
+    let handlerCalls = 0;
+
+    const { url } = await withRoutes(
+      serviceRoute(async () => {
+        handlerCalls += 1;
+        return okHandler();
+      }),
+      { resolveSession: async () => null, serviceToken: TOKEN }
+    );
+
+    await fetch(url('/admin/jobs/process-queue'), {
+      method: 'POST',
+      headers: { 'x-service-token': 'wrong' }
+    });
+
+    assert.equal(handlerCalls, 0);
   });
 });

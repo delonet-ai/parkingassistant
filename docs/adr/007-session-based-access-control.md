@@ -150,15 +150,28 @@ payload stayed byte-identical. A moving snapshot would have meant the guard touc
 it should not have. Only Task 6 — the audit trail naming people — regenerated them, and only
 the actor fields differed.
 
-**The scheduler cannot reach the API.** `apps/jobs` calls the job endpoints over HTTP with no
-credential, so **all five** scheduled runs — 07:00, 08:00, 08:05 and two at 19:00 — answer 401 on
-the stand, `process_queue` among them, which is the run that hands out released places. This is the one acceptance
-item of the M7 plan that remains false, and it needs a service account or a shared secret —
-deliberately not improvised here, because the obvious shortcuts (a public job route, an
-IP allowlist) each reopen part of what this ADR closed. The audit side is already prepared for
-it: `auditActor` falls back to the `jobs` service label with a null `actor_auth_user_id`, which
-is what the scheduler's request will produce once it has a way in, and
-`apps/api/integration/audit-actor.itest.js` asserts that case in-process today.
+**The scheduler reaches the API on a shared secret, not on a session.** `apps/jobs` called the
+job endpoints with no credential at all, so from the day the API closed **all five** scheduled
+runs — 07:00, 08:00, 08:05 and two at 19:00 — answered 401 on the stand, `process_queue` among
+them, which is the run that hands out released places. The fix is `JOBS_SERVICE_TOKEN` in an
+`X-Service-Token` header, compared timing-safe over the SHA-256 of each side, accepted on the
+five job writes and nowhere else (`service: true` in the route table, with the set pinned
+exhaustively by `apps/api/src/route-access.test.js`).
+
+Three properties keep it from being a second front door. It is **off when unconfigured** — an
+absent variable must not let an absent header authenticate, which is the one hole this shape
+can have and is asserted directly. It does **not widen the rest of the API**: the probes that
+drive every closed route anonymously drive them with the token too. And it **resolves nobody**:
+the request carries a service label, not an `authUser`, so `job_runs` and `audit_logs` say
+`jobs` with a null `actor_auth_user_id` — what an unattended run is. A service *account* with a
+password and a session was the obvious alternative and is rejected for exactly that reason: it
+would make the trail name a near-person. The shortcuts (a public job route, an IP allowlist)
+stay rejected — each reopens part of what this ADR closed.
+
+An operator who presses "run now" on the jobs screen still takes the session path on the same
+route, and that run is attributed to them. Both halves are asserted over HTTP in
+`apps/api/integration/auth.itest.js`; `audit-actor.itest.js` keeps the in-process case that
+pins `jobs` as a fallback rather than a hard-coded label.
 
 **The UI hides a tab it cannot open, and the API still decides.** `TABS` in
 `apps/admin-ui/src/store.js` carries the same `roles: ['system_admin']` on the `Доступ` tab, so
@@ -167,5 +180,7 @@ URL naming that tab falls back to the day. That duplication is labels only: hidi
 access control, and the 403 is what enforces it.
 
 **`JWT_SECRET` and `SESSION_SECRET` are dead.** Nothing in this design signs anything with a
-shared secret; the token is random and the hash is unkeyed. Both are still `change-me` in
-`staging/env/app.env` and should be removed rather than filled in.
+shared secret; the session token is random and the stored hash is unkeyed. They are gone from
+`.env.example` and from the compose environment; where they survive in a deployed
+`staging/env/app.env` they should be removed rather than filled in. The one shared secret this
+design does use is `JOBS_SERVICE_TOKEN` above, and it authenticates a service, not a person.

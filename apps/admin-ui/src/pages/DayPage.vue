@@ -8,6 +8,7 @@ import DayTables from '../components/DayTables.vue'
 import KpiStrip from '../components/KpiStrip.vue'
 import PlaceDrawer from '../components/PlaceDrawer.vue'
 import PlaceLines from '../components/PlaceLines.vue'
+import { planImageSrc } from '../maps'
 import { PLACE_STATUS_OPTIONS, PLACE_TYPE_OPTIONS } from '../statuses'
 import { FLOORS, currentFloor, dismissNotice, loadDay, state } from '../store'
 
@@ -18,6 +19,8 @@ const floorLabel = computed(() => currentFloor().floorLabel)
 // and leaving it open pushed the element list — the thing the operator actually clicks —
 // below the fold.
 const planOpen = ref(false)
+// The file name is the API's, not this app's: admin-ui writes a new one per upload.
+const planSrc = computed(() => planImageSrc(state.maps.find((map) => map.code === state.floorCode)))
 
 async function changeDate(next) {
   state.date = next
@@ -114,9 +117,10 @@ function toggleType(type) {
           <!-- The floor plan stays a static reference image; the element list under it is the
                source of truth for what exists (ADR 004). -->
           <img
+            v-if="planSrc"
             v-show="planOpen"
             class="floor-plan"
-            :src="`/maps/parking-${state.floorCode}.png`"
+            :src="planSrc"
             :alt="`План этажа ${currentFloor().title}`"
             onerror="this.style.display='none'"
           />

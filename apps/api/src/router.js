@@ -1,7 +1,9 @@
 'use strict';
 
+const { createHash, timingSafeEqual } = require('node:crypto');
 const { URL } = require('node:url');
 const { errorPayload } = require('../../../packages/shared/errors');
+const { JOBS } = require('./support/actor');
 const { SESSION_COOKIE_NAME, readCookie } = require('./support/cookies');
 
 // Deny by default. A route is closed unless its table entry says `public: true`, so a route
@@ -17,6 +19,21 @@ const { SESSION_COOKIE_NAME, readCookie } = require('./support/cookies');
 // user-management ones.
 const AUTHENTICATION_REQUIRED = 'Authentication required';
 const ROLE_REQUIRED = 'Your role does not allow this action';
+
+// The one door a person does not walk through. `service: true` on a route entry lets a caller
+// presenting `X-Service-Token` in instead of a session cookie, and the scheduler in `apps/jobs`
+// is its only user: it has no operator, so a cookie was never going to work and the five daily
+// job routes answered 401 from Task 3 until this existed (ADR 007, plan Task 12).
+//
+// Three properties make this narrow rather than a second way in:
+//   - it applies only where the route says so — `route-access.test.js` pins that set to the
+//     five job writes, so a sixth cannot be added quietly;
+//   - with no token configured the path is *off*, not open: an absent variable must never let
+//     an absent header authenticate;
+//   - it resolves nobody. The request carries `serviceClient`, not an `authUser`, so the audit
+//     trail says `jobs` with a null `actor_auth_user_id` — what an unattended run actually is,
+//     rather than a service account impersonating a near-person.
+const SERVICE_TOKEN_HEADER = 'x-service-token';
 
 // The router owns no routes of its own. Each module publishes a route table and the router
 // composes them in the order `modules/index.js` lists the contexts; the endpoint index
@@ -88,6 +105,17 @@ function findRoute({ exactRoutes, patternRoutes }, method, pathname) {
   return null;
 }
 
+// Compared over the SHA-256 of each side: `timingSafeEqual` throws on unequal lengths, and the
+// digests are always 32 bytes, so a wrong-length token is rejected by value rather than by an
+// exception that would also leak the expected length.
+function matchesServiceToken(expected, presented) {
+  if (!expected || typeof presented !== 'string' || presented === '') {
+    return false;
+  }
+
+  return timingSafeEqual(createHash('sha256').update(expected).digest(), createHash('sha256').update(presented).digest());
+}
+
 // 403, never 404. Hiding the route from an operator who is signed in but holds the wrong
 // role would turn "you may not do this" into "this does not exist", and the operator would
 // report a broken UI instead of a missing role.
@@ -105,7 +133,7 @@ function accessRefusal(route, resolved) {
   return null;
 }
 
-function createApiRouter({ modules, sendJson, resolveSession }) {
+function createApiRouter({ modules, sendJson, resolveSession, serviceToken = null }) {
   // Not optional, and not defaulted to something permissive: a router built without a way to
   // resolve a session could only either refuse everything or allow everything, and the second
   // is the one a wiring mistake would silently produce.
@@ -121,6 +149,13 @@ function createApiRouter({ modules, sendJson, resolveSession }) {
   async function authorize(route, req, res) {
     if (route.public === true) {
       return { allowed: true, resolved: null };
+    }
+
+    // Before the session lookup, because the scheduler sends no cookie and a database query
+    // per tick to resolve nothing is waste. A session still works on these routes: an
+    // operator pressing "run now" on the jobs screen takes the path below.
+    if (route.service === true && matchesServiceToken(serviceToken, req.headers[SERVICE_TOKEN_HEADER])) {
+      return { allowed: true, resolved: null, serviceClient: JOBS };
     }
 
     let resolved;
@@ -197,7 +232,8 @@ function createApiRouter({ modules, sendJson, resolveSession }) {
         pathname: url.pathname,
         authUser: access.resolved ? access.resolved.authUser : null,
         roles: access.resolved ? access.resolved.roles : [],
-        session: access.resolved ? access.resolved.session : null
+        session: access.resolved ? access.resolved.session : null,
+        serviceClient: access.serviceClient || null
       };
 
       await dispatch(matched.route, context, res);

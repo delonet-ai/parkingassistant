@@ -28,7 +28,15 @@ const JOBS = 'jobs';
 
 // Built from the route context the router hands every handler. `service` is the caller's,
 // because the same handler can serve `/admin/*` and `/bot/*` (departure plans do).
+//
+// `serviceClient` overrides that default: a request the router let in on the service token has
+// no person behind it, and labelling it `admin-ui` would claim an operator opened a screen at
+// 07:00. It is the router's answer to "who let this in", so it wins over the route's guess.
 function requestActor(context, service = ADMIN_UI) {
+  if (context && context.serviceClient) {
+    return { authUserId: null, service: context.serviceClient };
+  }
+
   return {
     authUserId: context && context.authUser ? context.authUser.id : null,
     service

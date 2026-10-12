@@ -252,6 +252,10 @@ function createJobsController({ appTimezone, services }) {
     };
   }
 
+  // `service: true` on the five writes, and on nothing else: these are the routes the
+  // scheduler in `apps/jobs` posts to with `X-Service-Token` and no cookie. `/admin/jobs/runs`
+  // is a read for the operator's screen and stays session-only — a token must not be able to
+  // ask what ran.
   return {
     name: 'jobs',
     routes: [
@@ -259,30 +263,35 @@ function createJobsController({ appTimezone, services }) {
         method: 'POST',
         path: '/admin/jobs/process-queue',
         advertise: true,
+        service: true,
         handler: (context) => handleAdminJobProcessQueue(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/freeze-next-day',
         advertise: true,
+        service: true,
         handler: (context) => handleAdminJobFreezeNextDay(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/lock-departure-plans',
         advertise: true,
+        service: true,
         handler: (context) => handleAdminJobLockDeparturePlans(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/unlock-employee-pool',
         advertise: true,
+        service: true,
         handler: (context) => handleAdminJobUnlockEmployeePool(context.req, requestActor(context))
       },
       {
         method: 'POST',
         path: '/admin/jobs/rebuild-conflicts',
         advertise: true,
+        service: true,
         handler: (context) => handleAdminJobRebuildConflicts(context.req, requestActor(context))
       },
       {

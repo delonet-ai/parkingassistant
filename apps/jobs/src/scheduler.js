@@ -1,6 +1,10 @@
 'use strict';
 
 const apiBaseUrl = process.env.API_BASE_URL || 'http://api:3000';
+// The scheduler has no operator and no cookie. The five job routes let it in on
+// `X-Service-Token` instead (ADR 007, plan Task 12); an empty token sends no header, and the
+// API then answers 401 — which `start()` says out loud rather than leaving a quiet night.
+const serviceToken = process.env.JOBS_SERVICE_TOKEN || '';
 const appTimezone = process.env.APP_TIMEZONE || 'Europe/Moscow';
 const schedulerEnabled = process.env.JOBS_SCHEDULER_ENABLED !== 'false';
 const tickIntervalMs = Number(process.env.JOBS_TICK_INTERVAL_MS || 60_000);
@@ -84,12 +88,22 @@ function isDue(job, clock) {
   return clock.time === job.runAt;
 }
 
+// Built from the token rather than kept as a frozen object so a missing variable sends no
+// header at all: a header present but empty would be a second thing the API has to refuse.
+function requestHeaders(token = serviceToken) {
+  const headers = { 'content-type': 'application/json' };
+
+  if (token) {
+    headers['x-service-token'] = token;
+  }
+
+  return headers;
+}
+
 async function postJson(pathname, payload) {
   const response = await fetch(`${apiBaseUrl}${pathname}`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json'
-    },
+    headers: requestHeaders(),
     body: JSON.stringify(payload)
   });
   const text = await response.text();
@@ -136,6 +150,11 @@ async function runJob(job, clock) {
     return;
   }
 
+  // Marked before the request, not after it: at most once per day, deliberately. A job that
+  // answered but whose response was lost would otherwise be posted again, and `process_queue`
+  // handing out the same released places twice is worse than a day with no run — which the
+  // `job_failed` line below makes visible, and which the operator can redo from the jobs
+  // screen. Retrying inside the one minute `isDue` matches would buy little and risk that.
   completedRuns.add(runKey);
   log('job_started', {
     jobName: job.name,
@@ -166,7 +185,11 @@ async function runJob(job, clock) {
       targetDate,
       status: error.status || null,
       error: error.message,
-      data: error.data || null
+      data: error.data || null,
+      // A refusal and an empty queue look the same in a one-line log otherwise, and the
+      // cause is almost always this one: the API was given no token, or a different one.
+      cause: error.status === 401 || error.status === 403 ? 'rejected_by_api_access_control' : null,
+      serviceTokenSent: Boolean(serviceToken)
     });
   }
 }
@@ -197,10 +220,20 @@ function start() {
     return;
   }
 
+  if (!serviceToken) {
+    // Not fatal: the operator can still run every job by hand from the jobs screen, and a
+    // container that exits would lose that distinction in a restart loop. Said at startup
+    // because 07:00 is twelve hours too late to find out.
+    log('service_token_missing', {
+      message: 'JOBS_SERVICE_TOKEN is unset: the API will answer 401 and no scheduled job will run'
+    });
+  }
+
   log('scheduler_started', {
     apiBaseUrl,
     appTimezone,
     tickIntervalMs,
+    serviceTokenConfigured: Boolean(serviceToken),
     jobs: jobs.map((job) => ({ name: job.name, runAt: job.runAt }))
   });
   tick().catch((error) => log('scheduler_tick_failed', { error: error.message }));
@@ -220,5 +253,6 @@ module.exports = {
   currentClock,
   isDue,
   jobs,
+  requestHeaders,
   start
 };

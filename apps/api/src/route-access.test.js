@@ -39,6 +39,18 @@ const EXPECTED_PUBLIC_ROUTES = [
   'POST /auth/logout'
 ];
 
+// The five writes the scheduler posts to, and nothing else. A token resolves nobody, so every
+// route that carries this flag hands work to an unattended caller — which is why the set is
+// enumerated here and not left to review. `GET /admin/jobs/runs` is a read for the operator's
+// screen and stays session-only.
+const EXPECTED_SERVICE_ROUTES = [
+  'POST /admin/jobs/freeze-next-day',
+  'POST /admin/jobs/lock-departure-plans',
+  'POST /admin/jobs/process-queue',
+  'POST /admin/jobs/rebuild-conflicts',
+  'POST /admin/jobs/unlock-employee-pool'
+];
+
 // Account management, not parking. Every other `/admin/*` route accepts either seeded role.
 // The five writes are Task 5's; a `parking_admin` runs the day and may not touch accounts.
 const EXPECTED_ROLE_SCOPED_ROUTES = [
@@ -109,6 +121,33 @@ describe('route access control', () => {
   it('declares no route both public and role-scoped, which would be a contradiction', () => {
     const contradictory = allRoutes()
       .filter((entry) => entry.route.public === true && Array.isArray(entry.route.roles) && entry.route.roles.length)
+      .map((entry) => entry.key);
+
+    assert.deepEqual(contradictory, []);
+  });
+
+  it('accepts the service token on exactly the five scheduler routes', () => {
+    const serviceRoutes = allRoutes()
+      .filter((entry) => entry.route.service === true)
+      .map((entry) => entry.key)
+      .sort();
+
+    assert.deepEqual(
+      serviceRoutes,
+      EXPECTED_SERVICE_ROUTES,
+      'a route started (or stopped) accepting the service token: say so here on purpose'
+    );
+  });
+
+  it('declares no service route public or role-scoped, both of which would be contradictions', () => {
+    // Public would make the token pointless; a role is a property of a person, and the token
+    // resolves nobody, so a role-scoped service route could only ever refuse the scheduler.
+    const contradictory = allRoutes()
+      .filter(
+        (entry) =>
+          entry.route.service === true &&
+          (entry.route.public === true || (Array.isArray(entry.route.roles) && entry.route.roles.length))
+      )
       .map((entry) => entry.key);
 
     assert.deepEqual(contradictory, []);
@@ -274,4 +313,81 @@ describe('route access control over HTTP', () => {
     assert.equal(status, 404);
     assert.equal(payload.code, 'not_found');
   });
+});
+
+// The token against the real composed table. The suite above pins which routes carry the flag;
+// this one pins what the flag does where it is set and, more importantly, what it does not do
+// anywhere else — a header the scheduler sends on every request must not become a second way
+// into the rest of the API.
+describe('service token over the real table', () => {
+  const { modules } = buildModules();
+  const table = buildRouteTable(modules);
+  const SERVICE_TOKEN = 'f'.repeat(64);
+
+  let server = null;
+
+  function start() {
+    if (server) {
+      return Promise.resolve(server);
+    }
+
+    server = http.createServer(
+      createApiRouter({ modules, sendJson, resolveSession: async () => null, serviceToken: SERVICE_TOKEN })
+    );
+
+    return new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve(server));
+    });
+  }
+
+  after(() => new Promise((resolve) => (server ? server.close(resolve) : resolve())));
+
+  async function call(method, pathname, headers = {}) {
+    await start();
+    const response = await fetch(`http://127.0.0.1:${server.address().port}${pathname}`, {
+      method,
+      headers: method === 'POST' ? { 'content-type': 'application/json', ...headers } : headers,
+      body: method === 'POST' ? '{}' : undefined
+    });
+
+    return { status: response.status, payload: await response.json() };
+  }
+
+  for (const key of EXPECTED_SERVICE_ROUTES) {
+    const [method, pathname] = key.split(' ');
+
+    it(`${key} lets the token past the guard`, async () => {
+      const { status } = await call(method, pathname, { 'x-service-token': SERVICE_TOKEN });
+
+      // Not 200: there is no pool here, so the handler fails on the first query and the
+      // dispatcher answers 500. What matters is that access control did not answer.
+      assert.notEqual(status, 401, `${key} refused the configured service token`);
+      assert.notEqual(status, 403);
+    });
+
+    it(`${key} still refuses a wrong token`, async () => {
+      const { status, payload } = await call(method, pathname, { 'x-service-token': 'wrong' });
+
+      assert.equal(status, 401);
+      assert.equal(payload.code, 'unauthorized');
+    });
+  }
+
+  // Derived from the table, like the anonymous probes above: a route added tomorrow is probed
+  // with the token the day it appears, instead of waiting for someone to extend a list.
+  const nonServiceProbes = [...table.exactRoutes.entries()]
+    .filter(([, route]) => route.public !== true && route.service !== true)
+    .map(([key]) => key.split(' '));
+
+  it('has a closed non-service route to probe', () => {
+    assert.ok(nonServiceProbes.length >= 40, `expected the closed routes to be enumerated, got ${nonServiceProbes.length}`);
+  });
+
+  for (const [method, pathname] of nonServiceProbes) {
+    it(`${method} ${pathname} refuses the service token`, async () => {
+      const { status } = await call(method, pathname, { 'x-service-token': SERVICE_TOKEN });
+
+      assert.equal(status, 401, `${method} ${pathname} accepted the service token`);
+    });
+  }
 });

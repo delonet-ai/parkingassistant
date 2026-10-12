@@ -131,7 +131,9 @@ cp .env.example staging/env/app.env
 Потом отредактировать:
 
 - пароли PostgreSQL;
-- `JWT_SECRET`, `SESSION_SECRET`;
+- `JOBS_SERVICE_TOKEN` — общий секрет, с которым планировщик проходит в закрытый API
+  (`openssl rand -hex 32`, свой на каждое окружение). Пустым оставлять нельзя: тогда все пять
+  регламентных прогонов получат `401` и ничего по расписанию не выполнится;
 - параметры `Yandex Messenger` (пока не используются — `bot-adapter` в стек не входит);
 - порты стенда: `API_PORT=3330`, `ADMIN_UI_PORT=3340`.
 
@@ -260,9 +262,21 @@ curl -s -X POST http://<хост>:3330/auth/activate \
 ⚠️ Сессионная cookie не `Secure`: стенд на plain HTTP, и с `Secure` браузер бы её выбросил.
 На локальной сети это приемлемо, за пределами — нет, нужен TLS.
 
-⚠️ `JWT_SECRET` и `SESSION_SECRET` в `staging/env/app.env` этой схемой не используются вообще:
-токен сессии случайный, в базе лежит его `sha256`, общим секретом ничего не подписывается.
-Оставленные там `change-me` ни на что не влияют.
+⚠️ `JWT_SECRET` и `SESSION_SECRET` этой схемой не используются вообще: токен сессии случайный,
+в базе лежит его `sha256`, общим секретом ничего не подписывается. Из `.env.example` и compose
+они убраны; если в `staging/env/app.env` на стенде ещё лежат `change-me`, их можно удалить — ни
+на что не влияют.
+
+⚠️ Единственный секрет, который API действительно читает помимо пароля базы, — это
+`JOBS_SERVICE_TOKEN`: значение должно совпадать у сервисов `api` и `jobs`. Проверить, что
+планировщик проходит, можно по логу контейнера:
+
+```bash
+docker logs parkingassistant-jobs --tail 20     # ожидаем scheduler_started, не service_token_missing
+```
+
+Если в логе `job_failed` с `status: 401` и `cause: rejected_by_api_access_control` — токены
+разошлись.
 
 ## Demo dataset
 

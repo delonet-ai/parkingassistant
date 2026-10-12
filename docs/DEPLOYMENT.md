@@ -198,9 +198,16 @@ Internet
 
 - `DATABASE_URL`
 - `APP_TIMEZONE`
+- `JOBS_SERVICE_TOKEN` — один и тот же у `api` и у `jobs`
 - `YANDEX_MESSENGER_*`
 - `MAP_STORAGE_*`
 - `IMPORT_STORAGE_*`
+
+`JOBS_SERVICE_TOKEN` — общий секрет, которым планировщик проходит в закрытый API: у регламентного
+прогона нет оператора, поэтому пять job-маршрутов принимают `X-Service-Token` вместо cookie
+([ADR 007](adr/007-session-based-access-control.md)). Генерировать своё значение на каждое
+окружение (`openssl rand -hex 32`) и не переносить между стендом и продом. Пустая переменная
+закрывает путь, а не открывает: API отвечает `401`, и по расписанию не выполняется ничего.
 
 `JWT_SECRET` и `SESSION_SECRET` в этом списке не нужны и подлежат удалению там, где ещё заданы:
 сессия — строка в `auth_sessions`, токен случайный и ничем не подписывается ([ADR 007](adr/007-session-based-access-control.md)).

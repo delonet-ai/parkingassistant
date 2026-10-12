@@ -204,14 +204,12 @@ describe('audit actor (integration)', { skip: skipWithoutDatabase() }, () => {
     assert.equal(run.rows[0].actor_service, 'admin-ui');
   });
 
-  // The other half of the same question, and the half no HTTP request can ask today: a run
-  // nobody started. The scheduler posts to `/admin/jobs/*` with no cookie, so since Task 3 it
-  // is refused at the guard and never reaches the service — which is why this case drives the
-  // service in-process against the same scratch schema, with the `actor` the scheduler's
-  // request would produce once it has a way in: none.
-  //
-  // What it pins is that `jobs` is written because nobody was signed in, not because a label
-  // was hard-coded: the cases above show the same code path naming a person.
+  // The other half of the same question: a run nobody started. Task 12 gave the scheduler a
+  // way in — it posts to `/admin/jobs/*` with `X-Service-Token` and no cookie, and the run
+  // that produces is asserted over HTTP in `auth.itest.js` ("jobs service token") — so this
+  // case keeps the narrower claim it always made, in-process against the same scratch schema:
+  // `jobs` is written because nobody was signed in, not because a label was hard-coded. The
+  // cases above show the same code path naming a person.
   it('names the service, and no person, on a job run that no operator started', async () => {
     const { services } = createModules({
       appTimezone: 'Europe/Moscow',
