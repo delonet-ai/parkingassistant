@@ -127,7 +127,12 @@ function relayHeaders(upstream, contentLength) {
  * not the caller has a session.
  */
 async function proxyApi(req, res, url) {
-  const target = new URL(`${url.pathname.replace(/^\/api/, '')}${url.search}`, apiBaseUrl)
+  // The path is set on the API's URL rather than resolved against it: `/api//host/x` strips to
+  // `//host/x`, which resolution reads as another origin — and the request carries the
+  // operator's session cookie to wherever it points.
+  const target = new URL(apiBaseUrl)
+  target.pathname = url.pathname.replace(/^\/api/, '')
+  target.search = url.search
   let requestBody = null
 
   try {

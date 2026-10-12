@@ -169,6 +169,18 @@ describe('admin-ui proxy', () => {
     ])
     expect(received[0].contentType).toBe('application/json')
   })
+
+  it('keeps a path that reads as another host on the API, cookie and all', async () => {
+    received = []
+
+    const response = await fetch(`${baseUrl}/api//elsewhere.invalid/steal`, {
+      headers: { cookie: 'pa_session=the-token' }
+    })
+
+    expect(response.status).toBe(200)
+    expect(received).toHaveLength(1)
+    expect(received[0].url).toBe('//elsewhere.invalid/steal')
+  })
 })
 
 describe('admin-ui floor-plan upload', () => {

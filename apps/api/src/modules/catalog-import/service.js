@@ -1,5 +1,7 @@
 'use strict';
 
+const zlib = require('node:zlib');
+
 const xlsx = require('xlsx');
 
 const {
@@ -695,6 +697,68 @@ function inflatedSize(buffer) {
   return total;
 }
 
+const LOCAL_ENTRY_SIGNATURE = 0x04034b50;
+const LOCAL_ENTRY_SIZE = 30;
+const DEFLATE = 8;
+
+/**
+ * Whether the archive's entries, actually inflated, stay within `budget` bytes.
+ *
+ * The directory's sizes are the archive's word, not a bound: `xlsx` inflates each deflated entry
+ * from its local header to the end of the deflate stream, growing its buffer as far as the
+ * stream goes, and compares the declared sizes only afterwards — and only with each other. An
+ * archive that states ten bytes in both places and carries a gigabyte of zeros passes the
+ * directory check and is unpacked in full. So every deflated entry is inflated here the way
+ * `xlsx` will inflate it — from where its local header says the data starts, with nothing but
+ * the stream to end it — under a ceiling zlib enforces while it writes, and the sum is judged.
+ * The cost is bounded by `budget`, which is the point.
+ */
+function inflatesWithin(buffer, budget) {
+  const eocd = endOfCentralDirectory(buffer);
+  const entries = buffer.readUInt16LE(eocd + 10);
+  let at = buffer.readUInt32LE(eocd + 16);
+  let remaining = budget;
+
+  for (let entry = 0; entry < entries; entry += 1) {
+    const local = buffer.readUInt32LE(at + 42);
+
+    if (local + LOCAL_ENTRY_SIZE > buffer.length || buffer.readUInt32LE(local) !== LOCAL_ENTRY_SIGNATURE) {
+      return false;
+    }
+
+    if (buffer.readUInt16LE(local + 8) === DEFLATE) {
+      const dataStart =
+        local + LOCAL_ENTRY_SIZE + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+      let inflated;
+
+      try {
+        inflated = zlib.inflateRawSync(buffer.subarray(dataStart), { maxOutputLength: remaining + 1 });
+      } catch (error) {
+        if (error.code === 'ERR_BUFFER_TOO_LARGE') {
+          return false;
+        }
+
+        // A stream zlib cannot read is one `xlsx` cannot read either; its parse says so better.
+        inflated = Buffer.alloc(0);
+      }
+
+      if (inflated.length > remaining) {
+        return false;
+      }
+
+      remaining -= inflated.length;
+    }
+
+    at +=
+      CENTRAL_ENTRY_SIZE +
+      buffer.readUInt16LE(at + 28) +
+      buffer.readUInt16LE(at + 30) +
+      buffer.readUInt16LE(at + 32);
+  }
+
+  return true;
+}
+
 /**
  * A catalog sheet, read from the bytes of a workbook. The only reader: the CLI reads the file
  * from the imports mount and the endpoint takes an upload, and both hand over a buffer, so
@@ -724,6 +788,13 @@ function readCatalogBuffer(buffer, options = {}) {
       `Workbook could not be read: the file unpacks to ${Math.round(inflated / (1024 * 1024))} MB,` +
         ` more than the ${MAX_INFLATED_BYTES / (1024 * 1024)} MB this import reads: this is not` +
         ' the parking catalog'
+    );
+  }
+
+  if (!inflatesWithin(buffer, MAX_INFLATED_BYTES)) {
+    throw new CatalogWorkbookError(
+      `Workbook could not be read: the file unpacks to more than the ${MAX_INFLATED_BYTES / (1024 * 1024)} MB` +
+        ' this import reads, whatever its directory says: this is not the parking catalog'
     );
   }
 

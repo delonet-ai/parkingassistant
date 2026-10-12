@@ -205,6 +205,48 @@ test('refuses an archive that unpacks to more than the import reads, before unpa
   );
 });
 
+/**
+ * The workbook with one more entry: `bytes` of zeros, deflated, whose uncompressed length is
+ * stated as ten bytes in both its local header and the directory — the archive that lies
+ * consistently, so the declared sizes pass and only the inflation itself tells.
+ */
+function withUnderstatedEntry(buffer, bytes) {
+  const { CFB } = xlsx;
+  const archive = CFB.read(buffer, { type: 'buffer' });
+
+  CFB.utils.cfb_add(archive, '/xl/media/filler.bin', Buffer.alloc(bytes));
+
+  const patched = Buffer.from(CFB.write(archive, { type: 'buffer', fileType: 'zip', compression: true }));
+  const eocd = patched.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let at = patched.readUInt32LE(eocd + 16);
+
+  for (let entry = 0; entry < patched.readUInt16LE(eocd + 10); entry += 1) {
+    if (patched.readUInt32LE(at + 24) === bytes) {
+      patched.writeUInt32LE(10, at + 24);
+      patched.writeUInt32LE(10, patched.readUInt32LE(at + 42) + 22);
+    }
+
+    at += 46 + patched.readUInt16LE(at + 28) + patched.readUInt16LE(at + 30) + patched.readUInt16LE(at + 32);
+  }
+
+  return patched;
+}
+
+test('refuses an archive that unpacks to more than the import reads whatever its sizes claim', () => {
+  const workbook = workbookBuffer(catalogRows(1));
+
+  assert.throws(
+    () => readCatalogBuffer(withUnderstatedEntry(workbook, 65 * 1024 * 1024), { sheetName: 'Лист1' }),
+    (error) => error instanceof CatalogWorkbookError && /whatever its directory says/.test(error.message)
+  );
+
+  // A small entry under the same lie stays within the bound: what is judged is the real output.
+  assert.equal(
+    readCatalogBuffer(withUnderstatedEntry(workbook, 4096), { sheetName: 'Лист1' }).places.length,
+    1
+  );
+});
+
 test('refuses an archive whose directory cannot be read rather than unpacking it blind', () => {
   const workbook = workbookBuffer(catalogRows(1));
 
