@@ -28,6 +28,11 @@ const { addDays, createFixtures, getJson, postJson } = require('../testing/fixtu
 const { currentDateInTimezone } = require('../../../packages/shared/dates');
 const { createTestDatabase, skipWithoutDatabase } = require('../../../packages/db/testing/harness');
 
+// Release creation refuses days that have already ended, so every test date sits
+// a month ahead of today instead of on a fixed calendar day that eventually rots.
+const DATE_BASE = addDays(currentDateInTimezone(process.env.APP_TIMEZONE || 'Europe/Moscow'), 30);
+const futureDate = (offset) => addDays(DATE_BASE, offset);
+
 describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => {
   let db = null;
   let api = null;
@@ -51,23 +56,21 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     }
   });
 
-  /** An owned place with no release yet — the starting point for create tests. */
-  async function ownedPlace(date) {
-    const owner = await fixtures.insertEmployee();
-    const place = await fixtures.insertPlace({ placeType: 'double' });
-    await fixtures.insertPermanentAssignment({
-      userId: owner.id,
-      parkingPlaceId: place.id,
-      dateFrom: addDays(date, -30),
-      dateTo: addDays(date, 30)
-    });
-    return { owner, place };
+  /**
+   * An owned place with no release yet — the starting point for create tests.
+   *
+   * The ownership is open-ended rather than a window around one date: a place nobody holds
+   * permanently on a date is part of that date's free supply, so a bounded window would leak
+   * this place into the availability counts of every later test whose date falls outside it.
+   */
+  async function ownedPlace() {
+    return fixtures.insertHeldPlace({ place: { placeType: 'double' } });
   }
 
   describe('creating a release', () => {
     it('releases an owned place for a date range and audit-logs it', async () => {
-      const date = '2026-11-02';
-      const { owner, place } = await ownedPlace(date);
+      const date = futureDate(2);
+      const { owner, place } = await ownedPlace();
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases', {
         parkingPlaceId: place.id,
@@ -105,18 +108,24 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     it('refuses a place with no permanent owner for the range', async () => {
       const place = await fixtures.insertPlace();
 
-      const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases', {
-        parkingPlaceId: place.id,
-        dateFrom: '2026-11-03'
-      });
+      try {
+        const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases', {
+          parkingPlaceId: place.id,
+          dateFrom: futureDate(3)
+        });
 
-      assert.equal(status, 409);
-      assert.match(payload.error, /no permanent owner/i);
+        assert.equal(status, 409);
+        assert.match(payload.error, /no permanent owner/i);
+      } finally {
+        // An unowned place is free supply on every date; archive it so it does not
+        // pad the availability counts asserted further down.
+        await db.query('update parking_places set is_active = false, deleted_at = now() where id = $1', [place.id]);
+      }
     });
 
     it('refuses a range overlapping an existing active release', async () => {
-      const date = '2026-11-04';
-      const { place } = await ownedPlace(date);
+      const date = futureDate(4);
+      const { place } = await ownedPlace();
 
       const first = await postJson(api.baseUrl, '/admin/place-releases', {
         parkingPlaceId: place.id,
@@ -136,8 +145,8 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     });
 
     it('rejects dateTo before dateFrom, and malformed dates', async () => {
-      const date = '2026-11-05';
-      const { place } = await ownedPlace(date);
+      const date = futureDate(5);
+      const { place } = await ownedPlace();
 
       const reversed = await postJson(api.baseUrl, '/admin/place-releases', {
         parkingPlaceId: place.id,
@@ -158,7 +167,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
 
   describe('cancelling a release (the owner taking the place back)', () => {
     it('cancels an untouched release and audit-logs it', async () => {
-      const date = '2026-11-10';
+      const date = futureDate(10);
       const { release } = await fixtures.insertReleasedPlace({ date });
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases/cancel', {
@@ -183,7 +192,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     });
 
     it('refuses to cancel while somebody else holds an active reservation', async () => {
-      const date = '2026-11-11';
+      const date = futureDate(11);
       const { place, release } = await fixtures.insertReleasedPlace({ date });
       await fixtures.insertReleasedPlace({ date });
       const employee = await fixtures.insertEmployee();
@@ -211,7 +220,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       // /admin/reservations/cancel because that endpoint is currently broken —
       // see the characterization test below. Once it is fixed this should go
       // through the API like the rest of the flow.
-      const date = '2026-11-12';
+      const date = futureDate(12);
       const { place, release } = await fixtures.insertReleasedPlace({ date });
       await fixtures.insertReleasedPlace({ date });
       const employee = await fixtures.insertEmployee();
@@ -244,7 +253,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       // refusing while an active reservation stands on the place, the operator had
       // no way at all to undo an assignment — both exits were closed. Task 12
       // narrowed the lock to `for update of r`; the assertions are inverted here.
-      const date = '2026-11-14';
+      const date = futureDate(14);
       const { place, release } = await fixtures.insertReleasedPlace({ date });
       await fixtures.insertReleasedPlace({ date });
       const employee = await fixtures.insertEmployee();
@@ -283,7 +292,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     });
 
     it('cancels a guest reservation too', async () => {
-      const date = '2026-11-15';
+      const date = futureDate(15);
       await fixtures.insertReleasedPlace({ date });
 
       const host = await fixtures.insertEmployee();
@@ -309,7 +318,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       // over the whole join is what Postgres refused. The guest endpoint happens
       // to mint a users row, so it does not exercise the null on its own; this
       // test writes the legal user-less row directly and pins the narrowed lock.
-      const date = '2026-11-17';
+      const date = futureDate(17);
       const { place } = await fixtures.insertReleasedPlace({ date });
       const host = await fixtures.insertEmployee();
 
@@ -349,7 +358,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     });
 
     it('is idempotent — cancelling a reservation twice stays 200', async () => {
-      const date = '2026-11-16';
+      const date = futureDate(16);
       const { place } = await fixtures.insertReleasedPlace({ date });
       const employee = await fixtures.insertEmployee();
 
@@ -372,7 +381,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     });
 
     it('is idempotent — cancelling twice stays 200 and writes one audit row', async () => {
-      const date = '2026-11-13';
+      const date = futureDate(13);
       const { release } = await fixtures.insertReleasedPlace({ date });
 
       const first = await postJson(api.baseUrl, '/admin/place-releases/cancel', {
@@ -408,7 +417,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
 
   describe('the freeze job and the 19:00 cut-off', () => {
     it('snapshots availability and stamps the releases it froze', async () => {
-      const date = '2026-11-20';
+      const date = futureDate(20);
       const { release } = await fixtures.insertReleasedPlace({ date });
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/freeze-next-day', {
@@ -443,7 +452,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
     it('refuses to cancel a release after the day was frozen', async () => {
       // Was a CHARACTERIZATION test in Task 3 (no freeze gate existed). Task 7
       // implemented the cut-off, so the assertion is inverted here on purpose.
-      const date = '2026-11-21';
+      const date = futureDate(21);
       const { release } = await fixtures.insertReleasedPlace({ date });
 
       const frozen = await postJson(api.baseUrl, '/admin/jobs/freeze-next-day', { date });
@@ -466,7 +475,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       // day that had already ended — a slot nobody could ever have taken, which
       // only pollutes availability and history. Task 12 added the gate.
       const pastDate = '2020-01-15';
-      const { place } = await ownedPlace(pastDate);
+      const { place } = await ownedPlace();
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases', {
         parkingPlaceId: place.id,
@@ -487,7 +496,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
       // The gate is "before today", not "not today": releasing your place on the
       // morning you decide to work from home is the flow the operator uses most.
       const today = currentDateInTimezone(process.env.APP_TIMEZONE || 'Europe/Moscow');
-      const { place } = await ownedPlace(today);
+      const { place } = await ownedPlace();
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases', {
         parkingPlaceId: place.id,
@@ -510,7 +519,7 @@ describe('place releases (integration)', { skip: skipWithoutDatabase() }, () => 
 
   describe('availability reflects releases', () => {
     it('counts an active release and drops it once reserved', async () => {
-      const date = '2026-11-25';
+      const date = futureDate(25);
       const { place } = await fixtures.insertReleasedPlace({ date });
 
       const before = await getJson(api.baseUrl, `/admin/availability?date=${date}`);

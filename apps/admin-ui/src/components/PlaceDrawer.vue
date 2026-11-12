@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { ViCard, ViCardContent } from '@vi-frontend/vision-ui/next'
 import { ViButton, ViInput, ViNameplate, ViSelect, ViSpoiler, ViText } from '@vi-frontend/vision-ui'
 
-import { statusColors, statusLabel } from '../statuses'
+import { sourceLabel, statusColors, statusLabel } from '../statuses'
 import { state, submit } from '../store'
 
 // Which operations a place offers is decided here only in the sense of *showing* them; the
@@ -56,16 +56,24 @@ const hostOptions = computed(() =>
   state.employees.map((employee) => ({ value: employee.id, text: employee.displayName }))
 )
 
-// Where a reservation may move: the day's released places nobody holds yet. A blocked or
-// archived one can still slip in here, and the API refuses it by name — the list is a
-// convenience, not the rule.
+// The slot statuses the API gives a place in the day's free supply and not yet taken:
+// released by its owner, without a permanent owner, or in the rotatable guest pool.
+const OPEN_STATUSES = new Set(['released', 'free', 'rotatable'])
+
+// Where a reservation may move: the day's open slots, by the API's own status. The list is
+// a convenience, not the rule — the API still refuses an impossible target by name.
 const moveOptions = computed(() =>
-  ((state.dashboard && state.dashboard.releasedPlaces) || [])
-    .filter((item) => !item.isReserved && item.parkingPlace.id !== selected.value?.place.id)
-    .map((item) => ({
-      value: item.parkingPlace.id,
-      text: [item.parkingPlace.code, item.parkingPlace.placeType].filter(Boolean).join(' · ')
+  state.lines
+    .flatMap((line) => line.slots || [])
+    .filter((slot) => OPEN_STATUSES.has(slot.status) && slot.placeId !== selected.value?.place.id)
+    .map((slot) => ({
+      value: slot.placeId,
+      text: [slot.code, statusLabel(slot.status)].filter(Boolean).join(' · ')
     }))
+)
+
+const canAssign = computed(
+  () => Boolean(selected.value) && !selected.value.reservation && OPEN_STATUSES.has(selected.value.status)
 )
 
 const releaseNotes = ref('')
@@ -204,7 +212,7 @@ const createGuest = () =>
             <ViText tag="p" variant="body-S-wide" class="muted">Назначение</ViText>
             <ViText tag="p" variant="body-M-wide">
               <template v-if="selected.reservation">
-                {{ selected.reservation.source }} ·
+                {{ sourceLabel(selected.reservation.source) }} ·
                 {{
                   selected.reservation.user?.displayName || selected.guestRequest?.guestName || 'гость'
                 }}
@@ -244,7 +252,7 @@ const createGuest = () =>
             У места нет постоянного владельца, отдача недоступна.
           </ViText>
 
-          <template v-if="selected.release && !selected.reservation">
+          <template v-if="canAssign">
             <ViSelect
               :value="assignUserId"
               :options="employeeOptions"
@@ -262,8 +270,9 @@ const createGuest = () =>
               Назначить
             </ViButton>
           </template>
-          <ViText v-else tag="p" variant="body-S-wide" class="muted">
-            Ручное назначение доступно только для отданного и свободного места.
+          <ViText v-else-if="!selected.reservation" tag="p" variant="body-S-wide" class="muted">
+            Ручное назначение доступно только для свободного места: отданного владельцем или без
+            постоянного владельца.
           </ViText>
 
           <ViButton
@@ -295,7 +304,7 @@ const createGuest = () =>
               Перевести
             </ViButton>
             <ViText v-if="!moveOptions.length" tag="p" variant="body-XS-wide" class="muted">
-              На {{ state.date }} нет свободных отданных мест, переводить некуда.
+              На {{ state.date }} нет свободных мест, переводить некуда.
             </ViText>
           </template>
 

@@ -39,7 +39,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
       const place = await placeReleasesRepository.findPlaceForGuestAssignment(repo, requestDate);
 
       if (!place) {
-        throw abortWith(409, 'No released parking place is available for guest assignment on this date');
+        throw abortWith(409, 'No free parking place is available for guest assignment on this date');
       }
 
       const warnings = await services.reservations.calculateAssignmentWarnings(
@@ -148,7 +148,7 @@ function createGuestRequestsService({ pool, dbRepository, services }) {
       const place = await placeReleasesRepository.findPlaceForGuestAssignment(repo, requestDate);
 
       if (!place) {
-        throw abortWith(409, 'No released parking place is available for guest assignment on this date');
+        throw abortWith(409, 'No free parking place is available for guest assignment on this date');
       }
 
       const reservation = await reservationsRepository.insertReservation(repo, {

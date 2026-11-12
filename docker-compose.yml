@@ -10,8 +10,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-parkingassistant}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parkingassistant}
       TZ: ${APP_TIMEZONE:-Europe/Moscow}
+    # Bound to the host's loopback by default: the stack reaches Postgres over the compose
+    # network, and backups go through `docker exec` (scripts/ops/backup.sh), so nothing needs
+    # the port from outside the host. POSTGRES_BIND=0.0.0.0 publishes it again, deliberately.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - /opt/git/parkingassistant/staging/postgres:/var/lib/postgresql/data
     healthcheck:

@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require('./availability');
+const { calculateAvailabilitySnapshot, countAvailableFreePlaces } = require('./availability');
 
 // Characterization tests: they pin the behavior that exists today, including the
 // parameters handed to Postgres, so the Phase 3 repository extraction can be
@@ -82,28 +82,29 @@ test('calculateAvailabilitySnapshot passes the date and the guest reserve minimu
 
   assert.equal(client.calls.length, 1);
   assert.deepEqual(client.calls[0].params, ['2026-07-17', 5]);
-  assert.match(client.calls[0].text, /from place_releases pr/);
+  assert.match(client.calls[0].text, /from day_supply s/);
   assert.match(client.calls[0].text, /pr\.release_during @> \$1::date/);
+  assert.match(client.calls[0].text, /pa\.valid_during @> \$1::date/);
 });
 
-test('countAvailableReleasedPlaces returns the count for the requested date', async () => {
+test('countAvailableFreePlaces returns the count for the requested date', async () => {
   const client = createMockClient([{ available_places: 7 }]);
 
-  assert.equal(await countAvailableReleasedPlaces(client, '2026-07-17'), 7);
+  assert.equal(await countAvailableFreePlaces(client, '2026-07-17'), 7);
   assert.deepEqual(client.calls[0].params, ['2026-07-17']);
 });
 
-test('countAvailableReleasedPlaces falls back to 0 for an empty or null count', async () => {
-  assert.equal(await countAvailableReleasedPlaces(createMockClient([]), '2026-07-17'), 0);
-  assert.equal(await countAvailableReleasedPlaces(createMockClient([{ available_places: null }]), '2026-07-17'), 0);
-  assert.equal(await countAvailableReleasedPlaces(createMockClient([{ available_places: 0 }]), '2026-07-17'), 0);
+test('countAvailableFreePlaces falls back to 0 for an empty or null count', async () => {
+  assert.equal(await countAvailableFreePlaces(createMockClient([]), '2026-07-17'), 0);
+  assert.equal(await countAvailableFreePlaces(createMockClient([{ available_places: null }]), '2026-07-17'), 0);
+  assert.equal(await countAvailableFreePlaces(createMockClient([{ available_places: 0 }]), '2026-07-17'), 0);
 });
 
-test('countAvailableReleasedPlaces excludes places already reserved for the date', async () => {
+test('countAvailableFreePlaces excludes places already reserved for the date', async () => {
   const client = createMockClient([{ available_places: 0 }]);
 
-  await countAvailableReleasedPlaces(client, '2026-07-17');
+  await countAvailableFreePlaces(client, '2026-07-17');
 
   assert.match(client.calls[0].text, /r\.status = 'active'/);
-  assert.match(client.calls[0].text, /and r\.id is null/);
+  assert.match(client.calls[0].text, /where r\.id is null/);
 });

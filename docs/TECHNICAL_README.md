@@ -546,6 +546,12 @@ Acceptance:
 
 Цель: закрыть операционную логику multi-линий.
 
+Status: критерии приёмки выполняются — проверено 2026-11-12 на копии данных стенда: вторая машина
+на занятую позицию получает `409`, ранний выезд с позиции 2 даёт конфликт
+`employee_blocks_early_departure` с названным блокирующим на позиции 1, во вкладке `Линии` видны
+позиции, планы выезда, конфликты и запросы контактов. Скрытие контактов гостя покрыто
+`e2e-day.itest.js` (шаги 10–11). Пункты ниже — улучшения UX, а не пробелы.
+
 - Доработать экран `Линии` как визуальную структуру позиций `1/2/3`.
 - Улучшить фиксацию позиции и валидацию занятости.
 - Группировать ранние выезды по линиям.
@@ -618,9 +624,13 @@ Acceptance:
 - ~~Добавить health/readiness checks для сервисов~~ — сделано: container healthcheck у `api` и
   `admin-ui`, `depends_on: service_healthy` у зависимых сервисов.
 - ~~Добавить smoke-check checklist после redeploy~~ — сделано: `npm run smoke:stand`.
-- Описать backup/restore для PostgreSQL и mounted storage.
-- Усилить production env defaults и secrets: сейчас в `staging/env/app.env` лежат значения
-  `change-me`, а Postgres стенда опубликован на хостовый `5432`.
+- ~~Описать backup/restore для PostgreSQL и mounted storage~~ — сделано: `scripts/ops/backup.sh`
+  (pg_dump + подложки и импорты, контрольные суммы, ротация) и `scripts/ops/restore.sh`
+  (проверка сумм, страховочный бэкап, пересоздание БД), runbook — [OPERATIONS.md](OPERATIONS.md).
+- Усилить production env defaults и secrets: в коде сделано — Postgres публикуется только на
+  loopback хоста (`POSTGRES_BIND`, по умолчанию `127.0.0.1`), `.env.example` больше не
+  подсказывает рабочий пароль. На самом стенде остаётся заменить значения в
+  `staging/env/app.env` и задать `JOBS_SERVICE_TOKEN` — чек-лист в [OPERATIONS.md](OPERATIONS.md).
 - Перевести стенд на образы из registry, если ручной запуск скрипта деплоя станет узким местом
   (отвергнутая на сегодня альтернатива из ADR 005).
 
@@ -628,7 +638,7 @@ Acceptance:
 
 - Новый релиз поднимается одной командой из git: done.
 - Есть короткий проверочный чеклист после релиза: done.
-- Есть документированный минимум backup/restore.
+- Есть документированный минимум backup/restore: done.
 - В env стенда нет значений `change-me`.
 
 ### M10. Design System Migration (Vision UI)
@@ -811,7 +821,9 @@ ssh omv docker logs --tail 100 parkingassistant-migrate
 - CI (`.github/workflows/ci.yml`) гоняет `check`, `lint` и `npm test`, но **не** интеграционные
   тесты: им нужен живой PostgreSQL, и поднимать его в CI пока не настроено. Поэтому `npm run
   test:integration` остаётся ручным шагом перед заметными изменениями схемы или бизнес-правил.
-- Backup/restore для PostgreSQL и mounted storage не формализован (health/readiness — сделаны).
+- Ночной бэкап — это строка в crontab хоста ([OPERATIONS.md](OPERATIONS.md)), а не часть стека:
+  пока её не добавили на OMV, бэкапы делаются только вручную. Копии лежат на том же диске, что и
+  база, — вынос на другой носитель остаётся за средствами OMV.
 - Деплой стенда запускается вручную (`scripts/deploy/stand.sh`), автоматического триггера по
   push в `main` нет — осознанный компромисс варианта из ADR 005.
 - CI не собирает и не тестирует `apps/admin-ui`: сборке нужны тарболы ДС из `vendor/`, которых в

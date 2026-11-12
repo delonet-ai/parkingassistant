@@ -3,7 +3,7 @@
 const { employeePoolSize, findDriftedDeparturePlans, summarizeEmployeePool } = require('../../../../../packages/domain');
 const { withTransaction } = require('../../repositories/db');
 const { mapJobRun } = require('../../serializers/job-runs');
-const { calculateAvailabilitySnapshot, countAvailableReleasedPlaces } = require('../../services/availability');
+const { calculateAvailabilitySnapshot, countAvailableFreePlaces } = require('../../services/availability');
 const { auditActor, JOBS } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
 const departurePlansRepository = require('../departure-plans/repository');
@@ -175,7 +175,7 @@ function createJobsService({ pool, dbRepository, appTimezone, guestReserveMinimu
       withTransaction(pool, async (repo) => {
         await placeReleasesRepository.lockEmployeePoolForDate(repo, targetDate);
 
-        const availableReleasedPlacesCount = await countAvailableReleasedPlaces(repo, targetDate);
+        const availableReleasedPlacesCount = await countAvailableFreePlaces(repo, targetDate);
         const poolSize = employeePoolSize(availableReleasedPlacesCount, guestReserveMinimum);
 
         const queueSummary = await queueRepository.summarizeWaitingQueue(repo, {

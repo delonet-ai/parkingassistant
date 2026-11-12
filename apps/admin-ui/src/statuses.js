@@ -1,13 +1,14 @@
 // Place statuses, carried over from the SSR UI unchanged.
 //
 // Status is never conveyed by colour alone: every slot prints the word too, so the list
-// stays readable for colour-blind operators and in print. The six statuses come from the
+// stays readable for colour-blind operators and in print. The seven statuses come from the
 // API (`/admin/place-lines` → slots[].status); this module only decides how they look,
 // mapping each to a Vision UI palette group instead of the old hand-picked hexes.
 
 const PLACE_STATUSES = [
   { status: 'free', label: 'свободно', group: 'green' },
   { status: 'released', label: 'отдано', group: 'mint' },
+  { status: 'owner', label: 'у владельца', group: 'blue' },
   { status: 'occupied', label: 'занято', group: 'yellow' },
   { status: 'guest', label: 'гостевое', group: 'orange' },
   { status: 'rotatable', label: 'ротируемое', group: 'red' },

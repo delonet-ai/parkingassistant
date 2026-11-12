@@ -96,8 +96,12 @@ process-level configuration — `GUEST_RESERVE_MINIMUM` in particular is read on
 a suite that wants a different reserve has to boot its own API with that value.
 
 `apps/api/testing/fixtures.js` builds the domain preconditions (`insertEmployee`, `insertPlace`,
-`insertLineGroup`, `insertReleasedPlace`, `insertQueuedRequest`, `insertLineOccupancy`,
-`insertDeparturePlan`) plus `postJson`/`postForm`/`getJson`. Prefer it over inline SQL so a test
+`insertLineGroup`, `insertHeldPlace`, `insertReleasedPlace`, `insertQueuedRequest`, `insertLineOccupancy`,
+`insertDeparturePlan`) plus `postJson`/`postForm`/`getJson`. Mind the day-supply rule: a bare
+`insertPlace()` has no permanent owner and is therefore free supply on **every** date — it leaks
+into every later test's counts and picks in the same file. Use `insertHeldPlace()` (owned,
+not released, open-ended by default) for "just a place", and archive a deliberately unowned one
+when the test is done. Prefer it over inline SQL so a test
 states what it needs, not how the tables are wired. `postForm` deliberately sets no
 `content-type`: `fetch` derives it and the boundary from the `FormData`, and a header written by
 hand would name a boundary the body does not use.

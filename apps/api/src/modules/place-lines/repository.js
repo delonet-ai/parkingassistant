@@ -109,7 +109,13 @@ async function listPlaceLineSlots(db, { date, floor }) {
         r.id as reservation_id,
         r.source as reservation_source,
         u.display_name as user_display_name,
-        rel.id as release_id
+        rel.id as release_id,
+        exists (
+          select 1
+          from permanent_assignments pa
+          where pa.parking_place_id = pp.id
+            and pa.valid_during @> $1::date
+        ) as has_permanent_owner
       from line_groups lg
       join parking_places pp
         on pp.line_group_id = lg.id

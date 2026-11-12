@@ -68,7 +68,7 @@
         }
       ],
       "guestReserve": {
-        "availablePlaces": 5,
+        "availablePlaces": 9,
         "minimum": 5,
         "status": "ok"
       },
@@ -235,19 +235,19 @@
     "status": 200,
     "payload": {
       "availability": {
-        "availablePlaces": 5,
+        "availablePlaces": 9,
         "byType": {
-          "double": 1,
-          "single": 3,
-          "triple": 1
+          "double": 2,
+          "single": 4,
+          "triple": 3
         },
         "date": "<today>",
         "employeeAvailability": {
-          "after19": 0,
-          "before19": 2
+          "after19": 4,
+          "before19": 3
         },
         "guestReserve": {
-          "availablePlaces": 5,
+          "availablePlaces": 9,
           "minimum": 5,
           "status": "ok"
         },
@@ -265,19 +265,19 @@
     "status": 200,
     "payload": {
       "availability": {
-        "availablePlaces": 6,
+        "availablePlaces": 10,
         "byType": {
-          "double": 1,
-          "single": 3,
-          "triple": 2
+          "double": 2,
+          "single": 4,
+          "triple": 4
         },
         "date": "<today+1>",
         "employeeAvailability": {
-          "after19": 1,
-          "before19": 3
+          "after19": 5,
+          "before19": 4
         },
         "guestReserve": {
-          "availablePlaces": 6,
+          "availablePlaces": 10,
           "minimum": 5,
           "status": "ok"
         },

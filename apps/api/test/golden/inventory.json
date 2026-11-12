@@ -76,7 +76,7 @@
               "placeRole": "regular",
               "placeType": "double",
               "position": 1,
-              "status": "free",
+              "status": "owner",
               "title": "Место 101",
               "userDisplayName": null
             },
@@ -87,7 +87,7 @@
               "placeRole": "regular",
               "placeType": "double",
               "position": 2,
-              "status": "free",
+              "status": "owner",
               "title": "Место 102",
               "userDisplayName": null
             }
@@ -214,7 +214,7 @@
               "placeRole": "regular",
               "placeType": "triple",
               "position": 1,
-              "status": "free",
+              "status": "owner",
               "title": "Место 301",
               "userDisplayName": null
             },
@@ -292,7 +292,7 @@
               "placeRole": "regular",
               "placeType": "double",
               "position": 1,
-              "status": "free",
+              "status": "owner",
               "title": "Место 101",
               "userDisplayName": null
             },
@@ -303,7 +303,7 @@
               "placeRole": "regular",
               "placeType": "double",
               "position": 2,
-              "status": "free",
+              "status": "owner",
               "title": "Место 102",
               "userDisplayName": null
             }
@@ -497,7 +497,7 @@
               "placeRole": "regular",
               "placeType": "double",
               "position": 1,
-              "status": "free",
+              "status": "owner",
               "title": "Место 101",
               "userDisplayName": null
             },
@@ -508,7 +508,7 @@
               "placeRole": "regular",
               "placeType": "double",
               "position": 2,
-              "status": "free",
+              "status": "owner",
               "title": "Место 102",
               "userDisplayName": null
             }
@@ -529,7 +529,7 @@
               "placeRole": "rotatable",
               "placeType": "triple",
               "position": 1,
-              "status": "rotatable",
+              "status": "owner",
               "title": "Место 110",
               "userDisplayName": null
             },
@@ -614,7 +614,7 @@
               "placeRole": "regular",
               "placeType": "single",
               "position": 1,
-              "status": "free",
+              "status": "owner",
               "title": "Место 122",
               "userDisplayName": null
             }

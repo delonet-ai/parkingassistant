@@ -47,10 +47,10 @@
         "assignedReservation": {
           "id": "<id:133>",
           "parkingPlace": {
-            "code": "121",
-            "id": "<id:4>",
-            "placeType": "single",
-            "title": "Место 121"
+            "code": "202",
+            "id": "<id:26>",
+            "placeType": "double",
+            "title": "Место 202"
           },
           "reservationDate": "<today>",
           "source": "guest",
@@ -89,10 +89,10 @@
         "assignedReservation": {
           "id": "<id:136>",
           "parkingPlace": {
-            "code": "122",
-            "id": "<id:10>",
-            "placeType": "single",
-            "title": "Место 122"
+            "code": "G9-4",
+            "id": "<id:125>",
+            "placeType": "triple",
+            "title": "Голден тройное 1"
           },
           "reservationDate": "<today>",
           "source": "guest",
@@ -289,10 +289,10 @@
           "assignedReservation": {
             "id": "<id:133>",
             "parkingPlace": {
-              "code": "121",
-              "id": "<id:4>",
-              "placeType": "single",
-              "title": "Место 121"
+              "code": "202",
+              "id": "<id:26>",
+              "placeType": "double",
+              "title": "Место 202"
             }
           },
           "canceledAt": "<timestamp>",
@@ -339,10 +339,10 @@
           "assignedReservation": {
             "id": "<id:136>",
             "parkingPlace": {
-              "code": "122",
-              "id": "<id:10>",
-              "placeType": "single",
-              "title": "Место 122"
+              "code": "G9-4",
+              "id": "<id:125>",
+              "placeType": "triple",
+              "title": "Голден тройное 1"
             }
           },
           "canceledAt": null,
@@ -380,10 +380,10 @@
         {
           "id": "<id:136>",
           "parkingPlace": {
-            "code": "122",
-            "id": "<id:10>",
-            "placeType": "single",
-            "title": "Место 122"
+            "code": "G9-4",
+            "id": "<id:125>",
+            "placeType": "triple",
+            "title": "Голден тройное 1"
           },
           "reservationDate": "<today>",
           "user": {
@@ -394,9 +394,9 @@
         }
       ],
       "guestReserve": {
-        "availablePlaces": 4,
+        "availablePlaces": 12,
         "minimum": 5,
-        "status": "low"
+        "status": "ok"
       },
       "releasedPlaces": [
         {
@@ -448,7 +448,7 @@
           "releaseNotes": "Больничный"
         },
         {
-          "isReserved": true,
+          "isReserved": false,
           "owner": {
             "department": "HR",
             "displayName": "Лебедева Ксения Олеговна",
@@ -553,10 +553,10 @@
           "createdAt": "<timestamp>",
           "id": "<id:136>",
           "parkingPlace": {
-            "code": "122",
-            "id": "<id:10>",
-            "placeType": "single",
-            "title": "Место 122"
+            "code": "G9-4",
+            "id": "<id:125>",
+            "placeType": "triple",
+            "title": "Голден тройное 1"
           },
           "reason": "Guest assignment hosted by Иванов Иван Иванович",
           "reservationDate": "<today>",

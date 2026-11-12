@@ -68,7 +68,15 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
     return payload.line;
   }
 
-  /** A release row without a permanent owner — the archive blockers stay out of the way. */
+  /**
+   * A release row without a permanent owner — the archive blockers stay out of the way.
+   *
+   * Note that a place created here has no permanent owner, so it is part of the day's free
+   * supply on every date whether or not it is released (the supply rule in the
+   * place-releases repository). A release of it shows up as a release — status `released`,
+   * the dashboard's released list, `releasedPlaces` — but adds no supply. Every count below
+   * is therefore taken as a delta against a `before` read, never as an absolute.
+   */
   async function releasePlace(placeId, date) {
     const owner = await fixtures.insertEmployee();
     await db.query(
@@ -289,6 +297,31 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
       });
       const released = await createLine(1, 'ST-REL');
       const occupied = await createLine(1, 'ST-OCC');
+      const owned = await createLine(1, 'ST-OWN');
+      const ownedRotatable = await createLine(1, 'ST-OWN-ROT', {
+        slotOverrides: { placeRole: 'rotatable' }
+      });
+      const ownedReleased = await createLine(1, 'ST-OWN-REL');
+
+      // Owners hold these three around the date; only the last one is handed back.
+      for (const line of [owned, ownedRotatable, ownedReleased]) {
+        const holder = await fixtures.insertEmployee();
+        await fixtures.insertPermanentAssignment({
+          userId: holder.id,
+          parkingPlaceId: line.slots[0].placeId,
+          dateFrom: addDays(date, -1),
+          dateTo: addDays(date, 1)
+        });
+        if (line === ownedReleased) {
+          await db.query(
+            `
+              insert into place_releases (user_id, parking_place_id, release_during, created_via)
+              values ($1, $2, $3::daterange, 'admin_web')
+            `,
+            [holder.id, line.slots[0].placeId, dayRange(date)]
+          );
+        }
+      }
 
       await releasePlace(released.slots[0].placeId, date);
       const owner = await releasePlace(occupied.slots[0].placeId, date);
@@ -304,8 +337,13 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
       const { payload } = await getJson(api.baseUrl, `/admin/place-lines?date=${date}`);
       const statusByLineId = new Map(payload.lines.map((line) => [line.lineId, line.slots[0]]));
 
+      // No permanent owner on the date: the place is in the day's supply, so it reads `free`.
       assert.equal(statusByLineId.get(plain.lineId).status, 'free');
       assert.equal(statusByLineId.get(rotatable.lineId).status, 'rotatable');
+      // A permanent owner who did not release the place holds it: `owner`, whatever its role.
+      assert.equal(statusByLineId.get(owned.lineId).status, 'owner');
+      assert.equal(statusByLineId.get(ownedRotatable.lineId).status, 'owner');
+      assert.equal(statusByLineId.get(ownedReleased.lineId).status, 'released');
       assert.equal(statusByLineId.get(blocked.lineId).status, 'blocked');
       assert.equal(statusByLineId.get(released.lineId).status, 'released');
       assert.equal(statusByLineId.get(occupied.lineId).status, 'occupied');
@@ -313,9 +351,10 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
     });
 
     it('reports a guest reservation as guest, not occupied', async () => {
+      // Every place this suite created is free supply, so the guest lands wherever the guest
+      // pick order says; the assertion follows the place the guest actually got.
       const date = '2027-05-05';
-      const line = await createLine(1, 'ST-GUEST');
-      await releasePlace(line.slots[0].placeId, date);
+      await createLine(1, 'ST-GUEST');
       const host = await fixtures.insertEmployee();
 
       const request = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
@@ -324,10 +363,12 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
         guestName: 'Гостев Гость'
       });
       assert.equal(request.status, 201, JSON.stringify(request.payload));
+      const guestCode = request.payload.request.assignedReservation.parkingPlace.code;
 
       const { payload } = await getJson(api.baseUrl, `/admin/place-lines?date=${date}`);
-      const slot = payload.lines.find((item) => item.lineId === line.lineId).slots[0];
+      const slot = payload.lines.flatMap((item) => item.slots).find((item) => item.code === guestCode);
 
+      assert.ok(slot, `the guest's place ${guestCode} must be in the list`);
       assert.equal(slot.status, 'guest');
     });
 
@@ -340,20 +381,26 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
   });
 
   describe('created places propagate through the system', () => {
-    it('shows up in the dashboard and the availability snapshot once released', async () => {
+    it('counts a created element as free supply at once, and lists it on the dashboard once released', async () => {
       const date = '2027-06-01';
-      const line = await createLine(3, 'PROP');
 
       const before = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
-      assert.equal(before.payload.availability.byType.triple, 0);
+      const line = await createLine(3, 'PROP');
+
+      // Nobody holds the new places permanently, so they are free supply without any release.
+      const created = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+      assert.equal(created.payload.availability.byType.triple, before.payload.availability.byType.triple + 3);
+      assert.equal(created.payload.availability.availablePlaces, before.payload.availability.availablePlaces + 3);
+      assert.equal(created.payload.availability.releasedPlaces, before.payload.availability.releasedPlaces);
 
       for (const slot of line.slots) {
         await releasePlace(slot.placeId, date);
       }
 
+      // A release is still counted as a release, but it adds no supply the place did not have.
       const availability = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
-      assert.equal(availability.payload.availability.byType.triple, 3);
-      assert.equal(availability.payload.availability.releasedPlaces, 3);
+      assert.equal(availability.payload.availability.byType.triple, created.payload.availability.byType.triple);
+      assert.equal(availability.payload.availability.releasedPlaces, before.payload.availability.releasedPlaces + 3);
 
       const dashboard = await getJson(api.baseUrl, `/admin/dashboard?date=${date}`);
       const codes = dashboard.payload.releasedPlaces.map((place) => place.parkingPlace.code);
@@ -391,6 +438,46 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
         highPriority.slots[0].code,
         'a place created with guestPriorityRank must sort ahead of a higher rank'
       );
+    });
+
+    it('keeps a blocked element out of the supply even though nobody owns it', async () => {
+      const date = '2027-06-03';
+
+      const before = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+      await createLine(2, 'PROP-BLK', { slotOverrides: { placeRole: 'blocked' } });
+      const after = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+
+      assert.equal(after.payload.availability.availablePlaces, before.payload.availability.availablePlaces);
+      assert.equal(after.payload.availability.byType.double, before.payload.availability.byType.double);
+    });
+
+    it('keeps an owned, unreleased element out of the supply, and counts it once released', async () => {
+      const date = '2027-06-04';
+
+      const before = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+      const line = await createLine(1, 'PROP-OWN');
+      const holder = await fixtures.insertEmployee();
+      await fixtures.insertPermanentAssignment({
+        userId: holder.id,
+        parkingPlaceId: line.slots[0].placeId,
+        dateFrom: addDays(date, -1),
+        dateTo: addDays(date, 1)
+      });
+
+      const held = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+      assert.equal(held.payload.availability.availablePlaces, before.payload.availability.availablePlaces);
+
+      await db.query(
+        `
+          insert into place_releases (user_id, parking_place_id, release_during, created_via)
+          values ($1, $2, $3::daterange, 'admin_web')
+        `,
+        [holder.id, line.slots[0].placeId, dayRange(date)]
+      );
+
+      const released = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
+      assert.equal(released.payload.availability.availablePlaces, before.payload.availability.availablePlaces + 1);
+      assert.equal(released.payload.availability.releasedPlaces, before.payload.availability.releasedPlaces + 1);
     });
   });
 
@@ -506,14 +593,24 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
       await releasePlace(line.slots[0].placeId, date);
 
       const before = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
-      assert.equal(before.payload.availability.availablePlaces, 1);
+      const beforeCount = before.payload.availability.availablePlaces;
+      assert.ok(beforeCount >= 1);
 
       const archived = await postJson(api.baseUrl, '/admin/place-lines/archive', { lineId: line.lineId });
       assert.equal(archived.status, 200, JSON.stringify(archived.payload));
 
       const after = await getJson(api.baseUrl, `/admin/availability?date=${date}`);
-      assert.equal(after.payload.availability.availablePlaces, 0, 'an archived place is not available');
-      assert.equal(after.payload.availability.guestReserve.availablePlaces, 0, 'nor does it pad the guest reserve');
+      assert.equal(after.payload.availability.availablePlaces, beforeCount - 1, 'an archived place is not available');
+      assert.equal(
+        after.payload.availability.guestReserve.availablePlaces,
+        before.payload.availability.guestReserve.availablePlaces - 1,
+        'nor does it pad the guest reserve'
+      );
+      assert.equal(
+        after.payload.availability.releasedPlaces,
+        before.payload.availability.releasedPlaces - 1,
+        'its surviving release row is not counted either'
+      );
 
       const list = await getJson(api.baseUrl, `/admin/place-lines?date=${date}`);
       assert.ok(
@@ -521,10 +618,17 @@ describe('place lines (integration)', { skip: skipWithoutDatabase() }, () => {
         'an archived element is gone from the inventory list'
       );
 
+      // Other places in this suite are free supply on the date, so the queue may well serve
+      // the request — just never with the archived place.
       const employee = await fixtures.insertEmployee();
       await fixtures.insertQueuedRequest({ userId: employee.id, date, position: 1 });
       const queue = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date });
-      assert.equal(queue.payload.assignedCount, 0, 'the queue cannot hand out an archived place');
+      assert.equal(queue.status, 200, JSON.stringify(queue.payload));
+      const onArchived = await db.query(
+        "select count(*)::int as count from reservations where parking_place_id = $1 and reservation_date = $2::date and status = 'active'",
+        [line.slots[0].placeId, date]
+      );
+      assert.equal(onArchived.rows[0].count, 0, 'the queue cannot hand out an archived place');
 
       // The place stays readable — reservations, releases and audit history are the
       // reason archiving exists instead of a delete.

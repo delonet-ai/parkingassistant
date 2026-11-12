@@ -227,17 +227,17 @@ describe('scheduled jobs (integration)', { skip: skipWithoutDatabase() }, () => 
   });
 
   describe('lock-departure-plans', () => {
-    /** A departure plan needs an owner standing in a line on that date. */
+    /**
+     * A departure plan needs an owner standing in a line on that date. The ownership is
+     * open-ended: a place nobody owns on a date is that date's free supply, so a one-day
+     * ownership would leak the place into the guest-reserve counts further down.
+     */
     async function planForDate(date, departureTime) {
       const lineGroup = await fixtures.insertLineGroup({ capacity: 2 });
-      const place = await fixtures.insertPlace({ lineGroupId: lineGroup.id, linePositionHint: 1 });
       const employee = await fixtures.insertEmployee();
-
-      await fixtures.insertPermanentAssignment({
-        userId: employee.id,
-        parkingPlaceId: place.id,
-        dateFrom: date,
-        dateTo: date
+      const { place } = await fixtures.insertHeldPlace({
+        ownerId: employee.id,
+        place: { lineGroupId: lineGroup.id, linePositionHint: 1 }
       });
 
       const plan = await fixtures.insertDeparturePlan({
@@ -336,26 +336,17 @@ describe('scheduled jobs (integration)', { skip: skipWithoutDatabase() }, () => 
      */
     async function blockedLine(date, departureTime) {
       const lineGroup = await fixtures.insertLineGroup({ capacity: 2 });
-      const frontPlace = await fixtures.insertPlace({
-        lineGroupId: lineGroup.id,
-        linePositionHint: 1
-      });
-      const rearPlace = await fixtures.insertPlace({ lineGroupId: lineGroup.id, linePositionHint: 2 });
-
       const blocker = await fixtures.insertEmployee();
       const early = await fixtures.insertEmployee();
 
-      await fixtures.insertPermanentAssignment({
-        userId: blocker.id,
-        parkingPlaceId: frontPlace.id,
-        dateFrom: date,
-        dateTo: date
+      // Open-ended ownership, for the same reason as in `planForDate` above.
+      const { place: frontPlace } = await fixtures.insertHeldPlace({
+        ownerId: blocker.id,
+        place: { lineGroupId: lineGroup.id, linePositionHint: 1 }
       });
-      await fixtures.insertPermanentAssignment({
-        userId: early.id,
-        parkingPlaceId: rearPlace.id,
-        dateFrom: date,
-        dateTo: date
+      const { place: rearPlace } = await fixtures.insertHeldPlace({
+        ownerId: early.id,
+        place: { lineGroupId: lineGroup.id, linePositionHint: 2 }
       });
 
       await fixtures.insertLineOccupancy({

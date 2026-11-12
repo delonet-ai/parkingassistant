@@ -83,13 +83,14 @@ test('status precedence: occupancy beats a release, a release beats the role', (
   assert.equal(derivePlaceStatus(), 'free');
 });
 
-test('every derived status is one of the six the legend paints', () => {
+test('every derived status is one of the seven the legend paints', () => {
   const produced = new Set([
     derivePlaceStatus({ hasReservation: true }),
     derivePlaceStatus({ hasReservation: true, reservationSource: 'guest' }),
     derivePlaceStatus({ hasRelease: true }),
     derivePlaceStatus({ placeRole: 'blocked' }),
     derivePlaceStatus({ placeRole: 'rotatable' }),
+    derivePlaceStatus({ hasPermanentOwner: true }),
     derivePlaceStatus()
   ]);
 
@@ -103,6 +104,14 @@ test('placeSlotStatus is the same rule over a database row', () => {
   assert.equal(placeSlotStatus({ place_role: 'blocked' }), 'blocked');
   assert.equal(placeSlotStatus({ place_role: 'regular' }), 'free');
   assert.equal(placeSlotStatus({}), 'free');
+});
+
+test('a permanent owner who did not release the place holds it for the day', () => {
+  assert.equal(placeSlotStatus({ has_permanent_owner: true, place_role: 'regular' }), 'owner');
+  assert.equal(placeSlotStatus({ has_permanent_owner: true, place_role: 'rotatable' }), 'owner');
+  assert.equal(placeSlotStatus({ has_permanent_owner: true, release_id: 'rel' }), 'released');
+  assert.equal(placeSlotStatus({ has_permanent_owner: true, reservation_id: 'r' }), 'occupied');
+  assert.equal(placeSlotStatus({ has_permanent_owner: true, place_role: 'blocked' }), 'blocked');
 });
 
 test('buildLineDefinition derives code, name, notes, type and positions from capacity', () => {

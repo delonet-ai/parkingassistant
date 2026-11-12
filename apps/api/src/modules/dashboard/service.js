@@ -15,7 +15,7 @@ function createDashboardService({ dbRepository, appTimezone, guestReserveMinimum
       placeReleasesRepository.listActiveReleasesForDate(dbRepository, date),
       reservationsRepository.listActiveReservationsForDate(dbRepository, date),
       guestRequestsRepository.listGuestRequestsForDate(dbRepository, date),
-      placeReleasesRepository.countUnreservedReleasedPlaces(dbRepository, date)
+      placeReleasesRepository.countUnreservedFreePlaces(dbRepository, date)
     ]);
 
     return { releasedPlaces, reservations, guestRequests, guestReserve };

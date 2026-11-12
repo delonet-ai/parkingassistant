@@ -275,19 +275,19 @@
     "status": 200,
     "payload": {
       "availability": {
-        "availablePlaces": 5,
+        "availablePlaces": 14,
         "byType": {
-          "double": 1,
-          "single": 3,
-          "triple": 1
+          "double": 4,
+          "single": 5,
+          "triple": 5
         },
         "date": "<today>",
         "employeeAvailability": {
-          "after19": 0,
-          "before19": 2
+          "after19": 9,
+          "before19": 6
         },
         "guestReserve": {
-          "availablePlaces": 5,
+          "availablePlaces": 14,
           "minimum": 5,
           "status": "ok"
         },
@@ -363,19 +363,19 @@
     "status": 200,
     "payload": {
       "availability": {
-        "availablePlaces": 6,
+        "availablePlaces": 14,
         "byType": {
-          "double": 2,
-          "single": 3,
-          "triple": 1
+          "double": 4,
+          "single": 5,
+          "triple": 5
         },
         "date": "<today>",
         "employeeAvailability": {
-          "after19": 1,
-          "before19": 3
+          "after19": 9,
+          "before19": 6
         },
         "guestReserve": {
-          "availablePlaces": 6,
+          "availablePlaces": 14,
           "minimum": 5,
           "status": "ok"
         },
@@ -652,19 +652,19 @@
     "status": 200,
     "payload": {
       "availability": {
-        "availablePlaces": 6,
+        "availablePlaces": 14,
         "byType": {
-          "double": 2,
-          "single": 3,
-          "triple": 1
+          "double": 4,
+          "single": 4,
+          "triple": 6
         },
         "date": "<today>",
         "employeeAvailability": {
-          "after19": 1,
-          "before19": 3
+          "after19": 9,
+          "before19": 7
         },
         "guestReserve": {
-          "availablePlaces": 6,
+          "availablePlaces": 14,
           "minimum": 5,
           "status": "ok"
         },

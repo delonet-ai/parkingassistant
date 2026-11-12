@@ -21,15 +21,20 @@
 // a file sequentially, which is what makes that legal.
 //
 // The day, in one paragraph: the catalog is imported (a triple line 101/102/103
-// and two singles on floor 4), a new triple element is added on floor 5, four
-// owners and two other employees are created, C releases the rear slot 103 and D
-// releases the single 110, an employee request goes through the queue and lands
-// on 103 (the queue prefers a triple over a single), that employee takes line
-// position 3 and files an early departure, D takes their release back, A releases
-// the front slot 101, a guest is auto-assigned to it and is *warned* that it
-// blocks the early departure behind it, the guest takes position 1, the blocked
-// employee looks up who is ahead of them, and the floor-5 element is archived
-// again.
+// and two singles on floor 4, of which 120 is the rotatable guest place), a new
+// triple element is added on floor 5, four owners and two other employees are
+// created, C releases the rear slot 103 and D releases the single 110, an employee
+// request goes through the queue and lands on 103 (the queue prefers a triple over
+// a single, and the owned-and-released 103 sorts before the unowned 501), that
+// employee takes line position 3 and files an early departure, D takes their release
+// back, A releases the front slot 101, a first guest is auto-assigned to the
+// rotatable 120, a second guest to 101 and is *warned* that it blocks the early
+// departure behind it, that guest takes position 1, the blocked employee looks up
+// who is ahead of them, and the floor-5 element is archived again.
+//
+// The day's free supply is every in-service place that its owner released OR that
+// nobody owns permanently on the date — so 120 and the floor-5 element 501/502/503,
+// which have no owner, are in the pool all day without any release.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -291,10 +296,11 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
 
     const { payload } = await getJson(api.baseUrl, `/admin/availability?date=${DAY}`);
 
+    // Released: 103 and 110. Free supply: those two plus the unowned 120 and 501/502/503.
     assert.equal(payload.availability.releasedPlaces, 2);
-    assert.equal(payload.availability.availablePlaces, 2);
+    assert.equal(payload.availability.availablePlaces, 6);
     assert.equal(payload.availability.guestReserve.minimum, 1);
-    assert.deepEqual(payload.availability.byType, { single: 1, double: 0, triple: 1 });
+    assert.deepEqual(payload.availability.byType, { single: 2, double: 0, triple: 4 });
   });
 
   it('step 5: an employee files a request and joins the queue', async () => {
@@ -311,7 +317,7 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
     day.request = payload.request;
   });
 
-  it('step 6: the queue run serves the request and stops at the guest reserve', async () => {
+  it('step 6: the queue run serves the request from the pool above the guest reserve', async () => {
     const { status, payload } = await postJson(api.baseUrl, '/admin/jobs/process-queue', { date: DAY });
 
     assert.equal(status, 200, JSON.stringify(payload));
@@ -321,7 +327,7 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
     assert.equal(
       payload.assignments[0].parkingPlace.code,
       '103',
-      'the queue prefers a double, then a triple, then a single — 103 over 110'
+      'the queue prefers a double, then a triple, then a single, then code — 103 over 110 and 501'
     );
     assert.equal(payload.jobRun.jobName, 'process_queue');
     assert.equal(payload.jobRun.status, 'success');
@@ -339,9 +345,9 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
     assert.equal(rerun.payload.assignedCount, 0);
     assert.equal(rerun.payload.skippedCount, 0);
 
-    // One place taken, one still released: exactly the guest reserve.
+    // One place taken out of six: 110, 120 and 501/502/503 are still free.
     const { payload: availability } = await getJson(api.baseUrl, `/admin/availability?date=${DAY}`);
-    assert.equal(availability.availability.availablePlaces, 1);
+    assert.equal(availability.availability.availablePlaces, 5);
   });
 
   it('step 7: the served employee takes their line position and plans an early departure', async () => {
@@ -376,7 +382,7 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
     assert.equal(plan.payload.departurePlan.isEarly, true, '16:30 is before the 18:00 cut-off');
   });
 
-  it('step 8: an owner takes their release back, leaving one place in the pool', async () => {
+  it('step 8: an owner takes their release back, and their place leaves the pool', async () => {
     const { status, payload } = await postJson(api.baseUrl, '/admin/place-releases/cancel', {
       releaseId: day.releaseD.id
     });
@@ -385,11 +391,24 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
 
     const { payload: availability } = await getJson(api.baseUrl, `/admin/availability?date=${DAY}`);
     assert.equal(availability.availability.releasedPlaces, 1, 'the withdrawn release leaves the pool');
-    assert.equal(availability.availability.availablePlaces, 0);
+    // 110 is its owner's again; what is left free is the unowned 120 and 501/502/503.
+    assert.equal(availability.availability.availablePlaces, 4);
+    assert.equal(availability.availability.byType.single, 1);
   });
 
-  it('step 9: the front slot is released and a guest is assigned to it — with a warning', async () => {
+  it('step 9: a first guest gets the rotatable place, a second the released front slot — with a warning', async () => {
     day.releaseA = await releasePlace('101');
+
+    // The guest pick order puts the rotatable guest pool first, ahead of any released place.
+    const first = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
+      hostUserId: day.host.id,
+      requestDate: DAY,
+      guestName: 'Ротационный Гость'
+    });
+
+    assert.equal(first.status, 201, JSON.stringify(first.payload));
+    assert.equal(first.payload.request.assignedReservation.parkingPlace.code, '120');
+    assert.deepEqual(first.payload.warnings, []);
 
     const { status, payload } = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
       hostUserId: day.host.id,
@@ -404,7 +423,7 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
     assert.equal(
       payload.request.assignedReservation.parkingPlace.code,
       '101',
-      'the only released and unreserved place is the front slot of the triple'
+      'with 120 taken, the free places left are triples, and 101 sorts before 501/502/503'
     );
 
     // Parking in front of someone who leaves at 16:30 is a warning, not a refusal.
@@ -417,7 +436,8 @@ describe('end-to-end day (integration)', { skip: skipWithoutDatabase() }, () => 
     // that the conflict was visible at the moment of assignment.
     const audited = await db.query(
       `select metadata from audit_logs
-       where action = 'guest_parking_request_created_and_assigned'`
+       where action = 'guest_parking_request_created_and_assigned' and entity_id = $1`,
+      [payload.request.id]
     );
     assert.equal(audited.rowCount, 1);
     assert.equal(audited.rows[0].metadata.warnings.length, 1);

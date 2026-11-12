@@ -15,7 +15,10 @@ const DEMO_PLACE_COUNT = 15;
 const DEMO_LINE_COUNT = 9;
 const DEMO_USER_COUNT = 15; // 13 employees + 2 guests
 const RELEASED_TODAY = 7;
-const AVAILABLE_TODAY = 5;
+// The day's free supply: the seven released places minus the two reserved today (110,
+// 120), plus the four in-service places nobody owns permanently — 111, 202, 303 and 310.
+// 112 has no owner either but is `blocked`, and 301's release only starts tomorrow.
+const AVAILABLE_TODAY = 9;
 
 describe('demo dataset (integration)', { skip: skipWithoutDatabase() }, () => {
   let db = null;

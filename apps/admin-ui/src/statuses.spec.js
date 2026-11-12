@@ -10,10 +10,11 @@ import {
 } from './statuses'
 
 describe('place statuses', () => {
-  it('keeps the six statuses and their Russian words from the SSR UI', () => {
+  it('keeps the SSR statuses and their Russian words, plus the owner holding the place', () => {
     expect(PLACE_STATUS_OPTIONS.map((option) => option.status)).toEqual([
       'free',
       'released',
+      'owner',
       'occupied',
       'guest',
       'rotatable',
@@ -22,6 +23,7 @@ describe('place statuses', () => {
     expect(PLACE_STATUS_OPTIONS.map((option) => option.label)).toEqual([
       'свободно',
       'отдано',
+      'у владельца',
       'занято',
       'гостевое',
       'ротируемое',

@@ -30,6 +30,12 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
     });
   });
 
+  // A place with no permanent owner is free on EVERY date, so a test that needs one
+  // archives it afterwards — otherwise it would leak into every later test's pool.
+  async function retire(place) {
+    await db.query('update parking_places set is_active = false, deleted_at = now() where id = $1', [place.id]);
+  }
+
   after(async () => {
     if (api) {
       await api.stop();
@@ -125,8 +131,8 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       assert.equal(active.rows[0].count, 1);
     });
 
-    it('refuses a place that is not released for the date', async () => {
-      const place = await fixtures.insertPlace();
+    it('refuses a place its permanent owner holds and has not released for the date', async () => {
+      const { place } = await fixtures.insertHeldPlace();
       const employee = await fixtures.insertEmployee();
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/manual', {
@@ -136,7 +142,52 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       });
 
       assert.equal(status, 409);
-      assert.match(payload.error, /only for places released for the selected date/i);
+      assert.match(payload.error, /only for places free on the selected date/i);
+    });
+
+    it('assigns an employee to a place that has no permanent owner', async () => {
+      const date = '2026-09-23';
+      const place = await fixtures.insertPlace();
+      const employee = await fixtures.insertEmployee();
+
+      try {
+        const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/manual', {
+          userId: employee.id,
+          parkingPlaceId: place.id,
+          reservationDate: date
+        });
+
+        assert.equal(status, 201, JSON.stringify(payload));
+        assert.equal(payload.reservation.parkingPlace.code, place.code);
+
+        // There is no release behind it, and the audit trail says so rather than inventing one.
+        const audit = await db.query(
+          "select metadata from audit_logs where action = 'manual_reservation_created' and entity_id = $1",
+          [payload.reservation.id]
+        );
+        assert.equal(audit.rows[0].metadata.releaseId, null);
+      } finally {
+        await retire(place);
+      }
+    });
+
+    it('refuses a blocked place even when nobody owns it', async () => {
+      const date = '2026-09-24';
+      const place = await fixtures.insertPlace({ placeRole: 'blocked' });
+      const employee = await fixtures.insertEmployee();
+
+      try {
+        const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/manual', {
+          userId: employee.id,
+          parkingPlaceId: place.id,
+          reservationDate: date
+        });
+
+        assert.equal(status, 409);
+        assert.match(payload.error, /only for places free on the selected date/i);
+      } finally {
+        await retire(place);
+      }
     });
 
     it('refuses to assign the released place back to its own owner', async () => {
@@ -223,7 +274,9 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       assert.equal(audit.rows[0].metadata.parkingPlaceCode, place.code);
     });
 
-    it('returns 409 when no released place is free for the date', async () => {
+    it('returns 409 when no place is free for the date', async () => {
+      // A place exists on the date, but its owner holds it — so the pool is empty.
+      await fixtures.insertHeldPlace();
       const host = await fixtures.insertEmployee();
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
@@ -233,7 +286,7 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       });
 
       assert.equal(status, 409);
-      assert.match(payload.error, /No released parking place is available/i);
+      assert.match(payload.error, /No free parking place is available/i);
     });
 
     it('picks single before double before triple, then by guest priority rank', async () => {
@@ -265,6 +318,55 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       );
     });
 
+    it('picks a rotatable place before a released single', async () => {
+      const date = '2026-09-25';
+      await fixtures.insertReleasedPlace({ date, place: { placeType: 'single', guestPriorityRank: 1 } });
+      // A double, deliberately: the rotatable pool outranks even the smallest element.
+      const rotatable = await fixtures.insertPlace({ placeType: 'double', placeRole: 'rotatable' });
+      const host = await fixtures.insertEmployee();
+
+      try {
+        const { status, payload } = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
+          hostUserId: host.id,
+          requestDate: date,
+          guestName: 'Ротационный Гость'
+        });
+
+        assert.equal(status, 201, JSON.stringify(payload));
+        assert.equal(payload.request.assignedReservation.parkingPlace.code, rotatable.code);
+      } finally {
+        await retire(rotatable);
+      }
+    });
+
+    it('places a guest on a place with no permanent owner, but never on a blocked one', async () => {
+      const date = '2026-09-26';
+      const blocked = await fixtures.insertPlace({ placeType: 'single', placeRole: 'blocked', guestPriorityRank: 1 });
+      const unowned = await fixtures.insertPlace({ placeType: 'triple' });
+      const host = await fixtures.insertEmployee();
+
+      try {
+        const first = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
+          hostUserId: host.id,
+          requestDate: date,
+          guestName: 'Первый Гость'
+        });
+        assert.equal(first.status, 201, JSON.stringify(first.payload));
+        assert.equal(first.payload.request.assignedReservation.parkingPlace.code, unowned.code);
+
+        // The unowned place is taken; the blocked single is all that is left, and it is not supply.
+        const second = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
+          hostUserId: host.id,
+          requestDate: date,
+          guestName: 'Второй Гость'
+        });
+        assert.equal(second.status, 409);
+      } finally {
+        await retire(blocked);
+        await retire(unowned);
+      }
+    });
+
     it('rejects a request without a host or a valid date with 400', async () => {
       const { status, payload } = await postJson(api.baseUrl, '/admin/guest-parking-requests', {
         hostUserId: null,
@@ -292,9 +394,8 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       // Someone parked deeper in the same line (position 2) plans to leave early,
       // so parking in front of them is a warning — not a rejection.
       const blocked = await fixtures.insertEmployee({ displayName: 'Раннева Ранняя' });
-      const rearPlace = await fixtures.insertPlace({
-        lineGroupId: lineGroup.id,
-        linePositionHint: 2
+      const { place: rearPlace } = await fixtures.insertHeldPlace({
+        place: { lineGroupId: lineGroup.id, linePositionHint: 2 }
       });
       await fixtures.insertLineOccupancy({
         date,
@@ -354,9 +455,8 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       await fixtures.insertReleasedPlace({ date });
 
       const other = await fixtures.insertEmployee();
-      const frontPlace = await fixtures.insertPlace({
-        lineGroupId: lineGroup.id,
-        linePositionHint: 1
+      const { place: frontPlace } = await fixtures.insertHeldPlace({
+        place: { lineGroupId: lineGroup.id, linePositionHint: 1 }
       });
       await fixtures.insertLineOccupancy({
         date,
@@ -535,7 +635,9 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       const date = '2026-10-09';
       const { employee, toPlace, reservationId } = await reservationToMove(date);
       const lineGroup = await fixtures.insertLineGroup({ capacity: 2 });
-      const rearPlace = await fixtures.insertPlace({ lineGroupId: lineGroup.id, linePositionHint: 2 });
+      const { place: rearPlace } = await fixtures.insertHeldPlace({
+        place: { lineGroupId: lineGroup.id, linePositionHint: 2 }
+      });
 
       await fixtures.insertLineOccupancy({
         date,
@@ -640,10 +742,10 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       await assertNothingMoved(reservationId, fromPlace);
     });
 
-    it('refuses a target that is not released for the date', async () => {
+    it('refuses a target its permanent owner holds and has not released for the date', async () => {
       const date = '2026-10-06';
       const { fromPlace, reservationId } = await reservationToMove(date);
-      const unreleased = await fixtures.insertPlace();
+      const { place: unreleased } = await fixtures.insertHeldPlace();
 
       const { status, payload } = await postJson(api.baseUrl, '/admin/reservations/move', {
         reservationId,
@@ -651,6 +753,7 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
       });
 
       assert.equal(status, 409);
+      assert.match(payload.error, new RegExp(`${unreleased.code} is not free on ${date}: it is held by its permanent owner`));
       assert.equal(payload.blocker.type, 'not_released');
       await assertNothingMoved(reservationId, fromPlace);
     });
@@ -787,7 +890,9 @@ describe('reservations (integration)', { skip: skipWithoutDatabase() }, () => {
         place: { placeType: 'double', lineGroupId: lineGroup.id, linePositionHint: 1 }
       });
       const blocked = await fixtures.insertEmployee({ displayName: 'Раннева Ранняя' });
-      const rearPlace = await fixtures.insertPlace({ lineGroupId: lineGroup.id, linePositionHint: 2 });
+      const { place: rearPlace } = await fixtures.insertHeldPlace({
+        place: { lineGroupId: lineGroup.id, linePositionHint: 2 }
+      });
       await fixtures.insertLineOccupancy({
         date,
         lineGroupId: lineGroup.id,

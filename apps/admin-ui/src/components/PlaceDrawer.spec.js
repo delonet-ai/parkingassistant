@@ -88,7 +88,10 @@ describe('PlaceDrawer', () => {
 
     const text = mount(PlaceDrawer).text()
 
-    expect(text).toContain('Ручное назначение доступно только')
+    // The place is taken, so the drawer offers cancel and move, not another assignment — and
+    // it does not explain the free-place rule to an operator looking at a taken place.
+    expect(text).not.toContain('Назначить сотрудника')
+    expect(text).not.toContain('Ручное назначение доступно только')
     expect(text).toContain('Отменить назначение')
   })
 
@@ -140,9 +143,34 @@ describe('PlaceDrawer', () => {
   })
 
   describe('moving a reservation to another place', () => {
-    // p1 is held for the day; p2 is released and free, p3 is released but already taken.
+    // p1 is held for the day; p2 is released and open, p3 is released but already taken,
+    // p4 has no permanent owner, p5 is with its owner, p6 is blocked.
+    const RESERVED_DAY_LINES = [
+      {
+        lineId: 'l1',
+        capacity: 3,
+        floorLabel: '4',
+        slots: [
+          { placeId: 'p1', code: '118', position: 1, status: 'occupied' },
+          { placeId: 'p2', code: '120', position: 2, status: 'released' },
+          { placeId: 'p3', code: '121', position: 3, status: 'occupied' }
+        ]
+      },
+      {
+        lineId: 'l2',
+        capacity: 3,
+        floorLabel: '4',
+        slots: [
+          { placeId: 'p4', code: '130', position: 1, status: 'free' },
+          { placeId: 'p5', code: '131', position: 2, status: 'owner' },
+          { placeId: 'p6', code: '132', position: 3, status: 'blocked' }
+        ]
+      }
+    ]
+
     function setReservedDay() {
       setDay({
+        lines: RESERVED_DAY_LINES,
         dashboard: {
           releasedPlaces: [
             { parkingPlace: { id: 'p1', code: '118' }, owner: { displayName: 'Иванов' }, releaseId: 'rel1', isReserved: true },
@@ -158,12 +186,12 @@ describe('PlaceDrawer', () => {
     const moveSelect = (wrapper) =>
       wrapper.findAllComponents({ name: 'ViSelect' }).find((select) => select.props('label') === 'Новое место')
 
-    it('offers only the free released places other than this one', () => {
+    it('offers only the open places other than this one: released or without an owner', () => {
       setReservedDay()
       const wrapper = mount(PlaceDrawer)
 
       expect(wrapper.text()).toContain('Перевести на другое место')
-      expect(moveSelect(wrapper).props('options').map((option) => option.value)).toEqual(['p2'])
+      expect(moveSelect(wrapper).props('options').map((option) => option.value)).toEqual(['p2', 'p4'])
     })
 
     it('is not offered for a place nobody holds', () => {
@@ -228,6 +256,7 @@ describe('PlaceDrawer', () => {
 
     it('says there is nowhere to move to rather than offering an empty picker', () => {
       setDay({
+        lines: [{ lineId: 'l1', capacity: 1, floorLabel: '4', slots: [{ placeId: 'p1', code: '118', position: 1, status: 'occupied' }] }],
         dashboard: {
           releasedPlaces: [
             { parkingPlace: { id: 'p1', code: '118' }, owner: { displayName: 'Иванов' }, releaseId: 'rel1', isReserved: true }
@@ -237,7 +266,25 @@ describe('PlaceDrawer', () => {
         }
       })
 
-      expect(mount(PlaceDrawer).text()).toContain('нет свободных отданных мест')
+      expect(mount(PlaceDrawer).text()).toContain('нет свободных мест')
+    })
+  })
+
+  describe('manual assignment', () => {
+    const slotOf = (status) => [
+      { lineId: 'l1', capacity: 1, floorLabel: '4', slots: [{ placeId: 'p1', code: '118', position: 1, status }] }
+    ]
+
+    it('is offered for a place without a permanent owner, not only for a released one', () => {
+      setDay({ lines: slotOf('free'), places: [{ ...PLACE, permanentOwner: null }] })
+
+      expect(mount(PlaceDrawer).text()).toContain('Назначить сотрудника')
+    })
+
+    it('is not offered while the owner holds the place', () => {
+      setDay({ lines: slotOf('owner') })
+
+      expect(mount(PlaceDrawer).text()).not.toContain('Назначить сотрудника')
     })
   })
 })

@@ -22,6 +22,15 @@ describe('KpiStrip', () => {
     expect(text).toContain('Активных назначений')
   })
 
+  it('takes the assignable count from the API, which includes places with no permanent owner', () => {
+    const wrapper = mount(KpiStrip, { props: { dashboard: DASHBOARD } })
+    const tile = wrapper.findAll('*').find((node) => node.text() === 'Доступно к назначению')
+    const card = tile.element.closest('.kpi-tile') || tile.element.parentElement.parentElement
+
+    // One released place is free, but the API counts seven: the other six have no owner.
+    expect(card.textContent).toContain('7')
+  })
+
   it('takes the employee requests from their own endpoint, not from the dashboard', () => {
     // /admin/dashboard carries guest requests but no employee ones, so reading them off it
     // printed a permanent zero.

@@ -140,20 +140,15 @@ function createFixtures(db) {
   }
 
   /**
-   * An owned place that its owner has released for `date` — the precondition
-   * every assignment flow (manual, guest, queue) is built on.
+   * An owned place that its owner has released for `date` — the classic way into the
+   * day's free supply that every assignment flow (manual, guest, queue) draws from.
+   *
+   * The ownership is open-ended, not a window around `date`: on any date outside an
+   * ownership window the place would have no permanent owner and so be free supply,
+   * leaking into the counts and picks of every other test in the same file.
    */
   async function insertReleasedPlace({ date, place = {}, ownerId = null }) {
-    const owner = ownerId ? { id: ownerId } : await insertEmployee();
-    const parkingPlace = await insertPlace(place);
-
-    // The permanent assignment must span the release, so widen it generously.
-    await insertPermanentAssignment({
-      userId: owner.id,
-      parkingPlaceId: parkingPlace.id,
-      dateFrom: addDays(date, -30),
-      dateTo: addDays(date, 30)
-    });
+    const { owner, place: parkingPlace } = await insertHeldPlace({ place, ownerId });
 
     const release = await db.query(
       `
@@ -165,6 +160,31 @@ function createFixtures(db) {
     );
 
     return { owner, place: parkingPlace, release: release.rows[0] };
+  }
+
+  /**
+   * A place its permanent owner holds and has not released — so it is NOT part of
+   * the day's free supply. Since the supply rule changed, a bare `insertPlace()` has
+   * no owner and is free every day; use this when a test needs "just a place" that
+   * must stay out of the pool, the counters and the pick order.
+   *
+   * Without `date` the ownership is unbounded, so the place stays held on every date
+   * the suite touches; with `date` (and optionally `dateTo`) it covers only that range.
+   */
+  async function insertHeldPlace({ date = null, dateTo = null, place = {}, ownerId = null } = {}) {
+    const owner = ownerId ? { id: ownerId } : await insertEmployee();
+    const parkingPlace = await insertPlace(place);
+    const validDuring = date ? dayRange(date, dateTo || date) : '(,)';
+
+    await db.query(
+      `
+        insert into permanent_assignments (user_id, parking_place_id, valid_during)
+        values ($1, $2, $3::daterange)
+      `,
+      [owner.id, parkingPlace.id, validDuring]
+    );
+
+    return { owner, place: parkingPlace };
   }
 
   async function insertQueuedRequest({ userId, date, position }) {
@@ -237,6 +257,7 @@ function createFixtures(db) {
     auditActions,
     insertDeparturePlan,
     insertEmployee,
+    insertHeldPlace,
     insertLineGroup,
     insertLineOccupancy,
     insertPermanentAssignment,

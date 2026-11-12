@@ -25,7 +25,9 @@ const tiles = computed(() => {
     { label: 'Отдано мест', value: released.length, icon: 'key-unlock', group: 'mint' },
     {
       label: 'Доступно к назначению',
-      value: released.filter((place) => !place.isReserved).length,
+      // The API's count of the day's free supply nobody holds yet — released places plus
+      // places with no permanent owner. Counting the released list here would miss the latter.
+      value: dashboard.guestReserve ? dashboard.guestReserve.availablePlaces : 0,
       icon: 'check-circle',
       group: 'green'
     },

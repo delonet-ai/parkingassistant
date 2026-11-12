@@ -27,7 +27,7 @@ function createReservationsController({ services }) {
     }
 
     // Normalized before anything compares them: the service checks
-    // `releasedPlace.owner_user_id === userId` as strings, and `uuidPattern` is
+    // `freePlace.owner_user_id === userId` as strings, and `uuidPattern` is
     // case-insensitive, so an uppercase id passes the shape check, matches in every Postgres
     // query — uuids compare by value — and silently fails that one JS comparison. The refusal
     // it skips is "the owner cannot be assigned their own released place".
@@ -54,7 +54,7 @@ function createReservationsController({ services }) {
     }
 
     try {
-      const { employee, releasedPlace, reservation, warnings } = await service.createManualReservation({
+      const { employee, freePlace, reservation, warnings } = await service.createManualReservation({
         actor,
         userId,
         parkingPlaceId,
@@ -79,7 +79,7 @@ function createReservationsController({ services }) {
             },
             parkingPlace: {
               id: parkingPlaceId,
-              code: releasedPlace.parking_place_code
+              code: freePlace.parking_place_code
             }
           },
           warnings

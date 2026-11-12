@@ -49,12 +49,14 @@ function normalizeGuestPriorityRank(value) {
     : undefined;
 }
 
-/** The six statuses a slot can read, in the precedence below. */
-const PLACE_STATUSES = ['occupied', 'guest', 'released', 'blocked', 'rotatable', 'free'];
+/** The seven statuses a slot can read, in the precedence below. */
+const PLACE_STATUSES = ['occupied', 'guest', 'released', 'blocked', 'owner', 'rotatable', 'free'];
 
 /**
  * Status precedence for one slot, highest-priority fact first: an actual occupant
- * beats a release, a release beats the slot's static role.
+ * beats a release, a release beats the slot's static role, and a permanent owner who
+ * did not release the place holds it for the day — it is not free, whatever its role.
+ * `free` is reserved for places in the day's supply (see the place-releases repository).
  *
  * This is the single implementation. The API's element list feeds it database rows
  * (`placeSlotStatus` below), while the admin UI place drawer feeds it the dashboard
@@ -64,6 +66,7 @@ function derivePlaceStatus({
   hasReservation = false,
   reservationSource = null,
   hasRelease = false,
+  hasPermanentOwner = false,
   placeRole = 'regular'
 } = {}) {
   if (hasReservation) {
@@ -74,7 +77,15 @@ function derivePlaceStatus({
     return 'released';
   }
 
-  if (placeRole === 'blocked' || placeRole === 'rotatable') {
+  if (placeRole === 'blocked') {
+    return placeRole;
+  }
+
+  if (hasPermanentOwner) {
+    return 'owner';
+  }
+
+  if (placeRole === 'rotatable') {
     return placeRole;
   }
 
@@ -87,6 +98,7 @@ function placeSlotStatus(row) {
     hasReservation: Boolean(row.reservation_id),
     reservationSource: row.reservation_source,
     hasRelease: Boolean(row.release_id),
+    hasPermanentOwner: Boolean(row.has_permanent_owner),
     placeRole: row.place_role
   });
 }

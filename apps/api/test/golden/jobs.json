@@ -7,19 +7,19 @@
     "payload": {
       "alreadyFrozen": false,
       "availability": {
-        "availablePlaces": 6,
+        "availablePlaces": 15,
         "byType": {
-          "double": 1,
-          "single": 3,
-          "triple": 2
+          "double": 4,
+          "single": 4,
+          "triple": 7
         },
         "date": "<today+1>",
         "employeeAvailability": {
-          "after19": 1,
-          "before19": 3
+          "after19": 10,
+          "before19": 8
         },
         "guestReserve": {
-          "availablePlaces": 6,
+          "availablePlaces": 15,
           "minimum": 5,
           "status": "ok"
         },
@@ -83,19 +83,19 @@
         "summary": {
           "alreadyFrozen": false,
           "availability": {
-            "availablePlaces": 6,
+            "availablePlaces": 15,
             "byType": {
-              "double": 1,
-              "single": 3,
-              "triple": 2
+              "double": 4,
+              "single": 4,
+              "triple": 7
             },
             "date": "<today+1>",
             "employeeAvailability": {
-              "after19": 1,
-              "before19": 3
+              "after19": 10,
+              "before19": 8
             },
             "guestReserve": {
-              "availablePlaces": 6,
+              "availablePlaces": 15,
               "minimum": 5,
               "status": "ok"
             },
@@ -167,19 +167,19 @@
     "payload": {
       "alreadyFrozen": true,
       "availability": {
-        "availablePlaces": 6,
+        "availablePlaces": 15,
         "byType": {
-          "double": 1,
-          "single": 3,
-          "triple": 2
+          "double": 4,
+          "single": 4,
+          "triple": 7
         },
         "date": "<today+1>",
         "employeeAvailability": {
-          "after19": 1,
-          "before19": 3
+          "after19": 10,
+          "before19": 8
         },
         "guestReserve": {
-          "availablePlaces": 6,
+          "availablePlaces": 15,
           "minimum": 5,
           "status": "ok"
         },
@@ -243,19 +243,19 @@
         "summary": {
           "alreadyFrozen": true,
           "availability": {
-            "availablePlaces": 6,
+            "availablePlaces": 15,
             "byType": {
-              "double": 1,
-              "single": 3,
-              "triple": 2
+              "double": 4,
+              "single": 4,
+              "triple": 7
             },
             "date": "<today+1>",
             "employeeAvailability": {
-              "after19": 1,
-              "before19": 3
+              "after19": 10,
+              "before19": 8
             },
             "guestReserve": {
-              "availablePlaces": 6,
+              "availablePlaces": 15,
               "minimum": 5,
               "status": "ok"
             },
@@ -326,9 +326,9 @@
     "status": 200,
     "payload": {
       "alreadyUnlocked": false,
-      "availableReleasedPlacesCount": 6,
+      "availableReleasedPlacesCount": 15,
       "date": "<today+1>",
-      "employeePoolSize": 1,
+      "employeePoolSize": 10,
       "guestReserveMinimum": 5,
       "jobRun": {
         "actorService": "admin-ui",
@@ -340,9 +340,9 @@
         "status": "success",
         "summary": {
           "alreadyUnlocked": false,
-          "availableReleasedPlacesCount": 6,
+          "availableReleasedPlacesCount": 15,
           "date": "<today+1>",
-          "employeePoolSize": 1,
+          "employeePoolSize": 10,
           "guestReserveMinimum": 5,
           "servableCount": 0,
           "timezone": "Europe/Moscow",
@@ -366,9 +366,9 @@
     "status": 200,
     "payload": {
       "alreadyUnlocked": true,
-      "availableReleasedPlacesCount": 6,
+      "availableReleasedPlacesCount": 15,
       "date": "<today+1>",
-      "employeePoolSize": 1,
+      "employeePoolSize": 10,
       "guestReserveMinimum": 5,
       "jobRun": {
         "actorService": "admin-ui",
@@ -380,9 +380,9 @@
         "status": "success",
         "summary": {
           "alreadyUnlocked": true,
-          "availableReleasedPlacesCount": 6,
+          "availableReleasedPlacesCount": 15,
           "date": "<today+1>",
-          "employeePoolSize": 1,
+          "employeePoolSize": 10,
           "guestReserveMinimum": 5,
           "servableCount": 0,
           "timezone": "Europe/Moscow",
@@ -667,7 +667,7 @@
     "payload": {
       "assignedCount": 0,
       "assignments": [],
-      "availableReleasedPlacesCount": 4,
+      "availableReleasedPlacesCount": 12,
       "date": "<today>",
       "guestReserveMinimum": 5,
       "jobRun": {
@@ -681,7 +681,7 @@
         "summary": {
           "assignedCount": 0,
           "assignments": [],
-          "availableReleasedPlacesCount": 4,
+          "availableReleasedPlacesCount": 12,
           "date": "<today>",
           "guestReserveMinimum": 5,
           "skipped": [],
@@ -703,7 +703,7 @@
     "payload": {
       "assignedCount": 0,
       "assignments": [],
-      "availableReleasedPlacesCount": 4,
+      "availableReleasedPlacesCount": 12,
       "date": "<today>",
       "guestReserveMinimum": 5,
       "jobRun": {
@@ -717,7 +717,7 @@
         "summary": {
           "assignedCount": 0,
           "assignments": [],
-          "availableReleasedPlacesCount": 4,
+          "availableReleasedPlacesCount": 12,
           "date": "<today>",
           "guestReserveMinimum": 5,
           "skipped": [],
@@ -749,19 +749,19 @@
           "summary": {
             "alreadyFrozen": true,
             "availability": {
-              "availablePlaces": 6,
+              "availablePlaces": 15,
               "byType": {
-                "double": 1,
-                "single": 3,
-                "triple": 2
+                "double": 4,
+                "single": 4,
+                "triple": 7
               },
               "date": "<today+1>",
               "employeeAvailability": {
-                "after19": 1,
-                "before19": 3
+                "after19": 10,
+                "before19": 8
               },
               "guestReserve": {
-                "availablePlaces": 6,
+                "availablePlaces": 15,
                 "minimum": 5,
                 "status": "ok"
               },
@@ -848,7 +848,7 @@
           "summary": {
             "assignedCount": 0,
             "assignments": [],
-            "availableReleasedPlacesCount": 4,
+            "availableReleasedPlacesCount": 12,
             "date": "<today>",
             "guestReserveMinimum": 5,
             "skipped": [],
@@ -915,9 +915,9 @@
           "status": "success",
           "summary": {
             "alreadyUnlocked": true,
-            "availableReleasedPlacesCount": 6,
+            "availableReleasedPlacesCount": 15,
             "date": "<today+1>",
-            "employeePoolSize": 1,
+            "employeePoolSize": 10,
             "guestReserveMinimum": 5,
             "servableCount": 0,
             "timezone": "Europe/Moscow",
@@ -939,19 +939,19 @@
           "summary": {
             "alreadyFrozen": false,
             "availability": {
-              "availablePlaces": 6,
+              "availablePlaces": 15,
               "byType": {
-                "double": 1,
-                "single": 3,
-                "triple": 2
+                "double": 4,
+                "single": 4,
+                "triple": 7
               },
               "date": "<today+1>",
               "employeeAvailability": {
-                "after19": 1,
-                "before19": 3
+                "after19": 10,
+                "before19": 8
               },
               "guestReserve": {
-                "availablePlaces": 6,
+                "availablePlaces": 15,
                 "minimum": 5,
                 "status": "ok"
               },
@@ -1020,19 +1020,19 @@
           "summary": {
             "alreadyFrozen": true,
             "availability": {
-              "availablePlaces": 6,
+              "availablePlaces": 15,
               "byType": {
-                "double": 1,
-                "single": 3,
-                "triple": 2
+                "double": 4,
+                "single": 4,
+                "triple": 7
               },
               "date": "<today+1>",
               "employeeAvailability": {
-                "after19": 1,
-                "before19": 3
+                "after19": 10,
+                "before19": 8
               },
               "guestReserve": {
-                "availablePlaces": 6,
+                "availablePlaces": 15,
                 "minimum": 5,
                 "status": "ok"
               },
@@ -1137,7 +1137,7 @@
           "summary": {
             "assignedCount": 0,
             "assignments": [],
-            "availableReleasedPlacesCount": 4,
+            "availableReleasedPlacesCount": 12,
             "date": "<today>",
             "guestReserveMinimum": 5,
             "skipped": [],
@@ -1156,7 +1156,7 @@
           "summary": {
             "assignedCount": 0,
             "assignments": [],
-            "availableReleasedPlacesCount": 4,
+            "availableReleasedPlacesCount": 12,
             "date": "<today>",
             "guestReserveMinimum": 5,
             "skipped": [],
@@ -1272,9 +1272,9 @@
           "status": "success",
           "summary": {
             "alreadyUnlocked": false,
-            "availableReleasedPlacesCount": 6,
+            "availableReleasedPlacesCount": 15,
             "date": "<today+1>",
-            "employeePoolSize": 1,
+            "employeePoolSize": 10,
             "guestReserveMinimum": 5,
             "servableCount": 0,
             "timezone": "Europe/Moscow",
@@ -1293,9 +1293,9 @@
           "status": "success",
           "summary": {
             "alreadyUnlocked": true,
-            "availableReleasedPlacesCount": 6,
+            "availableReleasedPlacesCount": 15,
             "date": "<today+1>",
-            "employeePoolSize": 1,
+            "employeePoolSize": 10,
             "guestReserveMinimum": 5,
             "servableCount": 0,
             "timezone": "Europe/Moscow",

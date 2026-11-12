@@ -2,7 +2,7 @@
 
 const { earlyDepartureBlockingWarnings } = require('../../../../../packages/domain');
 const { withTransaction } = require('../../repositories/db');
-const { countAvailableReleasedPlaces } = require('../../services/availability');
+const { countAvailableFreePlaces } = require('../../services/availability');
 const { AbortTransaction, abortWith } = require('../../support/transaction');
 const { auditActor } = require('../../support/actor');
 const auditRepository = require('../audit/repository');
@@ -40,16 +40,16 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
     return withTransaction(pool, async (repo) => {
       await placeReleasesRepository.lockManualAssignmentForDate(repo, reservationDate);
 
-      const releasedPlace = await placeReleasesRepository.findActiveReleaseForPlaceDate(repo, {
+      const freePlace = await placeReleasesRepository.findFreePlaceForDate(repo, {
         parkingPlaceId,
         reservationDate
       });
 
-      if (!releasedPlace) {
-        throw abortWith(409, 'Manual assignment is currently allowed only for places released for the selected date');
+      if (!freePlace) {
+        throw abortWith(409, 'Manual assignment is allowed only for places free on the selected date: released by their owner or without a permanent owner');
       }
 
-      if (releasedPlace.owner_user_id === userId) {
+      if (freePlace.owner_user_id && freePlace.owner_user_id === userId) {
         throw abortWith(409, 'Released place owner cannot be manually assigned to the same released place');
       }
 
@@ -59,13 +59,13 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         throw abortWith(404, 'Employee not found');
       }
 
-      const availableReleasedPlacesCount = await countAvailableReleasedPlaces(repo, reservationDate);
+      const availableFreePlacesCount = await countAvailableFreePlaces(repo, reservationDate);
 
-      if (availableReleasedPlacesCount <= guestReserveMinimum) {
+      if (availableFreePlacesCount <= guestReserveMinimum) {
         throw abortWith(409, `Manual employee assignment would reduce guest reserve below ${guestReserveMinimum} places`, {
           guestReserve: {
             minimum: guestReserveMinimum,
-            availablePlaces: availableReleasedPlacesCount
+            availablePlaces: availableFreePlacesCount
           }
         });
       }
@@ -102,7 +102,7 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         eventType: 'reservation_created',
         source: 'manual',
         payload: {
-          releaseId: releasedPlace.release_id,
+          releaseId: freePlace.release_id,
           userId,
           parkingPlaceId,
           reservationDate,
@@ -125,18 +125,18 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         action: 'manual_reservation_created',
         ...auditActor(actor),
         metadata: {
-          releaseId: releasedPlace.release_id,
+          releaseId: freePlace.release_id,
           userId,
           userDisplayName: employee.display_name,
           parkingPlaceId,
-          parkingPlaceCode: releasedPlace.parking_place_code,
+          parkingPlaceCode: freePlace.parking_place_code,
           reservationDate,
           closedEmployeeRequestId: closedRequest?.id || null,
           warnings
         }
       });
 
-      return { employee, releasedPlace, reservation, warnings };
+      return { employee, freePlace, reservation, warnings };
     });
   }
 
@@ -215,8 +215,8 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
 
   // A move is one reservation changing place, not a cancel plus a new booking: the id, the
   // source and the request it answers all survive, and `parking_movements` gets one row
-  // with both ends. The target obeys the rules an assignment obeys — released for the date,
-  // free, not archived, not blocked — and every refusal names what stood in the way.
+  // with both ends. The target obeys the rules an assignment obeys — part of the date's free
+  // supply, not taken, not archived, not blocked — and every refusal names what stood in the way.
   async function moveReservation({ actor, reservationId, toParkingPlaceId, reason }) {
     return withTransaction(pool, async (repo) => {
       const reservation = await repository.findReservationForUpdate(repo, reservationId);
@@ -275,18 +275,18 @@ function createReservationsService({ pool, dbRepository, guestReserveMinimum }) 
         });
       }
 
-      const release = await placeReleasesRepository.findActiveReleaseForPlaceDate(repo, {
+      const release = await placeReleasesRepository.findFreePlaceForDate(repo, {
         parkingPlaceId: toParkingPlaceId,
         reservationDate
       });
 
       if (!release) {
-        throw abortWith(409, `Place ${target.code} is not released for ${reservationDate}`, {
+        throw abortWith(409, `Place ${target.code} is not free on ${reservationDate}: it is held by its permanent owner`, {
           blocker: { type: 'not_released', parkingPlaceCode: target.code }
         });
       }
 
-      if (reservation.user_id && release.owner_user_id === reservation.user_id) {
+      if (reservation.user_id && release.owner_user_id && release.owner_user_id === reservation.user_id) {
         throw abortWith(409, 'Released place owner cannot be moved onto the same released place');
       }
 

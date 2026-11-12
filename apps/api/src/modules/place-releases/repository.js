@@ -1,9 +1,41 @@
 'use strict';
 
 // Place releases context — an owner handing their permanent place back for a day range.
-// A released place is what the queue and the guest pool draw from, so every read here
-// filters `pp.deleted_at is null`: an archived place must not keep counting as inventory
-// just because its release row survived (Task 9, defect 1).
+// Every read here filters `pp.deleted_at is null`: an archived place must not keep counting
+// as inventory just because its release row survived (Task 9, defect 1).
+
+// The day's free supply — what the queue, the guest pool, manual assignment and every
+// availability counter draw from. A place is free on a date when it is in service (not
+// archived, not `blocked`) and either its owner released it for that date, or nobody holds
+// it permanently on that date at all. An owned place that was not released is the owner's.
+//
+// `$1` is the date. One row per place: a place has at most one active release per date
+// (the release no-overlap exclusion), so the left join cannot fan out.
+const DAY_SUPPLY_CTE = `
+  day_supply as (
+    select
+      pp.id as parking_place_id,
+      pr.id as release_id,
+      pr.user_id as owner_user_id
+    from parking_places pp
+    left join place_releases pr
+      on pr.parking_place_id = pp.id
+      and pr.status = 'active'
+      and pr.release_during @> $1::date
+    where pp.deleted_at is null
+      and pp.is_active = true
+      and pp.place_role <> 'blocked'
+      and (
+        pr.id is not null
+        or not exists (
+          select 1
+          from permanent_assignments pa
+          where pa.parking_place_id = pp.id
+            and pa.valid_during @> $1::date
+        )
+      )
+  )
+`;
 
 async function listActiveReleasesForDate(db, date) {
   return db.queryMany(
@@ -35,20 +67,17 @@ async function listActiveReleasesForDate(db, date) {
   );
 }
 
-async function countUnreservedReleasedPlaces(db, date) {
+async function countUnreservedFreePlaces(db, date) {
   return db.queryOne(
     `
+      with ${DAY_SUPPLY_CTE}
       select count(*)::int as available_places
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
+      from day_supply s
       left join reservations r
-        on r.parking_place_id = pp.id
+        on r.parking_place_id = s.parking_place_id
         and r.reservation_date = $1::date
         and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-        and r.id is null
+      where r.id is null
     `,
     [date]
   );
@@ -85,55 +114,63 @@ async function listReleasesInRange(db, { dateFrom, dateTo }) {
 
 
 // The availability read model (`services/availability.js`) is a fold over this one row.
-// It is not a context of its own — the numbers are all properties of released places.
+// It is not a context of its own — the numbers are all properties of the day's free supply.
+// `released_places` stays what it says: releases only, the figure the operator reconciles
+// against the owners who handed their place back.
 async function summarizeAvailability(db, { date, guestReserveMinimum }) {
   return db.queryOne(
     `
+      with ${DAY_SUPPLY_CTE}
       select
-        count(*)::int as released_places,
+        count(*) filter (where s.release_id is not null)::int as released_places,
         count(*) filter (where r.id is null)::int as available_places,
-        count(*) filter (where r.id is null and pp.place_type in ('double', 'triple'))::int as before_19_employee_places,
+        count(*) filter (
+          where r.id is null
+            and pp.place_type in ('double', 'triple')
+            and pp.place_role <> 'rotatable'
+        )::int as before_19_employee_places,
         greatest(count(*) filter (where r.id is null)::int - $2::int, 0)::int as after_19_employee_places,
         count(*) filter (where r.id is null and pp.place_type = 'single')::int as available_single_places,
         count(*) filter (where r.id is null and pp.place_type = 'double')::int as available_double_places,
         count(*) filter (where r.id is null and pp.place_type = 'triple')::int as available_triple_places
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
+      from day_supply s
+      join parking_places pp on pp.id = s.parking_place_id
       left join reservations r
         on r.parking_place_id = pp.id
         and r.reservation_date = $1::date
         and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
     `,
     [date, guestReserveMinimum]
   );
 }
 
 
-// The guest pick order: smallest element first (a guest should not occupy a triple that
-// three employees could share), then the explicit guest priority rank, then code.
+// The guest pick order: the rotatable guest pool first, then smallest element (a guest
+// should not occupy a triple that three employees could share), then the explicit guest
+// priority rank, then code.
+//
+// Only the place row is locked: `release_id` comes from the nullable side of the supply
+// join, and Postgres refuses FOR UPDATE there. The place lock plus the active
+// (place, date) unique index is what keeps two guests off one place.
 async function findPlaceForGuestAssignment(db, requestDate) {
   return db.queryOne(
     `
+      with ${DAY_SUPPLY_CTE}
       select
-        pr.id as release_id,
+        s.release_id,
         pp.id as parking_place_id,
         pp.code as parking_place_code,
         pp.title as parking_place_title,
         pp.place_type
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
+      from day_supply s
+      join parking_places pp on pp.id = s.parking_place_id
       left join reservations r
         on r.parking_place_id = pp.id
         and r.reservation_date = $1::date
         and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-        and r.id is null
+      where r.id is null
       order by
+        case when pp.place_role = 'rotatable' then 0 else 1 end,
         case pp.place_type
           when 'single' then 1
           when 'double' then 2
@@ -143,62 +180,61 @@ async function findPlaceForGuestAssignment(db, requestDate) {
         pp.guest_priority_rank nulls last,
         pp.code
       limit 1
-      for update of pr, pp
+      for update of pp
     `,
     [requestDate]
   );
 }
 
 // The queue pick order is the mirror image of the guest one: multi-slot lines first, so
-// the singles are left for the guest pool.
+// the singles are left for guests, and the rotatable guest pool last of all.
 async function listPlacesForQueueAssignment(db, queueDate) {
   return db.queryMany(
     `
+      with ${DAY_SUPPLY_CTE}
       select
-        pr.id as release_id,
+        s.release_id,
         pp.id as parking_place_id,
         pp.code as parking_place_code,
         pp.place_type,
-        pr.user_id as owner_user_id
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
+        s.owner_user_id
+      from day_supply s
+      join parking_places pp on pp.id = s.parking_place_id
       left join reservations r
         on r.parking_place_id = pp.id
         and r.reservation_date = $1::date
         and r.status = 'active'
-      where pr.status = 'active'
-        and pr.release_during @> $1::date
-        and r.id is null
+      where r.id is null
       order by
+        case when pp.place_role = 'rotatable' then 1 else 0 end,
         case pp.place_type
           when 'double' then 1
           when 'triple' then 2
           else 3
         end,
         pp.code
-      for update of pr, pp
+      for update of pp
     `,
     [queueDate]
   );
 }
 
-async function findActiveReleaseForPlaceDate(db, { parkingPlaceId, reservationDate }) {
+// Whether one place is part of the date's free supply. `release_id` and `owner_user_id`
+// are null for a place nobody holds permanently on that date.
+async function findFreePlaceForDate(db, { parkingPlaceId, reservationDate }) {
   return db.queryOne(
     `
+      with ${DAY_SUPPLY_CTE}
       select
-        pr.id as release_id,
-        pr.user_id as owner_user_id,
+        s.release_id,
+        s.owner_user_id,
         pp.code as parking_place_code
-      from place_releases pr
-      join parking_places pp on pp.id = pr.parking_place_id
-        and pp.deleted_at is null
-      where pr.parking_place_id = $1
-        and pr.status = 'active'
-        and pr.release_during @> $2::date
+      from day_supply s
+      join parking_places pp on pp.id = s.parking_place_id
+      where s.parking_place_id = $2
       limit 1
     `,
-    [parkingPlaceId, reservationDate]
+    [reservationDate, parkingPlaceId]
   );
 }
 
@@ -399,8 +435,8 @@ async function listReleasesForUser(db, userId) {
 
 module.exports = {
   cancelRelease,
-  countUnreservedReleasedPlaces,
-  findActiveReleaseForPlaceDate,
+  countUnreservedFreePlaces,
+  findFreePlaceForDate,
   findOverlappingRelease,
   findPlaceForGuestAssignment,
   findReleaseForUpdate,
