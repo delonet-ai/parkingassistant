@@ -436,6 +436,43 @@ function createAuthController({ services }) {
     }
   }
 
+  async function handleUserDisplayName({ req, authUser }) {
+    const { body, refusal } = await readBody(req);
+
+    if (refusal) {
+      return refusal;
+    }
+
+    const target = readTargetId(body);
+
+    if (target.refusal) {
+      return target.refusal;
+    }
+
+    const displayName = readDisplayName(body);
+    const invalid = [target, displayName].find((field) => field.error);
+
+    if (invalid) {
+      return badRequest(invalid.error);
+    }
+
+    try {
+      return userResponse(
+        await service.setUserDisplayName({
+          actor: actorOf(authUser),
+          authUserId: target.authUserId,
+          displayName: displayName.displayName
+        })
+      );
+    } catch (error) {
+      if (error instanceof AbortTransaction) {
+        return error.result;
+      }
+
+      return internalError(error, 'handleUserDisplayName');
+    }
+  }
+
   async function handleUserStatus({ req, authUser }, status) {
     const { body, refusal } = await readBody(req);
 
@@ -502,6 +539,12 @@ function createAuthController({ services }) {
         path: '/admin/users/password',
         roles: [SYSTEM_ADMIN_ROLE],
         handler: (context) => handleUserPassword(context)
+      },
+      {
+        method: 'POST',
+        path: '/admin/users/display-name',
+        roles: [SYSTEM_ADMIN_ROLE],
+        handler: (context) => handleUserDisplayName(context)
       },
       {
         method: 'POST',

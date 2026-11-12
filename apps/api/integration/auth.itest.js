@@ -597,7 +597,7 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
   }
 
   async function userRow(id) {
-    const result = await db.query('select id, login, status, password_hash from auth_users where id = $1', [id]);
+    const result = await db.query('select id, login, display_name, status, password_hash from auth_users where id = $1', [id]);
     return result.rows[0] || null;
   }
 
@@ -862,6 +862,53 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
     await sessionCookieFor(login, 'the-second-password');
   });
 
+  it('renames an account: the login stays, the new name is what /auth/me and the list show', async () => {
+    const login = nextLogin('renamed');
+    const created = await createUser({ login, password: 'keeps-its-password' });
+    const id = created.payload.user.id;
+    const before = (await userRow(id)).display_name;
+
+    const { status, payload } = await postJson(api.baseUrl, '/admin/users/display-name', {
+      authUserId: id,
+      displayName: '  Иванова Мария  '
+    });
+
+    assert.equal(status, 200, JSON.stringify(payload));
+    assert.equal(payload.user.displayName, 'Иванова Мария', 'the name is trimmed');
+    assert.equal(payload.user.login, login, 'a rename never changes the login');
+    assert.deepEqual(payload.user.roles.map((role) => role.code), ['parking_admin']);
+
+    const cookie = await sessionCookieFor(login, 'keeps-its-password');
+    assert.equal((await getJson(api.baseUrl, '/auth/me', { cookie })).payload.user.displayName, 'Иванова Мария');
+
+    const audit = await auditRowsFor(id);
+    const renamed = audit[audit.length - 1];
+    assert.equal(renamed.action, 'auth_user_renamed');
+    assert.deepEqual(
+      { from: renamed.metadata.from, to: renamed.metadata.to },
+      { from: before, to: 'Иванова Мария' },
+      'the old name stays readable in the audit trail'
+    );
+
+    // Saving the same name again is a no-op for the journal.
+    await postJson(api.baseUrl, '/admin/users/display-name', { authUserId: id, displayName: 'Иванова Мария' });
+    assert.equal((await auditRowsFor(id)).length, audit.length);
+  });
+
+  it('refuses an empty or overlong name with 400 and leaves the account as it was', async () => {
+    const created = await createUser();
+    const id = created.payload.user.id;
+    const before = (await userRow(id)).display_name;
+
+    for (const displayName of ['', '   ', 'я'.repeat(500), null]) {
+      const { status, payload } = await postJson(api.baseUrl, '/admin/users/display-name', { authUserId: id, displayName });
+      assert.equal(status, 400, JSON.stringify(payload));
+      assert.match(payload.error, /displayName is required/);
+    }
+
+    assert.equal((await userRow(id)).display_name, before);
+  });
+
   it('activates an invited user when their password is set — a credential that works', async () => {
     const login = nextLogin('invited');
     const inserted = await db.query(
@@ -910,6 +957,7 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
     for (const [pathname, body] of [
       ['/admin/users/roles', { authUserId: missing, roles: ['parking_admin'] }],
       ['/admin/users/password', { authUserId: missing, password: 'a-valid-password' }],
+      ['/admin/users/display-name', { authUserId: missing, displayName: 'Nobody' }],
       ['/admin/users/disable', { authUserId: missing }],
       ['/admin/users/enable', { authUserId: missing }]
     ]) {
@@ -945,6 +993,7 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
       ['/admin/users', { login: 'sneaky-operator', displayName: 'Sneaky', password: 'a-valid-password', roles: ['system_admin'] }],
       ['/admin/users/roles', { authUserId: victim.payload.user.id, roles: ['system_admin'] }],
       ['/admin/users/password', { authUserId: victim.payload.user.id, password: 'a-valid-password' }],
+      ['/admin/users/display-name', { authUserId: victim.payload.user.id, displayName: 'Hijacked' }],
       ['/admin/users/disable', { authUserId: victim.payload.user.id }],
       ['/admin/users/enable', { authUserId: victim.payload.user.id }]
     ];
@@ -972,6 +1021,7 @@ describe('auth user management (integration)', { skip: skipWithoutDatabase() }, 
     );
     assert.deepEqual(await roleCodesOf(victim.payload.user.id), ['parking_admin']);
     assert.equal((await userRow(victim.payload.user.id)).status, 'active');
+    assert.notEqual((await userRow(victim.payload.user.id)).display_name, 'Hijacked');
 
     // And the day is still theirs to run.
     assert.equal((await getJson(api.baseUrl, '/admin/places', { cookie })).status, 200);

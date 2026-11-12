@@ -276,6 +276,19 @@ async function setAuthUserStatus(db, { id, status }) {
   );
 }
 
+async function setAuthUserDisplayName(db, { id, displayName }) {
+  return db.queryOne(
+    `
+      update auth_users
+      set display_name = $2,
+          updated_at = now()
+      where id = $1
+      returning id, login, display_name, status, last_login_at, created_at
+    `,
+    [id, displayName]
+  );
+}
+
 // Every live session of one user, revoked. Disabling an account has to take effect now
 // rather than at the next expiry, so this runs in the same transaction as the status change.
 async function revokeSessionsForAuthUser(db, authUserId) {
@@ -306,6 +319,7 @@ module.exports = {
   replaceAuthUserRoles,
   revokeSessionByTokenHash,
   revokeSessionsForAuthUser,
+  setAuthUserDisplayName,
   setAuthUserPassword,
   setAuthUserStatus,
   touchLiveSession

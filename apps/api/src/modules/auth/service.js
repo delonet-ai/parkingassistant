@@ -326,6 +326,32 @@ function createAuthService({ dbRepository, pool }) {
     });
   }
 
+  // The name the panel and the audit trail show for an account. The login stays: it is what
+  // the person types, and later what an identity provider's subject maps onto. The old name
+  // goes into the audit row, so a rename never hides who an earlier entry was about.
+  async function setUserDisplayName({ actor, authUserId, displayName }) {
+    return withTransaction(pool, async (repo) => {
+      const user = await repository.lockAuthUserById(repo, authUserId);
+
+      if (!user) {
+        throw abortWith(404, USER_NOT_FOUND);
+      }
+
+      const updated = await repository.setAuthUserDisplayName(repo, { id: user.id, displayName });
+
+      if (user.display_name !== displayName) {
+        await auditUserChange(repo, {
+          actor,
+          user,
+          action: 'auth_user_renamed',
+          metadata: { from: user.display_name, to: displayName }
+        });
+      }
+
+      return { user: updated, roles: rolePayload(await repository.listAuthUserRoles(repo, user.id)) };
+    });
+  }
+
   // `disabled` → the account is refused at login and its live sessions are revoked in the
   // same transaction, so the change takes effect now rather than at the next expiry.
   // `active` → the account is usable again; the revoked sessions stay revoked and the
@@ -366,6 +392,7 @@ function createAuthService({ dbRepository, pool }) {
     login,
     logout,
     resolveSession,
+    setUserDisplayName,
     setUserPassword,
     setUserRoles,
     setUserStatus

@@ -29,6 +29,9 @@ const listError = ref(null)
 const draft = ref(emptyDraft())
 const editingRoles = ref(null)
 const editingPassword = ref(null)
+const editingName = ref(null)
+
+const MAX_DISPLAY_NAME_LENGTH = 200
 
 function emptyDraft() {
   return { login: '', displayName: '', password: '', roles: ['parking_admin'] }
@@ -114,6 +117,33 @@ const saveRoles = () =>
 
     if (result.ok) {
       editingRoles.value = null
+    }
+  })
+
+function openName(user) {
+  editingName.value = { user, displayName: user.displayName || '' }
+}
+
+const nameIsValid = computed(() => {
+  const name = editingName.value ? editingName.value.displayName.trim() : ''
+  return name.length > 0 && name.length <= MAX_DISPLAY_NAME_LENGTH
+})
+
+const saveName = () =>
+  run(async () => {
+    const target = editingName.value.user
+    const result = await submitUser(
+      '/admin/users/display-name',
+      { authUserId: target.id, displayName: editingName.value.displayName.trim() },
+      'Имя обновлено.'
+    )
+
+    if (result.ok) {
+      // Renaming yourself changes the name in the header too, without a reload.
+      if (state.authUser && state.authUser.id === target.id && result.data && result.data.user) {
+        state.authUser = { ...state.authUser, displayName: result.data.user.displayName }
+      }
+      editingName.value = null
     }
   })
 
@@ -257,6 +287,15 @@ function toggleRole(target, code) {
                   variant="outlined"
                   color="secondary"
                   :loading="busy"
+                  @click="openName(cell.actionsFor)"
+                >
+                  Имя
+                </ViButton>
+                <ViButton
+                  size="small"
+                  variant="outlined"
+                  color="secondary"
+                  :loading="busy"
                   @click="openPassword(cell.actionsFor)"
                 >
                   Пароль
@@ -323,6 +362,27 @@ function toggleRole(target, code) {
           @click="saveRoles"
         >
           Сохранить роли
+        </ViButton>
+      </div>
+    </ViModal>
+
+    <ViModal
+      use-model
+      :is-opened="Boolean(editingName)"
+      :title="editingName ? `Имя · ${editingName.user.login}` : ''"
+      width="520px"
+      has-close-button
+      @update:is-opened="editingName = null"
+    >
+      <div v-if="editingName" class="stack">
+        <ViText tag="p" variant="body-S-wide" class="muted">
+          Имя видно в шапке панели и в журнале действий. Логин не меняется — по нему входят.
+        </ViText>
+
+        <ViInput v-model:value="editingName.displayName" label="Имя" label-type="static" required />
+
+        <ViButton color="primary" :loading="busy" :disabled="!nameIsValid" @click="saveName">
+          Сохранить имя
         </ViButton>
       </div>
     </ViModal>

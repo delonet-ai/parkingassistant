@@ -209,6 +209,42 @@ describe('UsersPage', () => {
     })
   })
 
+  it('renames the account the dialog was opened on, trimmed, and keeps Save off for an empty name', async () => {
+    const wrapper = await render({
+      write: { status: 'ok', user: { id: 'au1', login: 'sysadmin', displayName: 'Мария Иванова' } }
+    })
+    state.authUser = { id: 'au1', login: 'sysadmin', displayName: 'Системный администратор' }
+
+    await buttonNamed(wrapper, 'Имя').trigger('click')
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('Имя · sysadmin')
+
+    const field = [...document.body.querySelectorAll('input')].pop()
+    const save = () =>
+      [...document.body.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Сохранить имя')
+
+    field.value = '   '
+    field.dispatchEvent(new Event('input'))
+    await flushPromises()
+    expect(save().disabled).toBe(true)
+
+    field.value = '  Мария Иванова  '
+    field.dispatchEvent(new Event('input'))
+    await flushPromises()
+    expect(save().disabled).toBe(false)
+    save().click()
+    await flushPromises()
+
+    expect(writes()).toHaveLength(1)
+    expect(writes()[0]).toMatchObject({
+      path: '/admin/users/display-name',
+      body: { authUserId: 'au1', displayName: 'Мария Иванова' }
+    })
+    // Renaming yourself updates the header name without a reload.
+    expect(state.authUser.displayName).toBe('Мария Иванова')
+  })
+
   it('offers Отключить for an active account and Включить for a disabled one, and posts each', async () => {
     const wrapper = await render()
 

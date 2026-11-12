@@ -185,6 +185,7 @@ test('every route the monolith served is still registered, with the same method'
     'POST /admin/reservations/move',
     'POST /admin/users',
     'POST /admin/users/disable',
+    'POST /admin/users/display-name',
     'POST /admin/users/enable',
     'POST /admin/users/password',
     'POST /admin/users/roles',
