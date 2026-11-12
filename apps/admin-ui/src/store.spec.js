@@ -1,6 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { boot, buildUrl, endSession, firstPopulatedFloor, loadDay, readUrl, signIn, signOut, state, submit } from './store'
+import {
+  boot,
+  buildUrl,
+  confirmLeaveMarkup,
+  endSession,
+  firstPopulatedFloor,
+  loadDay,
+  loadMarkup,
+  readUrl,
+  saveMarkup,
+  signIn,
+  signOut,
+  state,
+  submit
+} from './store'
 
 const ME = {
   status: 'ok',
@@ -108,7 +122,10 @@ function resetState() {
     auditFilters: { entityType: '', action: '' },
     jobRuns: { runs: [], latestSuccessfulRuns: [] },
     maps: [],
-    mapDiagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] }
+    mapDiagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] },
+    markup: null,
+    markupError: null,
+    markupDirty: false
   })
 }
 
@@ -356,5 +373,65 @@ describe('URL state', () => {
     expect(state.floorCode).toBe('g5')
     expect(state.selectedPlaceId).toBe('p1')
     expect(state.date).toBe('2026-10-08')
+  })
+})
+
+describe('plan markup', () => {
+  it('loads the markup of the current floor with the day', async () => {
+    stubApi({ '/admin/map-markup': { status: 'ok', markup: { mapCode: 'g4', places: {}, revision: 2 } } })
+
+    await loadDay()
+
+    expect(window.fetch.mock.calls.map((call) => String(call[0]))).toContain('/api/admin/map-markup?mapCode=g4')
+    expect(state.markup.revision).toBe(2)
+  })
+
+  it('does not fail the day when the markup cannot be read', async () => {
+    stubApi()
+
+    const result = await loadDay()
+
+    expect(result.ok).toBe(true)
+    expect(state.markup).toBeNull()
+    expect(state.markupError).toContain('no stub')
+  })
+
+  it('treats a floor without markup as null', async () => {
+    state.floorCode = 'g5'
+    stubApi({ '/admin/map-markup': { status: 'ok', markup: null } })
+
+    await loadMarkup('g5')
+
+    expect(state.markup).toBeNull()
+    expect(state.markupError).toBeNull()
+  })
+
+  it('takes the saved markup from the answer, and names a conflict as one', async () => {
+    stubApi({ '/admin/map-markup': { status: 'ok', markup: { mapCode: 'g4', revision: 5 } } })
+    await saveMarkup({ mapCode: 'g4', places: {}, editor: {}, revision: 4 })
+    expect(state.markup.revision).toBe(5)
+
+    stubApi({
+      '/admin/map-markup': new Response(JSON.stringify({ status: 'error', code: 'conflict', error: 'Устарело.' }), { status: 409 })
+    })
+    const result = await saveMarkup({ mapCode: 'g4', places: {}, editor: {}, revision: 4 })
+
+    expect(result.ok).toBe(false)
+    expect(state.notice.type).toBe('error')
+    expect(state.notice.text).toContain('Устарело.')
+    expect(state.markup.revision).toBe(5)
+  })
+
+  it('asks before throwing unsaved markup away', () => {
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    state.markupDirty = true
+
+    expect(confirmLeaveMarkup()).toBe(false)
+    expect(state.markupDirty).toBe(true)
+
+    confirm.mockReturnValue(true)
+    expect(confirmLeaveMarkup()).toBe(true)
+    expect(state.markupDirty).toBe(false)
   })
 })

@@ -52,14 +52,6 @@ body {
   min-width: 48px;
 }
 
-.floor-plan {
-  display: block;
-  max-width: 100%;
-  margin: 12px 0 16px;
-  border: 1px solid var(--vi-color-gray-200);
-  border-radius: var(--vi-radius-m);
-}
-
 /* The drawer follows the operator down a long element list instead of scrolling away. */
 .drawer-column {
   position: sticky;

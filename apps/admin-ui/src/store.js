@@ -87,6 +87,14 @@ export const state = reactive({
   jobRuns: { runs: [], latestSuccessfulRuns: [] },
   maps: [],
   mapDiagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] },
+  // The clickable plan's markup for the current floor (`GET /admin/map-markup`), null when the
+  // floor has none. Loaded apart from the day: a failure here leaves the day usable and the
+  // plan unmarked, with `markupError` saying why.
+  markup: null,
+  markupError: null,
+  // The markup editor's unsaved edits. A flag, not the edits: the editor owns them, the shell
+  // only has to ask before a floor or tab switch throws them away.
+  markupDirty: false,
   // One history card at a time, opened from a table: { kind: 'place'|'employee', id, data }.
   history: null
 })
@@ -252,7 +260,101 @@ export async function loadDay() {
 
   state.loading = false
 
+  await loadMarkup(state.floorCode)
+
   return { ok: true, error: null }
+}
+
+/**
+ * The plan markup of one floor. Never fails the caller: an unmarked plan is a normal state,
+ * and a markup endpoint that refuses must not take the day screen down with it.
+ */
+export async function loadMarkup(mapCode = state.floorCode) {
+  if (!mapCode) {
+    state.markup = null
+    state.markupError = null
+    return { ok: true, status: 200, data: null, error: null }
+  }
+
+  const result = await api.get(`/admin/map-markup${query({ mapCode })}`)
+
+  // The operator switched floors while this was in flight: the answer is for a plan no
+  // longer on screen.
+  if (state.floorCode && state.floorCode !== mapCode) {
+    return result
+  }
+
+  if (!result.ok) {
+    state.markup = null
+    state.markupError = result.error
+    return result
+  }
+
+  state.markup = (result.data && result.data.markup) || null
+  state.markupError = null
+
+  return result
+}
+
+/**
+ * Save the markup. `revision` is the one the editor loaded (null for a first save); the API
+ * answers 409 when someone saved in between, and the edits stay in the editor so nothing is
+ * lost while the operator decides.
+ */
+export async function saveMarkup(payload) {
+  const result = await api.post('/admin/map-markup', payload)
+
+  if (!result.ok) {
+    const conflict = result.status === 409 || (result.data && result.data.code === 'conflict')
+    notify(
+      'error',
+      conflict
+        ? `${result.error} Разметку этого этажа уже сохранил кто-то другой — нажмите «Отменить изменения», чтобы загрузить свежую версию (ваши правки при этом пропадут).`
+        : result.error
+    )
+    return result
+  }
+
+  state.markup = (result.data && result.data.markup) || null
+  state.markupError = null
+  state.markupDirty = false
+  notify('success', 'Разметка плана сохранена.')
+
+  return result
+}
+
+/** True when there is nothing unsaved in the markup editor, or the operator agrees to drop it. */
+export function confirmLeaveMarkup() {
+  if (!state.markupDirty) {
+    return true
+  }
+
+  const ok = typeof window === 'undefined' || typeof window.confirm !== 'function'
+    ? true
+    : window.confirm('Разметка плана не сохранена. Уйти и потерять изменения?')
+
+  if (ok) {
+    state.markupDirty = false
+  }
+
+  return ok
+}
+
+/** Switch floors from any screen: asks about unsaved markup, then loads the new floor's plan. */
+export async function selectFloor(code) {
+  if (!code || code === state.floorCode) {
+    return false
+  }
+
+  if (!confirmLeaveMarkup()) {
+    return false
+  }
+
+  state.floorCode = code
+  state.markup = null
+  await loadMarkup(code)
+
+  return true
 }
 
 export async function boot(search = '') {

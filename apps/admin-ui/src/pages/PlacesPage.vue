@@ -6,7 +6,8 @@ import { ViAlert, ViSelect, ViText } from '@vi-frontend/vision-ui'
 import CatalogImport from '../components/CatalogImport.vue'
 import InventoryEditor from '../components/InventoryEditor.vue'
 import MapUpload from '../components/MapUpload.vue'
-import { FLOORS, currentFloor, state } from '../store'
+import PlanEditor from '../components/PlanEditor.vue'
+import { FLOORS, currentFloor, selectFloor, state } from '../store'
 
 const floorOptions = FLOORS.map((floor) => ({ value: floor.code, text: `Этаж ${floor.title}` }))
 
@@ -36,7 +37,7 @@ const capacityMismatches = computed(() => diagnostics.value.lineCapacityMismatch
             text-field-name="text"
             value-field-name="value"
             track-by-value
-            @update:value="state.floorCode = $event"
+            @update:value="selectFloor"
           />
         </div>
       </ViCardContent>
@@ -60,6 +61,15 @@ const capacityMismatches = computed(() => diagnostics.value.lineCapacityMismatch
           Инвентарь · этаж {{ currentFloor().title }}
         </ViText>
         <InventoryEditor />
+      </ViCardContent>
+    </ViCard>
+
+    <ViCard variant="outlined">
+      <ViCardContent>
+        <ViText tag="h3" variant="title-h5" class="section-head">
+          Разметка плана · этаж {{ currentFloor().title }}
+        </ViText>
+        <PlanEditor />
       </ViCardContent>
     </ViCard>
 

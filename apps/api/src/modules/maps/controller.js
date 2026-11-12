@@ -1,7 +1,9 @@
 'use strict';
 
-const { readJsonBody } = require('../../../../../packages/shared/http');
-const { mapParkingPlaceMap } = require('../../serializers/maps');
+const { PayloadTooLargeError, readJsonBody } = require('../../../../../packages/shared/http');
+const { mapParkingPlaceMap, mapPlanMarkup } = require('../../serializers/maps');
+const { AbortTransaction } = require('../../support/transaction');
+const { readMarkupDocument } = require('./markup');
 const { internalError } = require('../../support/http-errors');
 const { requestActor } = require('../../support/actor');
 
@@ -16,8 +18,66 @@ function isLocalMapPath(filePath) {
   return MAP_FILE_NAME.test(name);
 }
 
+// A markup document is a few hundred polygons plus the editor's rows; 2 MB leaves room for a
+// large floor without letting the route hold an unbounded body.
+const MARKUP_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
+
+function errorResult(statusCode, error, extra = {}) {
+  return { statusCode, payload: { status: 'error', service: 'api', error, ...extra } };
+}
+
 function createMapsController({ services }) {
   const service = services.maps;
+
+  async function handleMarkupGet(searchParams) {
+    const mapCode = String(searchParams.get('mapCode') || '').trim().toLowerCase();
+
+    if (!mapCode) {
+      return errorResult(400, 'mapCode is required');
+    }
+
+    try {
+      const markup = await service.getMarkup(mapCode);
+
+      return { statusCode: 200, payload: { status: 'ok', service: 'api', markup: mapPlanMarkup(markup) } };
+    } catch (error) {
+      if (error instanceof AbortTransaction) {
+        return error.result;
+      }
+
+      return internalError(error, 'handleMarkupGet');
+    }
+  }
+
+  async function handleMarkupSave(req, actor) {
+    let body;
+
+    try {
+      body = await readJsonBody(req, MARKUP_BODY_LIMIT_BYTES);
+    } catch (error) {
+      return error instanceof PayloadTooLargeError
+        ? errorResult(413, 'Request body is too large')
+        : errorResult(400, 'Request body must be valid JSON');
+    }
+
+    const document = readMarkupDocument(body);
+
+    if (document.error) {
+      return errorResult(400, document.error, document.details ? { details: document.details } : {});
+    }
+
+    try {
+      const markup = await service.saveMarkup({ actor, ...document.value });
+
+      return { statusCode: 200, payload: { status: 'ok', service: 'api', markup: mapPlanMarkup(markup) } };
+    } catch (error) {
+      if (error instanceof AbortTransaction) {
+        return error.result;
+      }
+
+      return internalError(error, 'handleMarkupSave');
+    }
+  }
 
   // Inventory diagnostics for the Места tab.
   //
@@ -155,6 +215,16 @@ function createMapsController({ services }) {
         path: '/admin/map-backgrounds',
         advertise: true,
         handler: (context) => handleAdminMapBackgroundUpdate(context.req, requestActor(context))
+      },
+      {
+        method: 'GET',
+        path: '/admin/map-markup',
+        handler: ({ searchParams }) => handleMarkupGet(searchParams)
+      },
+      {
+        method: 'POST',
+        path: '/admin/map-markup',
+        handler: (context) => handleMarkupSave(context.req, requestActor(context))
       }
     ]
   };

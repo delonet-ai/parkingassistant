@@ -5,7 +5,8 @@ const globals = require('globals');
 
 module.exports = [
   {
-    ignores: ['**/node_modules/**', '**/dist/**', 'infra/**', '**/*.min.js']
+    // prototypes/ is a local, untracked sandbox of browser scripts (see .git/info/exclude).
+    ignores: ['**/node_modules/**', '**/dist/**', 'infra/**', '**/*.min.js', 'prototypes/**']
   },
   js.configs.recommended,
   {

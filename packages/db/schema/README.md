@@ -10,6 +10,7 @@
 - [004_job_state.sql](./004_job_state.sql) — `departure_plans.locked_at` для 07:00-отсечки;
   `place_releases.frozen_at` (колонка была с 001) начала писаться job-ом `freeze_next_day`
 - [005_place_inventory.sql](./005_place_inventory.sql) — инвентарь мест вместо зон на карте
+- [006_map_markup.sql](./006_map_markup.sql) — разметка плана этажа: где нарисовано каждое место ([ADR 008](../../../docs/adr/008-clickable-floor-plan.md))
 
 Это foundation-миграция для:
 

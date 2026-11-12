@@ -69,7 +69,21 @@ const ANSWERS = {
   '/admin/permanent-assignments': { permanentAssignments: [] },
   '/admin/audit-logs': { auditLogs: [] },
   '/admin/jobs/runs': { runs: [], latestSuccessfulRuns: [] },
-  '/admin/map-diagnostics': { maps: [], diagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] } }
+  '/admin/map-diagnostics': { maps: [], diagnostics: { placeWithoutLine: [], lineCapacityMismatch: [] } },
+  '/admin/map-markup': { status: 'ok', markup: null }
+}
+
+const MARKED = {
+  status: 'ok',
+  markup: {
+    mapCode: 'g4',
+    imageWidth: 1000,
+    imageHeight: 600,
+    places: { p1: { polygon: [[100, 100], [160, 100], [160, 220], [100, 220]] } },
+    editor: {},
+    revision: 1,
+    planChanged: false
+  }
 }
 
 /** A stubbed answer is a payload, or `refused(status, payload)` when the status matters. */
@@ -183,6 +197,28 @@ describe('App', () => {
     expect(wrapper.text()).not.toContain('Место не выбрано')
     expect(wrapper.text()).toContain('Операции по месту')
     expect(wrapper.text()).toContain('Иванов И. И.')
+  })
+
+  it('keeps the plan closed on an unmarked floor and opens it on a marked one', async () => {
+    const unmarked = await boot()
+
+    expect(unmarked.findAll('polygon.plan-view__place')).toHaveLength(0)
+    expect(unmarked.text()).toContain('Показать план')
+
+    const marked = await boot({ ...ANSWERS, '/admin/map-markup': MARKED })
+
+    expect(marked.text()).toContain('Скрыть план')
+    expect(marked.findAll('polygon.plan-view__place')).toHaveLength(1)
+  })
+
+  it('opens the same place drawer when a place is clicked on the plan', async () => {
+    const wrapper = await boot({ ...ANSWERS, '/admin/map-markup': MARKED })
+
+    await wrapper.find('polygon.plan-view__place').trigger('click')
+    await flushPromises()
+
+    expect(state.selectedPlaceId).toBe('p1')
+    expect(wrapper.text()).toContain('Операции по месту')
   })
 
   it('renders the day tables with the reservation and its cancel control', async () => {

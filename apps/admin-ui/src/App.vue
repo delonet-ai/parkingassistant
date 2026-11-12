@@ -10,7 +10,7 @@ import LoginPage from './pages/LoginPage.vue'
 import PlacesPage from './pages/PlacesPage.vue'
 import RequestsPage from './pages/RequestsPage.vue'
 import UsersPage from './pages/UsersPage.vue'
-import { allowedTabs, boot, buildUrl, dismissNotice, signOut, state } from './store'
+import { allowedTabs, boot, buildUrl, confirmLeaveMarkup, dismissNotice, signOut, state } from './store'
 
 const PAGES = {
   day: DayPage,
@@ -43,6 +43,11 @@ watch(
 )
 
 function selectTab(value) {
+  // Unsaved plan markup lives in the Места tab's editor and dies with it.
+  if (value !== state.view && !confirmLeaveMarkup()) {
+    return
+  }
+
   state.view = value
   dismissNotice()
 }
